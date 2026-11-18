@@ -272,10 +272,14 @@ export async function reopenBleMidi(key: string, mtu = 23): Promise<BleLink> {
   return connectBleDevice(dev, mtu);
 }
 
-/** The browser's device chooser; the piano already open comes back as the same link (no second session). */
-export async function requestBleMidi(mtu = 23): Promise<BleLink> {
+/** The browser's device chooser alone (needs a user gesture): the BLE-MIDI device the user picked, not connected yet. */
+export async function requestBleDevice(): Promise<BtDevice> {
   const bt = bluetooth();
   if (!bt) throw new Error("Web Bluetooth is not available in this browser");
-  const device = await bt.requestDevice({ filters: [{ services: [BLE_MIDI_SERVICE] }] });
-  return connectBleDevice(device, mtu);
+  return bt.requestDevice({ filters: [{ services: [BLE_MIDI_SERVICE] }] });
+}
+
+/** The browser's device chooser; the piano already open comes back as the same link (no second session). */
+export async function requestBleMidi(mtu = 23): Promise<BleLink> {
+  return connectBleDevice(await requestBleDevice(), mtu);
 }

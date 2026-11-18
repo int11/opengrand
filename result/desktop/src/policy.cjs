@@ -173,6 +173,37 @@ function sortDevices(devices, pattern = DEFAULT_BT_PATTERN) {
   return [...devices].sort((a, b) => rank(a) - rank(b) || String(a.deviceName).localeCompare(String(b.deviceName)));
 }
 
+/**
+ * Who answers a new Bluetooth chooser request (the first select-bluetooth-device of a requestDevice call):
+ *   "reconnect" the app's armed reconnect (only the remembered device, no list anywhere)
+ *   "auto"      automation (only a name matching the pattern)
+ *   "cancel"    the page gave this request up before any device showed (in-app list closed): answer it with nothing
+ *   "inapp"     the app page listens for the list (its own connection dialog shows the devices)
+ *   "window"    nobody listens (an app build older than the in-app list): the shell's chooser window
+ */
+function bluetoothRoute({ armed, automation, cancelNext, listening }) {
+  if (armed) return "reconnect";
+  if (automation) return "auto";
+  if (cancelNext) return "cancel";
+  return listening ? "inapp" : "window";
+}
+
+/**
+ * The page's answer to the in-app list: "" (cancel) or the id of a device that is in the list it was sent;
+ * anything else (an id the shell never offered, not a string) is null = ignored.
+ */
+function inAppChoice(id, devices) {
+  if (id === "") return "";
+  if (typeof id !== "string") return null;
+  return (devices || []).some((d) => d && d.deviceId === id) ? id : null;
+}
+
+/** The list the app page gets: sorted like the chooser window's, only id and name, both strings. */
+function inAppDevices(devices, pattern = DEFAULT_BT_PATTERN) {
+  const list = (devices || []).filter((d) => d && typeof d.deviceId === "string" && d.deviceId).map((d) => ({ deviceId: d.deviceId, deviceName: typeof d.deviceName === "string" ? d.deviceName : "" }));
+  return sortDevices(list, pattern);
+}
+
 module.exports = {
   SCHEME,
   HOST,
@@ -191,4 +222,7 @@ module.exports = {
   parseLastBluetooth,
   lastBluetoothOf,
   reconnectPick,
+  bluetoothRoute,
+  inAppChoice,
+  inAppDevices,
 };

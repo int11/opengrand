@@ -3,8 +3,8 @@
 // Needs a display: Windows, or WSL with WSLg (DISPLAY=:0), or Linux under xvfb-run.
 // Checks: app:// origin + secure context + ES module app booted, Web Bluetooth / Web MIDI present,
 // MIDI SysEx permission granted, no service worker registered by the app (and the scheme allows one),
-// the app's own connection picker lists "Bluetooth MIDI (pair new)…", the main-process Bluetooth chooser
-// (normal: our chooser window, user picks; automation: only a name matching CA79|KAWAI), and CDP attach
+// the app's own connection dialog lists the Bluetooth devices the main process reports (in-app list; the chooser
+// window only when the page does not listen; automation: only a name matching CA79|KAWAI), and CDP attach
 // with --cdp=PORT.
 // Windows build: CA79_ELECTRON_EXE=C:\\…\\OpenGrand\\OpenGrand.exe node tests/smoke.mjs (Windows Node).
 import { _electron as electron, chromium } from "playwright-core";
@@ -128,36 +128,67 @@ async function normalRun() {
     assert.equal(sw, "app://ca79ng/");
     ok("the app registers no service worker; the app:// scheme would allow one");
 
-    // the app's own connection picker (unchanged UI): Bluetooth MIDI row
+    // the app's own connection dialog searches for Bluetooth devices itself and lists what the main process reports
+    // (in-app list: preload onDevices / choose) - no chooser window. requestDevice is stubbed (never settles), so
+    // the lists below are the only ones, whatever Bluetooth adapter this machine has.
+    await page.evaluate(() => {
+      navigator.bluetooth.requestDevice = () => new Promise(() => {});
+    });
     await page.click("#connect");
-    await page.waitForSelector("#picker #bt-pair", { timeout: 10000 });
-    ok("connection picker lists 'Bluetooth MIDI (pair new)…'");
-    await page.keyboard.press("Escape");
-
-    // main-process chooser, normal mode: our window opens, nothing is picked until the user clicks
+    await page.waitForSelector('#picker #bt-scan[data-state="scanning"]', { timeout: 10000 });
+    assert.equal(await page.$("#picker #bt-pair"), null);
+    ok("connection dialog searches for Bluetooth MIDI by itself (no 'pair new' row)");
     const r1 = await fakeScan(app, [{ deviceId: "AA:01", deviceName: "Headphones" }]);
     assert.equal(r1.prevented, true);
+    await fakeScan(app, [
+      { deviceId: "AA:01", deviceName: "Headphones" },
+      { deviceId: "BB:02", deviceName: "KAWAI CA79" },
+    ]);
+    await page.waitForSelector('#picker button.item.dev[data-id="BB:02"]', { timeout: 10000 });
+    const order = await page.$$eval("#picker button.item.dev[data-id]", (bs) => bs.map((b) => b.dataset.id));
+    assert.deepEqual(order, ["BB:02", "AA:01"]);
+    assert.deepEqual(await picked(app), []);
+    assert.ok(!app.windows().some((w) => w.url().endsWith("picker.html")), "no chooser window");
+    ok("in-app list: devices are rows of the app's dialog (piano first), no chooser window, nothing picked by itself");
+    // an id that was never listed is not accepted
+    await page.evaluate(() => window.ca79Desktop.bluetooth.choose("ZZ:99"));
+    await page.waitForTimeout(200);
+    assert.deepEqual(await picked(app), []);
+    await page.click('#picker button.item.dev[data-id="BB:02"]');
+    await page.waitForTimeout(300);
+    assert.deepEqual(await picked(app), ["BB:02"]);
+    ok("in-app list: the user's click on a row selects the device; an unlisted id is ignored");
+    // cancel path: a new request, Esc closes the dialog -> ""
+    await fakeScan(app, [{ deviceId: "BB:02", deviceName: "KAWAI CA79" }]);
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("#picker", { state: "detached", timeout: 10000 });
+    await page.waitForTimeout(300);
+    assert.deepEqual(await picked(app), ["BB:02", ""]);
+    ok("in-app list: closing the dialog answers the request with no device");
+
+    // nobody listens (dialog closed; an app build without the in-app list): the chooser window, as before -
+    // it opens, nothing is picked until the user clicks
+    await fakeScan(app, [{ deviceId: "AA:01", deviceName: "Headphones" }]);
     const chooser = await app.waitForEvent("window", { predicate: (w) => w.url().endsWith("picker.html"), timeout: 10000 });
     await fakeScan(app, [
       { deviceId: "AA:01", deviceName: "Headphones" },
       { deviceId: "BB:02", deviceName: "KAWAI CA79" },
     ]);
     await chooser.waitForSelector('button[data-id="BB:02"]', { timeout: 10000 });
-    const order = await chooser.$$eval("#list button", (bs) => bs.map((b) => b.dataset.id));
-    assert.deepEqual(order, ["BB:02", "AA:01"]);
-    assert.deepEqual(await picked(app), []);
-    ok("normal mode: chooser window lists devices (piano first), picks nothing by itself");
+    assert.deepEqual(await chooser.$$eval("#list button", (bs) => bs.map((b) => b.dataset.id)), ["BB:02", "AA:01"]);
+    assert.deepEqual(await picked(app), ["BB:02", ""]);
+    ok("fallback: chooser window lists devices (piano first), picks nothing by itself");
     await chooser.click('button[data-id="BB:02"]');
     await page.waitForTimeout(300);
-    assert.deepEqual(await picked(app), ["BB:02"]);
-    ok("normal mode: the user's click selects the device");
+    assert.deepEqual(await picked(app), ["BB:02", "", "BB:02"]);
+    ok("fallback: the user's click selects the device");
     // cancel path: a new request, close with Cancel → ""
     await fakeScan(app, [{ deviceId: "BB:02", deviceName: "KAWAI CA79" }]);
     const chooser2 = await app.waitForEvent("window", { predicate: (w) => w.url().endsWith("picker.html"), timeout: 10000 });
     await chooser2.click("#cancel");
     await page.waitForTimeout(300);
-    assert.deepEqual(await picked(app), ["BB:02", ""]);
-    ok("normal mode: Cancel answers the request with no device");
+    assert.deepEqual(await picked(app), ["BB:02", "", "BB:02", ""]);
+    ok("fallback: Cancel answers the request with no device");
 
     await reconnectChecks(app, page, userData);
   } finally {
@@ -168,7 +199,7 @@ async function normalRun() {
 
 // Reconnect on start (Electron has no getDevices()): the main process remembers the chosen device and,
 // only for the app's own reconnect request, answers the chooser with exactly that device.
-// Runs after normalRun's click picked BB:02 "KAWAI CA79" and a Cancel.
+// Runs after normalRun's clicks picked BB:02 "KAWAI CA79" (the last answer was a Cancel).
 async function reconnectChecks(app, page, userData) {
   const stored = JSON.parse(readFileSync(join(userData, "last-bluetooth.json"), "utf8"));
   assert.deepEqual(stored, { deviceId: "BB:02", deviceName: "KAWAI CA79" });

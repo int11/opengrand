@@ -9,8 +9,8 @@ import { TAB_IDS, type TabId } from "./state/settings.ts";
 import { ParamStore } from "./state/store.ts";
 import { AUTO_RECONNECT, BOOT_RETAKE, ConnectionManager, connView, type ConnState, type LinkChoice } from "./state/connection.ts";
 import { androidAvailable, androidCandidate, listAndroid, onShellLifecycle, panelInfo, scanBle, setBacklight } from "./transport/android.ts";
-import { bleReopenAvailable, reopenBleMidi, requestBleMidi } from "./transport/ble.ts";
-import { desktopReopenBle, desktopShell } from "./transport/desktop.ts";
+import { bleReopenAvailable, connectBleDevice, reopenBleMidi, requestBleDevice, requestBleMidi } from "./transport/ble.ts";
+import { desktopBleScan, desktopBleScanAvailable, desktopReopenBle, desktopShell } from "./transport/desktop.ts";
 import { autoLink, kwm, kwmcoreAvailable, launchAndroidSettings, listKwmcore, onDeviceChange, openUrl, readAnyFile, setBacklight255, usbPath, writeAnyFile } from "./transport/kwmcore.ts";
 import type { LinkCandidate, MidiLink } from "./transport/link.ts";
 import { listWebMidi } from "./transport/webmidi.ts";
@@ -428,6 +428,11 @@ async function openConnect(): Promise<void> {
     choose: (c) => void choose(c),
     // browsers: Web Bluetooth does its own device picker; the piano already open comes back as the same link
     requestBle: androidAvailable() ? undefined : { name: "Bluetooth MIDI", open: () => requestBleMidi() },
+    // desktop app: the search runs in this dialog (the shell sends the device list; no chooser window)
+    bleScan: !androidAvailable() && desktopBleScanAvailable() ? (onDevices) => {
+      const s = desktopBleScan(() => requestBleDevice(), onDevices)!;
+      return { found: s.found.then((d) => ({ name: d.name ?? "Bluetooth MIDI", open: () => connectBleDevice(d) })), pick: s.pick, cancel: s.cancel };
+    } : undefined,
     simUrl,
     openSim: (url) => ({ key: `websocket:${url}`, name: `Simulator (${url})`, open: () => openWebSocket(url) }),
   });

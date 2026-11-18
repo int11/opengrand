@@ -86,3 +86,28 @@ test("the app window is never throttled while minimized (field 2026-11-03: OTA ~
   assert.deepEqual([w.contextIsolation, w.sandbox, w.nodeIntegration, w.preload], [true, true, false, "/x/preload.cjs"]);
   for (const sw of ["disable-background-timer-throttling", "disable-renderer-backgrounding", "disable-backgrounding-occluded-windows"]) assert.ok(p.NO_THROTTLE_SWITCHES.includes(sw), sw);
 });
+
+test("a Bluetooth request goes to the app's own dialog when the page listens; the chooser window only for an old app build", () => {
+  const r = (o) => p.bluetoothRoute({ armed: false, automation: false, cancelNext: false, listening: false, ...o });
+  assert.equal(r({}), "window", "nobody listens (app build without the in-app list)");
+  assert.equal(r({ listening: true }), "inapp");
+  assert.equal(r({ listening: true, automation: true }), "auto", "automation still picks by name");
+  assert.equal(r({ listening: true, armed: true, automation: true, cancelNext: true }), "reconnect", "the app's armed reconnect first");
+  assert.equal(r({ cancelNext: true }), "cancel", "given up before a device showed");
+  assert.equal(r({ cancelNext: true, listening: true }), "cancel");
+});
+
+test("in-app choice: only \"\" (cancel) or an id from the list that was sent", () => {
+  const devs = [{ deviceId: "AA:01", deviceName: "Headphones" }, { deviceId: "BB:02", deviceName: "KAWAI CA79" }];
+  assert.equal(p.inAppChoice("BB:02", devs), "BB:02");
+  assert.equal(p.inAppChoice("", devs), "");
+  assert.equal(p.inAppChoice("CC:03", devs), null, "an id the shell never offered");
+  assert.equal(p.inAppChoice("BB:02", []), null);
+  assert.equal(p.inAppChoice("BB:02", undefined), null);
+  assert.equal(p.inAppChoice(undefined, devs), null);
+  assert.equal(p.inAppChoice({ deviceId: "BB:02" }, devs), null);
+  // what the page gets: piano-like names first, id + name only
+  const sent = p.inAppDevices([{ deviceId: "AA:01", deviceName: "Headphones", extra: 1 }, { deviceId: "CC:03" }, null, { deviceId: "", deviceName: "x" }, { deviceId: "BB:02", deviceName: "KAWAI CA79" }]);
+  assert.deepEqual(sent, [{ deviceId: "BB:02", deviceName: "KAWAI CA79" }, { deviceId: "AA:01", deviceName: "Headphones" }, { deviceId: "CC:03", deviceName: "" }]);
+  assert.deepEqual(p.inAppDevices(undefined), []);
+});

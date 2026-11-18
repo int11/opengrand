@@ -1,6 +1,7 @@
-// App window preload (sandboxed). Exposes who the host is (logs, automation checks) and one desktop-only
-// service: reconnect to the Bluetooth piano the user last chose (Electron has no getDevices(); the app's
-// branch is result/app/src/transport/desktop.ts). The app works without it, like in Chrome.
+// App window preload (sandboxed). Exposes who the host is (logs, automation checks) and two desktop-only
+// services (the app's side: result/app/src/transport/desktop.ts): reconnect to the Bluetooth piano the user last
+// chose (Electron has no getDevices()), and the Bluetooth device list of a running requestDevice() for the app's own
+// connection dialog (onDevices / choose - no separate chooser window). The app works without them, like in Chrome.
 "use strict";
 
 const { contextBridge, ipcRenderer } = require("electron");
@@ -13,6 +14,14 @@ try {
   remembered = null;
 }
 
+// In-app Bluetooth list: while the page listens, the main process sends it the devices of a requestDevice() call
+// instead of opening its chooser window. A fresh page listens to nothing (a reload forgets the old page's listeners).
+const btListeners = new Set();
+ipcRenderer.on("bt:devices", (_e, list) => {
+  for (const cb of [...btListeners]) cb(list);
+});
+ipcRenderer.send("bt:unlisten");
+
 contextBridge.exposeInMainWorld("ca79Desktop", Object.freeze({
   shell: "electron",
   platform: process.platform,
@@ -22,5 +31,18 @@ contextBridge.exposeInMainWorld("ca79Desktop", Object.freeze({
     remembered,
     // the main process arms the chooser for that one device and runs the page's reconnect hook with a gesture
     reconnect: () => ipcRenderer.invoke("bt:reconnect"),
+    // cb(list of { deviceId, deviceName }, piano-like names first) on every update of a running requestDevice();
+    // returns the function that stops listening. Synchronous on purpose: the main process knows the page listens
+    // before the requestDevice() call that follows can reach it.
+    onDevices: (cb) => {
+      if (typeof cb !== "function") return () => {};
+      if (!btListeners.size) ipcRenderer.sendSync("bt:listen");
+      btListeners.add(cb);
+      return () => {
+        if (btListeners.delete(cb) && !btListeners.size) ipcRenderer.send("bt:unlisten");
+      };
+    },
+    // answer the running request: a deviceId from the list, or "" to cancel it
+    choose: (id) => ipcRenderer.send("bt:choose", String(id ?? "")),
   }),
 }));

@@ -878,6 +878,8 @@ test("BLE transfer estimate for the real app bundle (MTU 23, paced writer)", asy
   // 174 626 B)
   // 175 500 -> 176 500 (2026-11-19, styles.css detail pass: header outline controls, segmented parts, chip line,
   // list rows: 175 654 B)
-  assert.ok(file.length < 176_500, `package ${file.length} B`);
+  // 176 500 -> 177 500 (2026-11-19, ui/picker.ts: the desktop app's Bluetooth search inside the connection dialog -
+  // the picker is shared with the panel, which never runs that branch: 176 596 B)
+  assert.ok(file.length < 177_500, `package ${file.length} B`);
   console.log(`# real bundle: package ${file.length} B, ${e.frames} frames, ${e.blePackets} BLE packets; window ≈ ${e.windowedS.toFixed(0)} s, stop-and-wait ≈ ${e.stopAndWaitS.toFixed(0)} s`);
 });

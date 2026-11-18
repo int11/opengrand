@@ -1,6 +1,7 @@
 // OpenGrand desktop shell (Electron main process).
 // Serves the built web app (result/app/dist) from the privileged app://ca79ng origin and keeps Web
-// Bluetooth, Web MIDI (SysEx) and WebUSB working: device choosers and permission handlers live here.
+// Bluetooth, Web MIDI (SysEx) and WebUSB working: device choosers and permission handlers live here. Bluetooth
+// devices are listed in the app's own connection dialog (in-app list below); the USB chooser is a small window.
 // Pure decisions: ./policy.cjs.
 "use strict";
 
@@ -92,7 +93,7 @@ function guardPermissions(ses) {
   }
 }
 
-// ---- device chooser window (Web Bluetooth and WebUSB) ----
+// ---- device chooser window (WebUSB; Web Bluetooth only for an app build without the in-app list, see below) ----
 // One request at a time per kind. The renderer's requestDevice() waits until finish() calls Electron's callback.
 class Chooser {
   constructor(parent, kind, pattern) {
@@ -184,6 +185,8 @@ ipcMain.on("bt:remembered", (e) => {
 // page's hook runs from here with one; the chooser request it makes is answered with the remembered device only.
 ipcMain.handle("bt:reconnect", async (e) => {
   if (!mainWindow || e.sender !== mainWindow.webContents || !policy.isAppOrigin(e.sender.getURL())) return "denied";
+  // the app's connection dialog is searching (its requestDevice() is the running one): a second one would replace it
+  if (inApp.listening) return "busy";
   const dev = lastBluetooth();
   if (!dev) return "none";
   reconnectArm = { ...dev, until: Date.now() + RECONNECT_ARM_MS };
@@ -199,60 +202,112 @@ ipcMain.handle("bt:reconnect", async (e) => {
   return r;
 });
 
+// ---- Bluetooth device list inside the app's own connection dialog (no chooser window) ----
+// The page (result/app/src/ui/picker.ts through preload.cjs onDevices / choose) listens while its dialog searches;
+// a request that starts then is answered from there. cancelUntil: the page gave a request up before Electron
+// reported any device for it (Electron raises select-bluetooth-device only once a device shows, so there was nothing
+// to answer yet) - the next request that shows up is that one and gets "" (policy.bluetoothRoute "cancel").
+const CANCEL_NEXT_MS = 5 * 60 * 1000;
+const inApp = { listening: false, cancelUntil: 0 };
+let btPending = null; // { callback, devices, chooser?, timer?, reconnect?, inApp? }: the one running requestDevice()
+const fromMainWindow = (e) => !!mainWindow && e.sender === mainWindow.webContents;
+const fromApp = (e) => fromMainWindow(e) && policy.isAppOrigin(e.senderFrame ? e.senderFrame.url : e.sender.getURL());
+
+function finishBluetooth(id) {
+  if (!btPending) return;
+  const p = btPending;
+  btPending = null;
+  clearTimeout(p.timer);
+  if (p.chooser) {
+    choosers.delete(p.chooser);
+    p.chooser.onFinish = null;
+    p.chooser.finish(id);
+  }
+  log(id ? `bluetooth: selected ${id}${p.reconnect ? " (reconnect)" : ""}` : `bluetooth: ${p.reconnect ? "reconnect gave up" : "chooser cancelled"}`);
+  rememberBluetooth(policy.lastBluetoothOf(id, p.devices));
+  p.callback(id);
+}
+
+ipcMain.on("bt:listen", (e) => {
+  if (!fromApp(e)) {
+    e.returnValue = false;
+    return;
+  }
+  inApp.listening = true;
+  inApp.cancelUntil = 0; // a new search of the page replaces the request it gave up
+  e.returnValue = true;
+});
+ipcMain.on("bt:unlisten", (e) => {
+  if (!fromMainWindow(e)) return;
+  inApp.listening = false;
+  if (btPending?.inApp) finishBluetooth(""); // nobody is left to choose (dialog gone, page reloaded)
+});
+ipcMain.on("bt:choose", (e, id) => {
+  if (!fromApp(e)) return;
+  const p = btPending;
+  if (!p) {
+    if (id === "" && inApp.listening) inApp.cancelUntil = Date.now() + CANCEL_NEXT_MS;
+    return;
+  }
+  if (p.chooser || p.reconnect) return; // the chooser window's / the reconnect's request: not the page's to answer
+  // automation's request (no list was sent): the page may only cancel it
+  const pick = policy.inAppChoice(id, p.inApp ? p.devices : []);
+  if (pick === null) log("bluetooth: in-app choice ignored (not in the list)");
+  else finishBluetooth(pick);
+});
+
 function handleBluetooth(win) {
-  let pending = null; // { callback, devices, chooser?, timer?, reconnect? }
-  const finish = (id) => {
-    if (!pending) return;
-    const p = pending;
-    pending = null;
-    clearTimeout(p.timer);
-    if (p.chooser) {
-      choosers.delete(p.chooser);
-      p.chooser.onFinish = null;
-      p.chooser.finish(id);
-    }
-    log(id ? `bluetooth: selected ${id}${p.reconnect ? " (reconnect)" : ""}` : `bluetooth: ${p.reconnect ? "reconnect gave up" : "chooser cancelled"}`);
-    rememberBluetooth(policy.lastBluetoothOf(id, p.devices));
-    p.callback(id);
-  };
   win.webContents.on("select-bluetooth-device", (event, devices, callback) => {
     event.preventDefault();
-    if (!pending) {
-      pending = { callback };
+    if (!btPending) {
       const arm = reconnectArm && Date.now() < reconnectArm.until ? reconnectArm : null;
       reconnectArm = null;
-      if (arm) {
+      const route = policy.bluetoothRoute({ armed: !!arm, automation: opt.automation, cancelNext: Date.now() < inApp.cancelUntil, listening: inApp.listening });
+      inApp.cancelUntil = 0;
+      if (route === "cancel") {
+        log("bluetooth: request given up by the app before a device showed - cancelled");
+        callback("");
+        return;
+      }
+      btPending = { callback };
+      const pending = btPending;
+      if (route === "reconnect") {
         // the app's reconnect: no chooser window, only the remembered device, give up after RECONNECT_MS
         pending.reconnect = arm;
         pending.timer = setTimeout(() => {
           log(`bluetooth: reconnect - ${arm.deviceName || arm.deviceId} did not show in ${RECONNECT_MS / 1000} s`);
-          finish("");
+          finishBluetooth("");
         }, RECONNECT_MS);
-      } else if (opt.automation) {
+      } else if (route === "auto") {
         pending.timer = setTimeout(() => {
           log(`bluetooth: automation found no device matching /${opt.btPattern}/i in ${AUTO_PICK_MS / 1000} s`);
-          finish("");
+          finishBluetooth("");
         }, AUTO_PICK_MS);
+      } else if (route === "inapp") {
+        pending.inApp = true; // listed in the app's connection dialog
       } else {
         const c = new Chooser(win, "bluetooth", opt.btPattern);
-        c.onFinish = (id) => finish(id);
+        c.onFinish = (id) => finishBluetooth(id);
         choosers.add(c);
         pending.chooser = c;
       }
     }
+    const pending = btPending;
     pending.callback = callback; // Electron hands a fresh callback with every list update
     pending.devices = devices;
     if (pending.reconnect) {
       const id = policy.reconnectPick(devices, pending.reconnect);
-      if (id) finish(id);
-    } else if (opt.automation) {
-      const id = policy.autoPick(devices, opt.btPattern);
-      if (id) finish(id);
-    } else {
+      if (id) finishBluetooth(id);
+    } else if (pending.chooser) {
       pending.chooser.update(devices);
+    } else if (pending.inApp) {
+      win.webContents.send("bt:devices", policy.inAppDevices(devices, opt.btPattern));
+    } else {
+      const id = policy.autoPick(devices, opt.btPattern);
+      if (id) finishBluetooth(id);
     }
   });
-  win.webContents.on("destroyed", () => finish(""));
+  win.webContents.on("destroyed", () => finishBluetooth(""));
 }
 
 function handleUsb(ses) {
