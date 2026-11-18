@@ -1,0 +1,9 @@
+#!/bin/sh
+# OpenGrand pre-commit hook: refuse commits that would publish firmware, keys, device addresses or
+# personal paths.  Enable once per clone with:
+#     git config core.hooksPath scripts/hooks
+# It checks the staged (index) content of every tracked file, and compares it against your local
+# target/CAx9_P06.SYS when that file exists.  Bypassing it (--no-verify) is never the right fix:
+# remove the leak, or add a reviewed entry to scripts/leakcheck.allow.
+root=$(git rev-parse --show-toplevel) || exit 1
+exec python3 -I "$root/scripts/leakcheck.py" --cached

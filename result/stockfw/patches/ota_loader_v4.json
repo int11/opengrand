@@ -1,0 +1,47 @@
+{
+  "name": "ota_loader_v4",
+  "description": "ota_loader_v4 stage-0 (frozen, USB only): the two stock hooks, the escape keys (E1 A0+A#0+B0 = pure stock, E2 A0+A#0 = SAFE: the older loader, no main), loader slot choice (A 0x601A0000 / B 0x601E0000, highest seq, try mark BEFORE the load, 3 unconfirmed boots), NOR -> stage-1 window 0x40176000 (40 KB) with CRC-32 + HMAC-SHA256 (root key at 0x40175FE0), entry table check, RESELECT; the frozen NOR write service over one frozen range table (slot sectors + kvstore always on, three NOR gates - unused_2 + TouchCalib, 6-8 MB, 8-16 MB - off at every boot, switched on only by stage-1 with nor_enable; never BootProgram, never erase / page-program the running loader sector), cache sync and the one signature check for stage-1 and the main. Internal: the loader alone, all slots empty (boots stock) - the build step opengrand_install is made from.",
+  "base_sha256": "09ad85703e44ad95d82475cfe2dae14c6edfa9f164a0b17b66b45f74c8d933c8",
+  "patches": [
+    {
+      "id": "cave",
+      "file_offset": "0x113a14",
+      "va": "0x40173a14",
+      "blob": "cave/build/cave_s0.bin",
+      "expect_fill": "ff",
+      "note": "ota_loader_v4 stage-0, 4500 bytes, ends at va 0x40174ba8 (budget 0x40175fe0). Lands in the erased hole after loader copy #1."
+    },
+    {
+      "id": "loader_end",
+      "file_offset": "0x4b3ec",
+      "va": "0x400ab3ec",
+      "orig": "043a1740",
+      "new": "00601740",
+      "note": "End VA of loader copy #1 (FUN_400AA994: len = this - 0x400C0000). Extended so stage-0 and the root key are copied to SDRAM: 0x40173a04 -> 0x40176000 (the stage-1 window above is loaded by stage-0)."
+    },
+    {
+      "id": "ota_key",
+      "file_offset": "0x115fe0",
+      "va": "0x40175fe0",
+      "blob": "secrets/ota_key.bin",
+      "expect_fill": "ff",
+      "note": "Per-device root key (32 B, git-ignored secrets/ota_key.bin, tools/ota_pack.py). Stage-0 verifies loader images with it; stage-1 v4.0 uses it for main images and the authenticated ops (REMOTE_PROTOCOL 10.3 / 10.12)."
+    },
+    {
+      "id": "hook_s0_h1",
+      "file_offset": "0xe7e1c",
+      "va": "0x40147e1c",
+      "orig": "1d00001a",
+      "new": "fcae001a",
+      "note": "bne -> s0_h1 (0x40173a14). SysEx end handler: unknown manufacturer ID falls through to 0x40147E98. Stage-0 hands 0x7D to the running stage-1 and jumps to the same place for everything else (registers as they came)."
+    },
+    {
+      "id": "hook_s0_tick",
+      "file_offset": "0xe3ae0",
+      "va": "0x40143ae0",
+      "orig": "6afcffeb",
+      "new": "d5bf00eb",
+      "note": "bl -> s0_tick (0x40173a3c). Engine loop tail (task 24, ~8 ms). Stage-0 runs its boot step or the stage-1 tick and tail-calls the original 0x40142C90, whose return value the loop ignores."
+    }
+  ]
+}

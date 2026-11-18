@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-cache">
+  <title>UI</title>
+  <!-- Entry page of the OpenGrand UI bundle for the ORIGINAL Kawai panel shell
+       (it replaces the stock appUI/index.html, which only redirected to
+       ui/html/index.html). Self-contained ES5 on purpose: it must work even when
+       the OpenGrand app is broken, and on an old WebView. -->
+  <style>
+    /* the OpenGrand dark theme (styles.css): Kawai panel blacks, teal accent */
+    html, body { margin: 0; height: 100%; background: #111; color: #e6e5e5; font: 18px/1.4 Roboto, "Noto Sans KR", "Noto Sans JP", sans-serif; -webkit-user-select: none; user-select: none; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 24px 16px; }
+    h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; color: #bbb; }
+    .why { color: #f0b46c; min-height: 1.4em; margin: 0 0 12px; white-space: pre-wrap; word-break: break-all; font-size: 0.9em; }
+    .pick { display: flex; flex-wrap: wrap; margin: 0 -8px; }
+    .pick button { flex: 1 1 300px; margin: 8px; min-height: 120px; font-size: 26px; border-radius: 14px; border: 2px solid #2d2c2c; background: #1f1f1f; color: #fff; }
+    .pick button.def { border-color: #10818e; box-shadow: 0 0 0 3px rgba(16,129,142,.35) inset; }
+    .pick small { display: block; font-size: 15px; color: #aaa; margin-top: 6px; }
+    .count { margin: 16px 0; font-size: 20px; }
+    .count button, .row button, details button { font-size: 17px; padding: 10px 16px; margin: 4px 8px 4px 0; border-radius: 10px; border: 1px solid transparent; background: #2d2c2c; color: #e6e5e5; }
+    .row button.on { background: #10818e; color: #fff; }
+    .row { margin: 8px 0; }
+    details { margin-top: 24px; border-top: 1px solid #333; padding-top: 12px; color: #ccc; }
+    summary { font-size: 17px; color: #aaa; padding: 6px 0; }
+    .muted { color: #888; font-size: 15px; }
+    #msg { white-space: pre-wrap; margin-top: 8px; color: #f0b46c; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>CA79 — UI 선택 / Choose the UI</h1>
+  <p class="why" id="why"></p>
+  <div class="pick">
+    <button id="ng">OpenGrand UI<small>새 UI · new UI</small></button>
+    <button id="kawai">Kawai 원본 UI<small>Original Kawai UI 1.3.10</small></button>
+  </div>
+  <div class="count" id="count"></div>
+  <div class="row">
+    <button id="mkdef">기본값 바꾸기 · change default</button>
+    <span class="muted" id="defl"></span>
+  </div>
+  <!-- OpenGrand UI language (the stock UI has only English / Japanese, and the panel's Android locale is not
+       the user's): kept in the app's settings (localStorage ca79ng.settings, same file:// origin) -->
+  <div class="row" id="langrow"><span class="muted">OpenGrand UI 언어 · language</span><br></div>
+  <details id="rec">
+    <summary>복구 · Recovery</summary>
+    <p class="muted" id="ver">버전 확인 중…</p>
+    <div class="row">
+      <button id="usbui">USB의 UI 번들 설치 · install UI bundle from USB</button>
+      <button id="oss">Android 설정 · Android Settings</button>
+    </div>
+    <p class="muted">USB 메모리 루트에 version.xxx + appUI.xxx (원본 1.3.10 되돌리기 번들 또는 OpenGrand 번들). 약 1분 걸립니다. 끝나면 피아노 전원을 껐다 켜세요.</p>
+    <p class="muted" id="info"></p>
+    <!-- screen readout: the CSS viewport the UI gets, for the panel simulator -->
+    <p class="muted" id="screen"></p>
+    <div id="remote">
+      <p class="muted" id="rstate"></p>
+      <div class="row">
+        <button id="rbundled">번들 UI로 시작 · start the bundled UI</button>
+        <button id="rretry">실패 표시 지우기 · clear failures</button>
+        <button id="rforget">원격 UI 지우기 · forget remote UIs</button>
+      </div>
+    </div>
+    <div id="msg"></div>
+  </details>
+</div>
+<script>/*UILOADER*/</script>
+<script>/*PANELSCREEN*/</script>
+<script>
+(function () {
+  "use strict";
+  var BUNDLE = /*BUNDLE_INFO*/{"version":"dev"}/*END*/;
+  var NG = "ng/index.html", KAWAI = "ui/html/index.html";
+  var COUNT = 10;
+  var q = {};
+  location.search.replace(/^\?/, "").split("&").forEach(function (p) { if (p) { var kv = p.split("="); q[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1] || ""); } });
+  function $(id) { return document.getElementById(id); }
+  function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } return null; }
+
+  // ---- minimal KWM for the original shell (see src/transport/kwmcore.ts) ----
+  var waits = {};
+  function settle(cmd, ok, json) {
+    var w = waits[cmd]; if (!w) return; delete waits[cmd];
+    clearTimeout(w.t);
+    var v = null; try { v = json ? JSON.parse(json) : null; } catch (e) { v = json; }
+    (ok ? w.ok : w.ng)(v);
+  }
+  window.KWM = {
+    devices: [], __ready: undefined,
+    resolvePromise: function (c, j) { settle(c, true, j); },
+    rejectPromise: function (c, j) { settle(c, false, j); },
+    callbackNative: function () {}, onMidiMessage: function () {}, onSmfMidiMessage: function () {},
+    onDeviceStateChange: function () {},
+    dispatchEvent: function (id, arg) { if (id === "deviceready") { window.KWM.__ready = arg || {}; onReady(); } }
+  };
+  // remote UI updates: the loader answers the
+  // piano-relayed ops here too, so a broken OpenGrand UI can still be replaced from the phone
+  var UI = window.CA79UI || null;
+  if (UI) { UI.hookKwm(window.KWM); UI.setPage(0); }
+  // the screen reporter (ops 0x35 / 0x36): the phone can read what this page shows
+  if (window.CA79Screen) {
+    window.CA79Screen.install(window.KWM);
+    window.CA79Screen.provide(function () { return { pg: "chooser", ver: BUNDLE.version || "", def: def, count: timer ? left : null }; });
+  }
+  // the fallback screen must be seen: the UI that failed may have left the backlight off (record 04 §6)
+  if (UI && UI.light) UI.light();
+  function host() {
+    if (typeof kwmcore === "object" && kwmcore && kwmcore.postMessage) return kwmcore;
+    if (typeof webkit === "object" && webkit.messageHandlers && webkit.messageHandlers.kwmcore) return webkit.messageHandlers.kwmcore;
+    return null;
+  }
+  function call(cmd, obj, ms, ok, ng) {
+    var h = host();
+    if (!h) { if (ng) ng("no bridge"); return; }
+    if (ok) waits[cmd] = { ok: ok, ng: ng || function () {}, t: ms ? setTimeout(function () { settle(cmd, false, '"timeout"'); }, ms) : 0 };
+    h.postMessage("kwmcore://" + cmd + "/?" + JSON.stringify(obj || {}));
+  }
+
+  // ---- choice + countdown ----
+  var embedded = "1";
+  var reason = q.reason || "";
+  var def = store("ca79ng.uiDefault") === "ng" ? "ng" : "kawai";
+  if (reason) def = "kawai"; // the OpenGrand UI just failed: never bounce back into it
+  var left = COUNT, timer = null;
+  var why = { load: "OpenGrand UI를 불러오지 못했습니다(load).", error: "OpenGrand UI 시작 중 오류(error).", timeout: "OpenGrand UI가 15초 안에 시작하지 못했습니다(timeout).", noconnect: "OpenGrand UI가 30초 동안 피아노와 연결하지 못했습니다(noconnect)." };
+  $("why").textContent = reason ? (why[reason] || reason) + " → Kawai 원본 UI로 갑니다." : "";
+  if (reason && (q.detail || q.ua)) $("why").textContent += "\n" + (q.detail || "") + "\n" + (q.ua || "");
+
+  function go(which) {
+    stop();
+    if (which === "ng") location.href = NG + "?embedded=" + embedded;
+    else location.href = KAWAI;
+  }
+  function paint() {
+    $("ng").className = def === "ng" ? "def" : "";
+    $("kawai").className = def === "kawai" ? "def" : "";
+    $("defl").textContent = "기본값 · default: " + (def === "ng" ? "OpenGrand" : "Kawai");
+    $("count").innerHTML = "";
+    if (timer) {
+      $("count").appendChild(document.createTextNode((def === "ng" ? "OpenGrand" : "Kawai") + " UI로 " + left + "초 뒤 이동 · starting in " + left + " s  "));
+      var b = document.createElement("button"); b.textContent = "멈춤 · stop"; b.onclick = stop;
+      $("count").appendChild(b);
+    }
+  }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } paint(); }
+  function tick() { left--; if (left <= 0) { go(def); return; } paint(); }
+
+  $("ng").onclick = function () { go("ng"); };
+  $("kawai").onclick = function () { go("kawai"); };
+  $("mkdef").onclick = function () { def = def === "ng" ? "kawai" : "ng"; store("ca79ng.uiDefault", def); stop(); };
+  $("rec").addEventListener("toggle", function () { stop(); });
+  $("oss").onclick = function () { stop(); call("launchAndroidSettingsApp"); };
+  var armed = false, USBUI = $("usbui").textContent;
+  $("usbui").onclick = function () {
+    stop();
+    var usb = window.KWM.latestUiVersion || "";
+    if (!usb) { $("msg").textContent = "USB 루트에서 version.xxx를 찾지 못했습니다(USB for UPDATE 포트, FAT32)."; return; }
+    // two taps instead of confirm(): JS dialogs depend on the shell's WebChromeClient
+    if (!armed) { armed = true; $("usbui").textContent = "한 번 더 누르면 " + usb + " 설치 · tap again"; setTimeout(function () { armed = false; $("usbui").textContent = USBUI; }, 5000); return; }
+    armed = false; $("usbui").disabled = true;
+    $("msg").textContent = "설치 중… (약 1분, 전원을 끄지 마세요)";
+    call("downloadUiData", null, 0, function () {
+      call("updateUiData", null, 0, function () {
+        $("msg").textContent = "완료: UI " + usb + ". 피아노 전원을 껐다 켜세요.";
+      }, function () { $("msg").textContent = "압축 해제 실패(updateUiData). 지금 UI는 이미 지워졌을 수 있습니다 — 다시 시도하거나 앱 데이터 삭제로 복구하세요."; });
+    }, function () { $("msg").textContent = "복호 · MD5 실패(downloadUiData). 파일 두 개가 짝이 맞는지 확인하세요. 지금 UI는 그대로입니다."; });
+  };
+  // ---- remote UI state ----
+  var SLOTSTATE = { "new": "새것 · new", ok: "확인됨 · ok", bad: "실패 · failed" };
+  function showRemote() {
+    if (!UI) { $("rstate").textContent = "UI 로더 없음 · no UI loader"; return; }
+    var s = UI.state(), out = [], k, e;
+    for (k in s.slots) if (s.slots.hasOwnProperty(k)) { e = s.slots[k]; out.push(k + " " + e.version + " (" + (SLOTSTATE[e.state] || e.state) + (e.why ? ": " + e.why : "") + ")"); }
+    $("rstate").textContent = "원격 UI · remote UI: " + (out.length ? out.join(" · ") : "없음 · none") + (s.rx === 1 ? " · 받는 중 " + s.got + "/" + s.total + " B" : "") + (s.keyId ? " · key " + s.keyId : " · 서명 키 없음 · no key");
+  }
+  var forgetArmed = false, FORGET = $("rforget").textContent;
+  $("rbundled").onclick = function () { stop(); location.href = NG + "?embedded=" + embedded + "&src=bundled"; };
+  $("rretry").onclick = function () { stop(); if (UI) UI.control(5); showRemote(); };
+  $("rforget").onclick = function () {
+    stop();
+    if (!forgetArmed) { forgetArmed = true; $("rforget").textContent = "한 번 더 누르면 지웁니다 · tap again"; setTimeout(function () { forgetArmed = false; $("rforget").textContent = FORGET; }, 5000); return; }
+    forgetArmed = false; $("rforget").textContent = FORGET;
+    if (UI) UI.control(3);
+    showRemote();
+  };
+  if (UI) UI.on(function (kind, d) {
+    if (kind === "begin") { stop(); $("rec").open = true; }
+    if (kind === "begin" || kind === "progress") $("msg").textContent = "원격 UI 받는 중 · receiving " + (d.got || 0) + "/" + (d.total || 0) + " B";
+    if (kind === "stored") $("msg").textContent = "원격 UI " + d.version + " 저장됨(" + d.slot + ") · stored — OpenGrand UI를 누르면 시작합니다.";
+    if (kind === "error") $("msg").textContent = "원격 UI 실패 · failed (rc " + d.rc + ")";
+    showRemote();
+  });
+  showRemote();
+  // ---- language of the OpenGrand UI ----
+  var LANGS = [["ko", "한국어"], ["en", "English"], ["ja", "日本語"]];
+  function settings() { try { return JSON.parse(store("ca79ng.settings") || "{}") || {}; } catch (e) { return {}; } }
+  function curLang() {
+    var l = settings().lang;
+    return l || "ko"; // the panel starts in Korean (src/state/settings.ts guessLang); a stored choice wins
+  }
+  function paintLang() {
+    var row = $("langrow"), cur = curLang(), i, b;
+    while (row.childNodes.length > 2) row.removeChild(row.lastChild);
+    for (i = 0; i < LANGS.length; i++) {
+      b = document.createElement("button");
+      b.textContent = LANGS[i][1]; b.className = LANGS[i][0] === cur ? "on" : ""; b.setAttribute("data-lang", LANGS[i][0]);
+      b.onclick = (function (id) { return function () { stop(); var s = settings(); s.lang = id; store("ca79ng.settings", JSON.stringify(s)); paintLang(); }; })(LANGS[i][0]);
+      row.appendChild(b);
+    }
+  }
+  paintLang();
+  function showScreen(lcd) {
+    $("screen").textContent = "화면 · screen: " + window.innerWidth + "×" + window.innerHeight + " CSS px · DPR " + (window.devicePixelRatio || 1) +
+      " · screen " + screen.width + "×" + screen.height + " · lang " + (navigator.language || "?") + (lcd ? " · LCD " + JSON.stringify(lcd) : "");
+  }
+  showScreen(null);
+  $("info").textContent = "이 번들: OpenGrand " + BUNDLE.version + (BUNDLE.built ? " · " + BUNDLE.built : "") + (BUNDLE.kawai ? " · Kawai UI " + BUNDLE.kawai : "");
+
+  var readyDone = false;
+  function onReady() {
+    if (readyDone) return; readyDone = true;
+    call("getEmbeddedMode", null, 3000, function (v) { embedded = v === true ? "1" : "0"; });
+    call("getVersions", null, 15000, showVer, showVer);
+    call("getLcdInfo", null, 3000, showScreen, function () { showScreen(null); });
+  }
+  function showVer() {
+    var k = window.KWM;
+    $("ver").textContent = "설치된 UI · installed: " + (k.localUiVersion || "?") + "   USB: " + (k.latestUiVersion || "없음 · none");
+  }
+  if (!host()) $("ver").textContent = "Kawai 셸 밖 (브리지 없음) · not inside the Kawai shell";
+
+  // default OpenGrand and no failure reason: straight in (owner 2026-11-15) - our UI's own checks (load / error /
+  // 15 s boot / 30 s no piano) bring it back here with ?reason; Settings → 「UI 선택」 opens it with ?stay=1.
+  // Default Kawai: the page stays and waits for a choice (the Kawai UI has no way back here).
+  if (q.stay === undefined && def === "ng" && !reason) { go("ng"); return; }
+  // no countdown at all (owner 2026-11-15): default Kawai or a failure reason → this page waits for a tap
+  paint();
+})();
+</script>
+</body>
+</html>

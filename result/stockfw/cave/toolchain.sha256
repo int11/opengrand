@@ -1,0 +1,10 @@
+# Pinned ARM GNU toolchain for the cave build (result/stockfw/cave/Makefile checks it before every build).
+# Arm GNU Toolchain 13.3.Rel1 (Build arm-13.24), arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi, unpacked under result/stockfw/.toolchain/.
+# Paths are relative to result/stockfw/. Every binary that touches the cave bytes is listed.
+1bf445453b2815ee1764dc82f2206e214c5439f4ac5d73fb5b75c4412373b627  .toolchain/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-gcc
+1281a566a27999afd82df24736435798182dc4070c50ce5b5cc871e9841187e0  .toolchain/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi/libexec/gcc/arm-none-eabi/13.3.1/cc1
+8303a88744b3cbfbdb0e1b8926b2e17f92b416fccb6b465dce2beb2a88bad62c  .toolchain/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi/arm-none-eabi/bin/as
+ada0518f9917be3a99f6b37e93c3ae5fdd262e614a5a9687dc8669a58d383b7c  .toolchain/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi/arm-none-eabi/bin/ld
+b77c79f44d7d43cbf368d1320a7c14dc7e8297fe906c15788b1c849232a5b859  .toolchain/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-objcopy
+7db1ca13e44add47b917101d5362a098d7f5ab3628ce860e7ab84105f0e22231  .toolchain/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-nm
+52cc4979d40914ea64f5d1e0e3626a2f68dfd048f2f67cdd366a30b949554f78  .toolchain/arm-gnu-toolchain-13.3.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-objdump

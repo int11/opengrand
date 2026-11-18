@@ -1,0 +1,70 @@
+OpenGrand
+Unofficial open firmware extension & remote app for Kawai CA79 / CA99
+Copyright (C) 2026 The OpenGrand authors
+
+Licensed under the GNU General Public License version 3 (see LICENSE), with the additional
+permission in ../LICENSE-EXCEPTION.md. Commercial licensing: see COMMERCIAL.md (next to this file).
+
+
+TRADEMARKS AND AFFILIATION
+--------------------------
+OpenGrand is not affiliated with, endorsed by, or sponsored by Kawai Musical Instruments Mfg. Co.,
+Ltd. "Kawai", "CA79", "CA99", "NV5S", "NV10S", "CA701", "CA901" and other product names are
+trademarks of their respective owner and are used only to describe compatibility. "PianoRemote" is
+the name of Kawai's own app; OpenGrand is a separate, independent application.
+
+Bluetooth is a registered trademark of Bluetooth SIG, Inc. Windows is a trademark of Microsoft
+Corporation. Android and Chrome are trademarks of Google LLC. Arm is a registered trademark of Arm
+Limited. All other trademarks are the property of their respective owners.
+
+
+NO THIRD-PARTY FIRMWARE
+-----------------------
+This repository contains no Kawai firmware, code, keys or assets. The build reads the user's own,
+legally obtained copy of Kawai's system update on the user's machine. Hash values of Kawai's file
+appear in the source only so that the tools can verify the user's copy.
+
+
+THIRD-PARTY COMPONENTS
+----------------------
+Components that are fetched by package managers at build time are not included in this repository;
+each is covered by its own license, listed here for convenience (see each package for its full
+license text and its own dependencies).
+
+Included in this repository:
+  Gradle Wrapper (result/app/android/gradlew, gradle/wrapper/gradle-wrapper.jar)
+      Apache License 2.0 - Gradle, Inc.
+  Ed25519 verification in result/app/panelui/uiloader.js uses the field representation of
+      TweetNaCl (Bernstein, van Gastel, Janssen, Lange, Schwabe, Smetsers) - public domain.
+  GNU General Public License v3 text (LICENSE) - Free Software Foundation, Inc.
+      (verbatim copying permitted, changing it is not allowed)
+
+Fetched at build time - remote app and desktop shell (npm):
+  TypeScript            Apache License 2.0 - Microsoft Corporation
+  esbuild               MIT - Evan Wallace
+  jsdom (tests)         MIT
+  playwright-core       Apache License 2.0 - Microsoft Corporation
+  @types/node, @types/jsdom   MIT
+  Electron              MIT - GitHub Inc., OpenJS Foundation and Electron contributors
+                        (bundles Chromium and Node.js under their respective licenses)
+  electron-builder      MIT
+
+Fetched at build time - Android shell (Gradle):
+  AndroidX Core, AndroidX WebKit   Apache License 2.0 - The Android Open Source Project
+  Nordic Semiconductor Android DFU Library (no.nordicsemi.android:dfu)
+                        BSD 3-Clause - Nordic Semiconductor ASA
+  JUnit 4 (tests)       Eclipse Public License 1.0
+  org.json (tests)      Public domain (JSON-java)
+
+Fetched at build time - image build tools (uv, Python):
+  Capstone              BSD 3-Clause
+  Keystone Engine       GPL v2 (used as a separate build-time tool; not part of any output)
+  Unicorn Engine        GPL v2 (used as a separate test-time tool; not part of any output)
+
+Toolchain (downloaded by the user, not redistributed):
+  Arm GNU Toolchain 13.3.Rel1 - GCC (GPL v3 with GCC Runtime Library Exception), GNU Binutils
+  (GPL v3), newlib (BSD-style licenses).
+
+Protocol identifiers used for interoperability (not copyrightable code):
+  BLE-MIDI service and characteristic UUIDs (MIDI Association / Apple), standard MIDI and Kawai
+  SysEx message formats as observed for compatibility.

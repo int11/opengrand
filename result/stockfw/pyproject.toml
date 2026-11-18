@@ -1,0 +1,9 @@
+[project]
+name = "ca79-stockfw"
+version = "0.1.0"
+description = "Patch/restore/verify tooling for raw CA79 MainProgram images"
+requires-python = ">=3.10"
+dependencies = ["capstone>=5.0.1", "keystone-engine>=0.9.2", "unicorn>=2.0.1"]
+
+[tool.uv]
+package = false

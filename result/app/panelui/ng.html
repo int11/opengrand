@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>OpenGrand</title>
+  <!-- Host page of the OpenGrand app inside the ORIGINAL Kawai shell (file://…/files/appUI/ng/).
+       The loader (panelui/uiloader.js, inlined at build) receives remote UI packages and
+       picks what to run: the newest verified stored version, else the app bundled here.
+       Any boot failure falls back (stored → older stored → bundled → chooser → Kawai UI). -->
+  <script>
+    // The panel WebView is Chrome 71 (field 2026-11-01: Android 6.0.1 rk312x, "Chrome/71.0.3578.99";
+    // the app died at start on nav.replaceChildren). esbuild lowers syntax only, so built-ins newer
+    // than the panel are supplied before the loader and any app: replaceChildren (Chrome 86),
+    // Blob.arrayBuffer (76); globalThis (71) and Promise.finally (63) for older WebViews.
+    // tests/bundlecore.test.ts keeps the list honest.
+    (function () {
+      if (typeof window.globalThis === "undefined") window.globalThis = window;
+      if (window.Promise && !Promise.prototype.finally) Promise.prototype.finally = function (f) {
+        return this.then(function (v) { return Promise.resolve(f()).then(function () { return v; }); },
+          function (e) { return Promise.resolve(f()).then(function () { throw e; }); });
+      };
+      [window.Element, window.Document, window.DocumentFragment].forEach(function (C) {
+        if (C && !C.prototype.replaceChildren) C.prototype.replaceChildren = function () {
+          while (this.lastChild) this.removeChild(this.lastChild);
+          for (var i = 0; i < arguments.length; i++) {
+            var n = arguments[i];
+            this.appendChild(typeof n === "string" ? document.createTextNode(n) : n);
+          }
+        };
+      });
+      if (window.Blob && !Blob.prototype.arrayBuffer) Blob.prototype.arrayBuffer = function () {
+        var b = this;
+        return new Promise(function (ok, no) {
+          var r = new FileReader();
+          r.onload = function () { ok(r.result); };
+          r.onerror = function () { no(r.error); };
+          r.readAsArrayBuffer(b);
+        });
+      };
+    })();
+  </script>
+  <script>/*UILOADER*/</script>
+  <script>/*PANELSCREEN*/</script>
+  <script>
+    (function () {
+      // KWM must exist while the page loads so the shell fires deviceready (onPageFinished);
+      // the app installs its handlers onto this same object, behind the loader's MIDI filter.
+      window.KWM = window.KWM || {
+        devices: [],
+        resolvePromise: function () {}, rejectPromise: function () {}, callbackNative: function () {},
+        onMidiMessage: function () {}, onSmfMidiMessage: function () {}, onDeviceStateChange: function () {},
+        dispatchEvent: function (id, arg) { if (id === "deviceready") window.KWM.__ready = arg || {}; }
+      };
+      if (!window.CA79UI) { // loader missing or broken: the old guard, straight back to the chooser
+        window.__ca79ngFail = function (r, d) { if (!window.__ca79ngBooted || r === "noconnect") location.replace("../index.html?reason=" + r +
+          "&detail=" + encodeURIComponent(String(d || "").slice(0, 300)) + "&ua=" + encodeURIComponent(navigator.userAgent)); };
+        window.addEventListener("error", function (e) { var d = e && (e.message || "") + (e && e.filename ? " @" + String(e.filename).split("/").pop() + ":" + e.lineno + ":" + e.colno : ""); setTimeout(function () { window.__ca79ngFail("error", d); }, 0); });
+        document.addEventListener("DOMContentLoaded", function () {
+          var l = document.createElement("link"), s = document.createElement("script");
+          l.rel = "stylesheet"; l.href = "styles.css"; document.head.appendChild(l);
+          s.src = "app.js"; s.onerror = function () { window.__ca79ngFail("load"); }; document.body.appendChild(s);
+        });
+        setTimeout(function () { window.__ca79ngFail("timeout"); }, 15000);
+        if (window.CA79Screen) CA79Screen.install(window.KWM);
+        return;
+      }
+      CA79UI.hookKwm(window.KWM);
+      // the screen reporter (ops 0x35 / 0x36: what this page shows, for the phone) - after the loader's filter
+      if (window.CA79Screen) CA79Screen.install(window.KWM);
+      window.__ca79ngFail = function (r, d) { CA79UI.fail(r, d); };
+      document.addEventListener("DOMContentLoaded", function () {
+        CA79UI.boot({ js: "app.js", css: "styles.css" });
+      });
+    })();
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+</body>
+</html>

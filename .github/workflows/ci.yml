@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            result/app/package-lock.json
+            result/desktop/package-lock.json
+
+      # No Kawai file is available in CI, so the stock-overlap scan and every stock-dependent
+      # step (image, image-check, emulator round trips) SKIP here; contributors run them locally.
+      - name: Leak check
+        run: python3 -I scripts/leakcheck.py
+
+      - name: Firmware host tests
+        run: make -C result/firmware check
+
+      - name: Generated files are fresh
+        run: make gen-check
+
+      - name: App (typecheck + tests)
+        working-directory: result/app
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+
+      - name: Desktop shell tests
+        working-directory: result/desktop
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: |
+          npm ci
+          npm test

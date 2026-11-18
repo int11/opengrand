@@ -1,0 +1,51 @@
+# scripts/leakcheck.allow - strings that look like secrets or leaks but are public and fine to publish.
+# One entry per line (case-insensitive literal), or file:<glob> to exempt a file from the content rules.
+# Add an entry only together with a comment saying what it is and why it is public.
+
+# sha256 of Kawai's official V2.19 system file CAx9_P06.SYS (a digest, not the file): every tool
+# verifies the user's own copy against it.
+09ad85703e44ad95d82475cfe2dae14c6edfa9f164a0b17b66b45f74c8d933c8
+
+# Pinned Arm GNU Toolchain 13.3.Rel1 binaries (result/stockfw/cave/toolchain.sha256) - digests of a
+# public release.
+1bf445453b2815ee1764dc82f2206e214c5439f4ac5d73fb5b75c4412373b627
+1281a566a27999afd82df24736435798182dc4070c50ce5b5cc871e9841187e0
+8303a88744b3cbfbdb0e1b8926b2e17f92b416fccb6b465dce2beb2a88bad62c
+ada0518f9917be3a99f6b37e93c3ae5fdd262e614a5a9687dc8669a58d383b7c
+b77c79f44d7d43cbf368d1320a7c14dc7e8297fe906c15788b1c849232a5b859
+7db1ca13e44add47b917101d5362a098d7f5ab3628ce860e7ab84105f0e22231
+52cc4979d40914ea64f5d1e0e3626a2f68dfd048f2f67cdd366a30b949554f78
+
+# Public test vectors
+# sha256("abc") - FIPS 180-2 example (Android UpdateManagerTest)
+ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+# RFC 8032 section 7.1 TEST 1: Ed25519 public key and signature (panelui.test.ts)
+d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a
+e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b
+# Ed25519 group order L, little-endian (panelui.test.ts)
+edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010
+
+# Conventional placeholder MAC used in iWRAP log fixtures (not a device address)
+00:11:22:33:44:55
+
+# Key-independent sha256 of the images make image builds locally from the stock file + this repository
+# (reproducible digests, no key: the OTA key bytes are neutralised before hashing - see the file).
+file:result/stockfw/ARTIFACTS.md
+
+# stock-text:<regex> - a text string (>= 48 B) shared with the stock file that is an interface fact; full match
+# after stripping surrounding white space.  Text strings shorter than 48 B are never reported; binary runs only
+# through a byte-exact stock-bin entry (end of this file).
+# Bluegiga iWRAP command / event lines (the Bluetooth module's public command set, iWRAP User Guide): the
+# firmware has to send and parse the same text the stock firmware does.
+stock-text:(SET|LIST|CALL|CLOSE|KILL|RING|INQUIRY|PAIR|CONNECT|NO CARRIER|AUDIO|A2DP|AVRCP|STREAMING|SSP|BATTERY|HFP|VOLUME)\b[ -~]*
+stock-text:[A-Z0-9_ .-]*\b(I2S_SLAVE|JOINT_STEREO|AUTOCALL|AVRCP|A2DP|PAGEMODE|CODEC)\b[A-Z0-9_ .-]*
+# Character-set tables: the Base64 alphabet (and its pieces).
+stock-text:[A-Z]*[a-z]*[0-9]*[+/]*=*
+# White space runs (display padding).
+stock-text:\s*
+
+# stock-bin:<path> <offset> <length> <sha256> - ONE binary run shared with the stock file, named byte for byte: the
+# finding must be in that file at that offset with that length, and its bytes must hash to the sha256.  Anything
+# else (a changed byte, a longer run, another offset or file) still fails.  Keep this list as short as possible.
+# (none: ota_loader_v4's stage-0 cache sync is written so that it shares no 16-byte run with the stock file - the
+# retired ota_loader_v3 needed one entry for its D-cache clean loop)

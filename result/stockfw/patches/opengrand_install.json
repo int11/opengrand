@@ -1,0 +1,63 @@
+{
+  "name": "opengrand_install",
+  "description": "opengrand_install: the one-file first install - ota_loader_v4 stage-0 + loader slot A pre-seeded with ota_stage1 (state 'C79L', seq 1, CONFIRMED: there is no older loader to fall back to) + main slot A pre-seeded with ota_main (state 'C79S', seq 1, unconfirmed: 3 tries, confirmed after ~60 s on). Later updates of both go over Bluetooth (slot B, seq 2).",
+  "base_sha256": "09ad85703e44ad95d82475cfe2dae14c6edfa9f164a0b17b66b45f74c8d933c8",
+  "patches": [
+    {
+      "id": "cave",
+      "file_offset": "0x113a14",
+      "va": "0x40173a14",
+      "blob": "cave/build/cave_s0.bin",
+      "expect_fill": "ff",
+      "note": "ota_loader_v4 stage-0, 4500 bytes, ends at va 0x40174ba8 (budget 0x40175fe0). Lands in the erased hole after loader copy #1."
+    },
+    {
+      "id": "loader_end",
+      "file_offset": "0x4b3ec",
+      "va": "0x400ab3ec",
+      "orig": "043a1740",
+      "new": "00601740",
+      "note": "End VA of loader copy #1 (FUN_400AA994: len = this - 0x400C0000). Extended so stage-0 and the root key are copied to SDRAM: 0x40173a04 -> 0x40176000 (the stage-1 window above is loaded by stage-0)."
+    },
+    {
+      "id": "ota_key",
+      "file_offset": "0x115fe0",
+      "va": "0x40175fe0",
+      "blob": "secrets/ota_key.bin",
+      "expect_fill": "ff",
+      "note": "Per-device root key (32 B, git-ignored secrets/ota_key.bin, tools/ota_pack.py). Stage-0 verifies loader images with it; stage-1 v4.0 uses it for main images and the authenticated ops (REMOTE_PROTOCOL 10.3 / 10.12)."
+    },
+    {
+      "id": "hook_s0_h1",
+      "file_offset": "0xe7e1c",
+      "va": "0x40147e1c",
+      "orig": "1d00001a",
+      "new": "fcae001a",
+      "note": "bne -> s0_h1 (0x40173a14). SysEx end handler: unknown manufacturer ID falls through to 0x40147E98. Stage-0 hands 0x7D to the running stage-1 and jumps to the same place for everything else (registers as they came)."
+    },
+    {
+      "id": "hook_s0_tick",
+      "file_offset": "0xe3ae0",
+      "va": "0x40143ae0",
+      "orig": "6afcffeb",
+      "new": "d5bf00eb",
+      "note": "bl -> s0_tick (0x40173a3c). Engine loop tail (task 24, ~8 ms). Stage-0 runs its boot step or the stage-1 tick and tail-calls the original 0x40142C90, whose return value the loop ignores."
+    },
+    {
+      "id": "seed_ldr_a",
+      "file_offset": "0x140000",
+      "blob": "build/opengrand_install.seed_ldr_a.bin",
+      "expect_fill": "ff",
+      "keyed": "c79@0x200",
+      "note": "loader A slot (NOR 0x601a0000) pre-seeded with ota_stage1.c79: state 'C79L' + seq 1 + state version 1, confirmed (+8 = 0000), the rest of the state area erased, the signed file at +0x200. The slot sectors lie in the erased hole of MainProgram that no stock copy reads (loader copy #1 ends at file 0x116000). Key-dependent (a signed .c79): the blob lives under the git-ignored build/."
+    },
+    {
+      "id": "seed_main_a",
+      "file_offset": "0x120000",
+      "blob": "build/opengrand_install.seed_main_a.bin",
+      "expect_fill": "ff",
+      "keyed": "c79@0x200",
+      "note": "main A slot (NOR 0x60180000) pre-seeded with ota_main.c79: state 'C79S' + seq 1 + state version 1, unconfirmed, the rest of the state area erased, the signed file at +0x200. The slot sectors lie in the erased hole of MainProgram that no stock copy reads (loader copy #1 ends at file 0x116000). Key-dependent (a signed .c79): the blob lives under the git-ignored build/."
+    }
+  ]
+}

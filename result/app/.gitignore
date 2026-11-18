@@ -1,0 +1,4 @@
+node_modules/
+dist/
+.panelsim/
+.panelsim-before/

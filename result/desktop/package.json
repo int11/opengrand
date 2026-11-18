@@ -1,0 +1,33 @@
+{
+  "name": "ca79ng-desktop",
+  "productName": "OpenGrand",
+  "version": "0.2.0",
+  "private": true,
+  "description": "OpenGrand desktop app: Electron shell around the built web app (result/app/dist)",
+  "author": "OpenGrand",
+  "main": "src/main.cjs",
+  "scripts": {
+    "app:build": "npm --prefix ../app run build",
+    "desktop": "npm run app:build && node scripts/run.mjs",
+    "desktop:auto": "npm run app:build && node scripts/run.mjs --cdp=9222 --automation --query=log",
+    "test": "node --test tests/policy.test.cjs",
+    "smoke": "npm run app:build && node tests/smoke.mjs",
+    "dist:win": "npm run app:build && electron-builder --win portable dir --x64 --publish never",
+    "install:win": "node scripts/install-win.mjs"
+  },
+  "build": {
+    "appId": "net.ca79ng.desktop",
+    "productName": "OpenGrand",
+    "directories": { "output": "dist-electron" },
+    "files": ["src/**", "package.json"],
+    "extraResources": [{ "from": "../app/dist", "to": "app", "filter": ["**/*", "!*.map"] }],
+    "copyright": "OpenGrand",
+    "win": { "icon": "../app/dist/icon-512.png", "signExecutable": false },
+    "portable": { "artifactName": "${productName}-${version}-portable.exe" }
+  },
+  "devDependencies": {
+    "electron": "44.8.0",
+    "electron-builder": "26.17.0",
+    "playwright-core": "1.64.1"
+  }
+}

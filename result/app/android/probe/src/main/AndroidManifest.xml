@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Install probe: NO uses-permission at all, MAIN + LAUNCHER only (never HOME). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- package visibility on API 30+ test phones; Android 6 ignores it (it is not a permission) -->
+    <queries>
+        <package android:name="jp.co.kawai.denshi.kwmapp2" />
+        <package android:name="com.google.android.webview" />
+        <package android:name="com.android.webview" />
+        <package android:name="com.android.chrome" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+    </queries>
+
+    <application
+        android:label="OpenGrand probe"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:allowBackup="false"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+        <activity
+            android:name=".ProbeActivity"
+            android:exported="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Records that the original app's link broadcast arrived (count, time, extras) and does
+             nothing else. Static so arrivals while the probe screen is closed (e.g. the Kawai app
+             resuming) are counted too; Android 6 still delivers implicit broadcasts to manifest
+             receivers (after the probe has been opened once). -->
+        <receiver
+            android:name=".LinkReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="jp.co.kawai.kwmcore.link" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

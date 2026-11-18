@@ -1,0 +1,474 @@
+/* OpenGrand — one dark theme for the panel, the phone shell and the browser (2026-11-01).
+   Palette and type follow the original Kawai panel UI (ui/css/app.css --CA-*: blacks #111/#191919/#1f1f1f/
+   #2d2c2c, text #c7c6c6/#fff, teal #10818e/#106266, red #f62c39; Roboto) — no images or branding taken.
+   The built-in panel runs Chrome 71: no flex `gap`, min()/max()/
+   clamp(), aspect-ratio, inset, :is()/:where() here unless a fallback is next to it — tests/css71.test.ts.
+   Spacing in flex rows is margins on the children; grid containers may use gap (Chrome 66). */
+:root {
+  --bg: #111111;
+  --bar: #191919;
+  --card: #1f1f1f;
+  --raised: #2d2c2c;
+  --raised-hi: #3a3939;
+  --text: #e6e5e5;
+  --muted: #a2a2a2;
+  --line: #2d2c2c;
+  --accent: #10818e;
+  --accent-dark: #106266;
+  --accent-ink: #ffffff;
+  --danger: #f62c39;
+  --radius: 10px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.4 Roboto, "Noto Sans KR", "Noto Sans CJK KR", "Noto Sans JP", system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-tap-highlight-color: transparent; }
+[hidden] { display: none !important; }
+
+/* ---- layout per surface (2026-11-01 rework) ----
+   narrow (< 900 px: the built-in panel 480×800, phones): header · one column of cards · tab bar at the bottom
+     (every tab in one row that scrolls sideways, 2026-11-02), touch sizes (≥ 44 px), sheets from the bottom
+   wide (≥ 900 px: desktop / Electron): header · tab list on the left · cards in as many columns as fit
+   body.panel (the built-in panel only): a bit larger type and rows on top of the narrow layout */
+
+/* ---- header: one line — name · status · BT chip · connect (no connect in the panel shell: always connected) ---- */
+header { display: flex; align-items: center; min-height: 56px; padding: 6px 8px 6px 14px; background: var(--bar); border-bottom: 1px solid var(--line); position: -webkit-sticky; position: sticky; top: 0; z-index: 5; }
+header > * + * { margin-left: 8px; }
+header .brand { font-size: 15px; font-weight: 600; letter-spacing: .02em; color: var(--text); white-space: nowrap; }
+header .hinfo { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; line-height: 1.25; }
+header .status, header .cobound { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header .status { color: var(--muted); font-size: 13px; }
+/* connection state as a dot before the status (header[data-phase] is set with the status text) */
+header .status::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: #5a5959; vertical-align: 1px; }
+header[data-phase="ready"] .status::before { background: #2fbf71; }
+header[data-phase="connecting"] .status::before, header[data-phase="syncing"] .status::before, header[data-phase="waking"] .status::before, header[data-phase="retaking"] .status::before { background: #e0a33a; }
+header[data-phase="displaced"] .status::before, header[data-phase="lost"] .status::before, header[data-phase="failed"] .status::before { background: var(--danger); }
+/* Bluetooth chip (ui/btaudio.ts): icon + a short state, opens the 「블루투스」 tab - on every surface, ≥ 44 px */
+header .btchip { display: flex; align-items: center; min-width: 44px; max-width: 120px; padding: 0 10px 0 8px; font-size: 13px; color: var(--muted); background: var(--raised); border-radius: 22px; }
+header .btchip .ico { display: block; flex: none; width: 20px; height: 20px; }
+header .btchip .ico svg { display: block; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+header .btchip .lbl { display: block; min-width: 0; margin-left: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+header .btchip[data-bt="streaming"] { color: #5fc3cf; }
+/* the power button: green ring while on, amber while in standby */
+header .powerbtn { display: flex; align-items: center; min-width: 44px; min-height: 44px; padding: 0 10px 0 8px; font-size: 13px; color: #8fe0b0; background: var(--raised); border-radius: 22px; white-space: nowrap; }
+header .powerbtn .ico { display: block; flex: none; width: 20px; height: 20px; }
+header .powerbtn .ico svg { display: block; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+header .powerbtn .lbl { display: block; margin-left: 4px; }
+header .powerbtn[data-state="standby"] { color: #f3d58a; }
+header .powerbtn:disabled { opacity: .6; }
+header .powerbtn[hidden] { display: none; } /* the flex above beats the UA [hidden] rule: shown while not connected (field 2026-11-15) */
+/* another controller bound at the same time (session core, op 0x1B 03): a small accent line */
+/* phones narrower than the panel (< 440 px): the chip and the power button keep their icons only, so the connect
+   button fits and the status line gets the room (the label stays in the DOM for screen readers) */
+@media (max-width: 439px) {
+  header .btchip .lbl, header .powerbtn .lbl { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  header .btchip, header .powerbtn { justify-content: center; padding: 0 12px; }
+  header button { padding: 6px 12px; }
+}
+header .cobound { font-size: 12px; color: var(--accent); font-weight: 600; }
+header button { min-height: 44px; padding: 6px 14px; font-size: 15px; white-space: nowrap; flex: none; }
+.banner { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #3a2e12; color: #f3d58a; border-bottom: 1px solid #5c4a1c; }
+.banner > * + * { margin-left: 8px; }
+.banner button { min-height: 44px; }
+
+/* ---- tabs: every tab is a button with an icon and a label (ui/tabicons.ts) in nav > .tabs#tabbar ---- */
+nav button { display: flex; align-items: center; border: 0; background: none; color: var(--muted); white-space: nowrap; }
+nav button .ico { display: block; flex: none; width: 24px; height: 24px; }
+nav button .ico svg { display: block; width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+nav button .ico svg .f { fill: currentColor; stroke: none; }
+nav button .lbl { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+nav button:active { background: var(--raised); }
+
+main { padding: 12px 12px 48px; max-width: 760px; margin: 0 auto; }
+.screen { display: grid; grid-gap: 12px; gap: 12px; }
+
+/* narrow: tab bar fixed at the bottom, like the instrument's own panel UI — every tab in one row that the finger
+   swipes sideways (user 2026-11-02). Plain overflow-x scrolling (Chrome 71: no
+   scroll-snap needed); tabs are ≥ 68 px wide below 600 px (≥ 72 up to 899) so the screen edge cuts the next one
+   (panel 480 ≈ 6¾ tabs, phone 390 ≈ 5½), and a fade shows on the side that has more (nav.fade-l / nav.fade-r, set by main.ts from
+   the scroll position). */
+@media (max-width: 899px) {
+  nav { position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; padding: 0 0 env(safe-area-inset-bottom, 0); background: var(--bar); border-top: 1px solid var(--line); }
+  nav .tabs { display: flex; overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; scrollbar-width: none; }
+  nav .tabs::-webkit-scrollbar { display: none; }
+  nav button { flex: 0 0 auto; min-width: 72px; flex-direction: column; justify-content: center; min-height: 60px; padding: 7px 8px 5px; border-radius: 0; font-size: 12px; line-height: 1.2; letter-spacing: -.01em; }
+  nav button .lbl { margin-top: 3px; }
+  nav button.on { color: #5fc3cf; background: none; box-shadow: inset 0 3px 0 var(--accent); }
+  nav::before, nav::after { content: ""; position: absolute; top: 0; bottom: 0; z-index: 1; width: 24px; pointer-events: none; opacity: 0; transition: opacity .15s; }
+  nav::before { left: 0; background: linear-gradient(to right, rgba(25, 25, 25, .85), rgba(25, 25, 25, 0)); }
+  nav::after { right: 0; background: linear-gradient(to left, rgba(25, 25, 25, .85), rgba(25, 25, 25, 0)); }
+  nav.fade-l::before, nav.fade-r::after { opacity: 1; }
+  main { padding-bottom: 88px; }
+  /* the MIDI log and its button sit above the tab bar (their inline style puts them at the bottom) */
+  #midi-log { bottom: 61px !important; }
+  #midi-log-toggle { bottom: calc(35vh + 69px) !important; }
+}
+/* wide: tab list on the left, below the header; cards flow into columns */
+@media (min-width: 900px) {
+  #app { padding-left: 200px; }
+  #app > header { margin-left: -200px; }
+  nav { position: fixed; left: 0; top: 0; bottom: 0; width: 200px; z-index: 4; padding: 68px 10px 12px; overflow-y: auto; background: var(--bar); border-right: 1px solid var(--line); }
+  nav button { width: 100%; min-height: 44px; margin: 0 0 4px; padding: 8px 12px; border-radius: 8px; font-size: 15px; text-align: left; }
+  nav button .lbl { margin-left: 12px; }
+  nav button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  main { max-width: 1400px; margin: 0; padding: 16px 20px 48px; }
+  .screen { display: block; -webkit-column-width: 400px; column-width: 400px; -webkit-column-gap: 16px; column-gap: 16px; /* c71: multi-column column-gap (Chrome 50), not flex gap */ }
+  .screen > * { -webkit-column-break-inside: avoid; page-break-inside: avoid; break-inside: avoid; margin: 0 0 16px; }
+  .banner, #autowake-note, #reconnect-note { margin-left: 20px; margin-right: 20px; }
+}
+.card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; }
+.card h3 { margin: 2px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.row { display: flex; align-items: center; justify-content: space-between; min-height: 44px; padding: 4px 0; border-top: 1px solid var(--line); }
+.row > * + * { margin-left: 12px; }
+.card h3 + .row, .card h3 + * .row:first-child { border-top: 0; }
+.row span { flex: 1; min-width: 0; }
+.row.slider input { flex: 1.4; min-width: 0; }
+.row output { min-width: 3.5em; text-align: right; font-variant-numeric: tabular-nums; color: var(--text); }
+/* value not read from the piano (yet) / set on the panel only: no default posing as the real value */
+.row.unknown input[type="range"] { opacity: .45; }
+.row.panel-only { color: var(--muted); }
+
+/* ---- controls ---- */
+button { font: inherit; color: var(--text); background: var(--raised); border: 1px solid transparent; border-radius: 8px; padding: 8px 14px; min-height: 40px; cursor: pointer; }
+button:active { background: var(--raised-hi); }
+button:disabled { opacity: .5; }
+button.primary { background: var(--accent); color: var(--accent-ink); }
+button.primary:active { background: var(--accent-dark); }
+button.danger { color: var(--danger); }
+button.big { width: 100%; font-size: 18px; margin: 8px 0; }
+select { font: inherit; color: var(--text); background-color: var(--raised); border: 1px solid transparent; border-radius: 8px; padding: 6px 30px 6px 10px; min-height: 38px; -webkit-appearance: none; -moz-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23a2a2a2' stroke-width='2'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; text-overflow: ellipsis; }
+.row select { max-width: 60%; }
+select option { background: var(--card); color: var(--text); }
+input[type=text], input[type=number], input:not([type]) { font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--raised-hi); border-radius: 8px; padding: 6px 10px; }
+/* range: drawn here (Chrome 71 has no accent-color) */
+input[type=range] { -webkit-appearance: none; appearance: none; background: transparent; height: 32px; margin: 0; }
+input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: #474647; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; margin-top: -9px; border-radius: 50%; background: var(--accent); border: 2px solid var(--text); }
+input[type=range]::-moz-range-track { height: 4px; border-radius: 2px; background: #474647; }
+input[type=range]::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--accent); }
+input[type=range]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 2px solid var(--text); }
+input[type=range]:focus { outline: none; }
+/* field 2026-11-09: the panel's Chrome 71 draws its default orange focus ring around a tapped button (tab bar) and keeps
+   it there. No focus ring on buttons (selection state is shown by the buttons' own colours). */
+button:focus, [role=button]:focus, select:focus { outline: none; }
+/* touch (html.touch-ui, ui/tapguard.ts — field 2026-11-03): a vertical drag over a slider scrolls the page. The native
+   range takes no touch (Chrome 71 jumps it to the finger on touchstart and keeps vertical drags); its row pans only
+   vertically and a clear sideways drag on the row moves the value from where it was. Mouse and keys are unchanged. */
+html.touch-ui input[type=range] { pointer-events: none; }
+html.touch-ui .slider { touch-action: pan-y; }
+/* checkbox: a switch */
+input[type=checkbox] { -webkit-appearance: none; appearance: none; position: relative; flex: none; width: 46px; height: 26px; margin: 0; border-radius: 13px; background: #474647; cursor: pointer; transition: background .15s; }
+input[type=checkbox]::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--text); transition: left .15s; }
+input[type=checkbox]:checked { background: var(--accent); }
+input[type=checkbox]:checked::after { left: 23px; }
+input[type=checkbox]:disabled { opacity: .45; }
+progress { width: 100%; height: 8px; -webkit-appearance: none; appearance: none; border: 0; border-radius: 4px; background: #474647; }
+progress::-webkit-progress-bar { background: #474647; border-radius: 4px; }
+progress::-webkit-progress-value { background: var(--accent); border-radius: 4px; }
+progress::-moz-progress-bar { background: var(--accent); border-radius: 4px; }
+a { color: #5fc3cf; }
+
+.chips { display: flex; flex-wrap: wrap; margin: 2px -4px; padding: 4px 0; }
+.chips > * { margin: 4px; }
+.chip { border-radius: 999px; padding: 6px 14px; min-height: 36px; font-size: 14px; }
+.chips .chip.on { background: var(--accent); color: var(--accent-ink); }
+.list { display: grid; grid-gap: 6px; gap: 6px; padding-top: 8px; }
+.item { text-align: left; }
+.segmented { display: flex; flex-wrap: wrap; margin: -2px; }
+.segmented > * { margin: 2px; }
+.segmented button.on, .transport button.on { background: var(--accent); color: var(--accent-ink); }
+.tempo-row { display: flex; align-items: center; justify-content: center; }
+.tempo-row > * + * { margin-left: 24px; }
+.tempo { font-size: 56px; font-weight: 300; font-variant-numeric: tabular-nums; min-width: 3ch; text-align: center; }
+.beats { display: flex; justify-content: center; min-height: 18px; }
+.beats > * + * { margin-left: 8px; }
+.dot { width: 14px; height: 14px; border-radius: 50%; background: #474647; }
+.dot.on { background: var(--accent); }
+.transport { display: flex; flex-wrap: wrap; margin: 4px -4px; }
+.transport > * { margin: 4px; }
+.transport .rec { color: var(--danger); }
+.progress { font-variant-numeric: tabular-nums; color: var(--muted); padding: 8px 0; }
+.muted { color: var(--muted); font-size: 14px; }
+p.muted { margin: 6px 0; }
+.inline { display: inline-flex; align-items: center; }
+.inline > * + * { margin-left: 8px; }
+
+dialog.sheet { border: 1px solid var(--raised); border-radius: 14px; background: var(--card); color: var(--text); width: 92vw; max-width: 480px; padding: 14px 16px; box-shadow: 0 12px 40px rgba(0, 0, 0, .6); }
+dialog.sheet::backdrop { background: rgba(0, 0, 0, .6); }
+dialog.sheet h3 { margin: 0 0 8px; font-size: 16px; color: var(--text); }
+dialog.sheet > button:last-child { margin-top: 10px; width: 100%; }
+#bt-src-dev { margin-top: 4px; }
+/* 「블루투스」 page (ui/bluetooth.ts): one device per block - name / state line with the 「선택됨」 badge, then its buttons */
+.bt-dev { padding: 6px 0 4px; border-top: 1px solid var(--line); }
+.bt-dev:first-child { border-top: 0; }
+.bt-dev-head { display: flex; align-items: center; min-height: 32px; }
+.bt-dev-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.bt-dev.selected .bt-dev-name { color: var(--text); font-weight: 600; }
+.badge { flex: none; margin-left: 8px; padding: 2px 10px; border-radius: 999px; font-size: 12px; background: var(--accent); color: var(--accent-ink); }
+.bt-sw { margin: 8px 0 4px; padding: 8px 10px; border-radius: 8px; background: var(--raised); }
+.bt-sw[data-result="1"] { color: #8fe0b0; }
+.bt-sw[data-result="3"], .bt-sw[data-result="4"], .bt-sw[data-result="5"] { color: #f3d58a; }
+.bt-confirm { margin: 6px 0; padding: 8px 10px; border: 1px solid #5c4a1c; border-radius: 8px; background: #2a2414; }
+.confirm-ask { margin: 6px 0; padding: 8px 10px; border: 1px solid #7a2a2a; border-radius: 8px; background: #2a1414; }
+button.armed { outline: 2px solid #e05a5a; }
+pre.bt-log { max-height: 40vh; overflow: auto; white-space: pre-wrap; word-break: break-all; font-size: 11px; margin: 6px 0 0; color: var(--text); }
+/* the Bluetooth page's first line: which device plays now */
+.bt-now { margin: 4px 0 8px; padding: 8px 10px; border-radius: 8px; background: var(--raised); color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+.bt-now[data-playing="1"] { color: #8fe0b0; }
+/* a small heading inside a card (「다른 기기가 재생하면」 · 「켤 때 다시 연결할 기기」) */
+p.sub { margin: 10px 0 4px; color: var(--text); font-weight: 600; }
+/* 「자세히」: the mechanism behind a short sentence */
+details.more > summary { display: inline-block; min-height: 32px; line-height: 32px; color: var(--muted); cursor: pointer; }
+
+/* groups of buttons / pickers outside a row: wrap instead of squeezing (a file picker + two buttons on a phone) */
+div.inline { display: flex; flex-wrap: wrap; align-items: center; margin: 2px -4px; }
+div.inline > *, div.inline > * + * { margin: 4px; }
+label.inline { min-height: 44px; }
+label.inline > input[type=checkbox] { margin-right: 10px; }
+.row > .inline { flex: none; justify-content: flex-end; }
+/* ---- 정보 tab (ui/info.ts): short labels never break; long values wrap in their card ---- */
+.row > .lbl { white-space: nowrap; }
+.row.stack > .lbl { flex: 0 0 100%; }
+/* stacked row: label above (muted, small), the long value below at full width with its button at the right */
+.row.stack { flex-wrap: wrap; align-items: flex-start; padding: 6px 0; }
+.row.stack > .lbl { color: var(--muted); font-size: 14px; }
+.row.stack > * + * { margin-left: 0; }
+.row.stack > .val { flex: 1 1 100%; display: flex; align-items: center; min-width: 0; margin-top: 2px; }
+.row.stack > .val > output { flex: 1 1 auto; min-width: 0; text-align: left; overflow-wrap: break-word; word-wrap: break-word; word-break: break-word; }
+.row.stack > .val > button { flex: none; margin-left: 12px; }
+/* a labelled file picker: the label names what the file is (payload / key / panel UI package) */
+label.pick { display: block; }
+label.pick > .lbl { display: block; margin-bottom: 4px; }
+label.pick > input[type=file] { display: block; width: 100%; }
+/* buttons of one step on one line, wrapping as a group (primary first) */
+div.inline.acts { margin-top: 4px; }
+/* OpenGrand identify: headline, then one small chip per feature (not buttons) */
+#ng-firmware .ng-head { display: block; }
+#ng-firmware .sep { display: none; }
+.fchips { display: flex; flex-wrap: wrap; margin: 4px -3px 0; }
+.row .fchip { flex: none; }
+.fchip { margin: 3px; padding: 2px 9px; border-radius: 999px; background: var(--raised); color: var(--muted); font-size: 12.5px; line-height: 1.5; white-space: nowrap; }
+#ota-state, #pui-state { line-height: 1.45; }
+/* collapsible sub-section (업데이트 키) and card (개발자용): the summary is the title, a full tap row */
+details.fold { border-top: 1px solid var(--line); margin-top: 6px; }
+section.card > details.fold:first-child { border-top: 0; margin-top: 0; }
+details.fold > summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; list-style: none; -webkit-user-select: none; user-select: none; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::before { content: ""; flex: none; width: 7px; height: 7px; margin: 0 12px 0 4px; border: solid var(--muted); border-width: 0 2px 2px 0; -webkit-transform: rotate(-45deg); transform: rotate(-45deg); transition: transform .15s; }
+details.fold[open] > summary::before { -webkit-transform: rotate(45deg); transform: rotate(45deg); }
+.fold-title { flex: 1; min-width: 0; color: var(--text); }
+.fold-note { display: block; color: var(--muted); font-size: 13px; overflow-wrap: break-word; word-wrap: break-word; }
+details.card-fold > summary .fold-title { font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.fold-body { padding-bottom: 6px; }
+.fold-body > [id] + [id] { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 4px; }
+.keyline { display: flex; align-items: center; margin: 4px 0 8px; }
+.keyline > input { flex: 1 1 auto; min-width: 0; width: 100%; min-height: 40px; }
+.keyline > button { flex: none; margin-left: 8px; }
+.card h4 { margin: 10px 0 2px; font-size: 15px; font-weight: 600; }
+.card h3 + h4 { margin-top: 2px; }
+#ng-probe-out, #bt-diag-out { white-space: pre-wrap; word-break: break-all; font-size: 12px; margin: 6px 0 0; }
+input[type=file] { max-width: 100%; min-height: 40px; font-size: 14px; color: var(--muted); }
+input[type=file]::-webkit-file-upload-button { font: inherit; font-size: 15px; color: var(--text); background: var(--raised); border: 0; border-radius: 8px; min-height: 40px; padding: 0 14px; margin-right: 10px; }
+
+/* ---- touch screens (narrow: the built-in panel, phones): every control ≥ 44×44 CSS px ---- */
+@media (max-width: 899px) {
+  main { max-width: none; padding-left: 10px; padding-right: 10px; }
+  .screen { display: grid; grid-gap: 10px; gap: 10px; }
+  .row { min-height: 50px; }
+  button, select { min-height: 44px; }
+  button { min-width: 44px; }
+  .chip { min-height: 44px; font-size: 15px; }
+  main .file-item button { min-height: 44px; padding: 4px 10px; }
+  input[type=range] { height: 44px; }
+  input[type=range]::-webkit-slider-thumb { width: 26px; height: 26px; margin-top: -11px; }
+  input[type=file], input[type=file]::-webkit-file-upload-button { min-height: 44px; }
+  .item { min-height: 48px; }
+  /* button groups fill their line: equal-ish widths, nothing left dangling */
+  .transport > *, .segmented > * { -webkit-box-flex: 1; flex: 1 1 auto; }
+  .tempo-row button { min-width: 64px; min-height: 56px; font-size: 24px; }
+  /* sheets (menus, Bluetooth audio) come up from the bottom over the tab bar, full width */
+  dialog.sheet { width: 100%; max-width: 100%; margin: auto 0 0; border-radius: 16px 16px 0 0; border-width: 1px 0 0; padding: 14px 14px calc(14px + env(safe-area-inset-bottom, 0)); max-height: 88vh; overflow-y: auto; }
+  dialog.sheet .item { min-height: 52px; }
+  dialog.sheet > button:last-child { min-height: 52px; }
+}
+/* phones and the panel: sliders on their own line under the label and value (whole width to drag) */
+@media (max-width: 599px) {
+  nav button { min-width: 68px; padding-left: 6px; padding-right: 6px; }
+  .row.slider { flex-wrap: wrap; padding: 6px 0 0; }
+  .row.slider > span { flex: 1 1 0; }
+  .row.slider > input { -webkit-box-ordinal-group: 3; order: 2; flex: 1 1 100%; margin-left: 0; }
+  .row.slider > output { order: 1; }
+}
+
+/* ---- built-in panel (480×800 CSS px, Chrome 71, no hover): a bit larger again ---- */
+body.panel { font-size: 17px; }
+body.panel .row { min-height: 52px; }
+body.panel button { min-height: 48px; }
+body.panel header button { min-height: 44px; }
+body.panel nav button { min-height: 64px; font-size: 12.5px; }
+body.panel nav button .ico, body.panel nav button .ico svg { width: 26px; height: 26px; }
+body.panel main { padding-bottom: 92px; }
+body.panel #midi-log { bottom: 65px !important; }
+/* display scale (feature 72): set by DisplayController as --ui-scale */
+body { zoom: var(--ui-scale, 1); }
+/* auto display off (feature 73): the backlight is dimmed by the shell; in a browser darken the page */
+html.display-off body { filter: brightness(0.05); }
+
+.sound-item { display: flex; }
+.sound-item > * + * { margin-left: 6px; }
+.sound-item .item { flex: 1; min-width: 0; }
+/* the chosen part's sound, lit like the Piano tab's chips were (the Piano tab is in the Sound tab since 2026-11-09) */
+.sound-item .item.on { background: var(--accent); color: var(--accent-ink); }
+.star { min-width: 46px; padding: 0 8px; font-size: 18px; color: var(--muted); }
+.star[aria-pressed="true"] { color: #f2c14e; }
+/* chord dictionary keyboard (feature 80) */
+.kb { --kw: calc(100% / var(--whites, 21)); --kb: calc(var(--kw) * .62); position: relative; display: flex; height: 96px; margin: 8px 0; -webkit-user-select: none; user-select: none; }
+.kb .white { flex: 1; border: 1px solid #474647; border-radius: 0 0 6px 6px; background: #e6e5e5; }
+.kb .black { position: absolute; top: 0; width: var(--kb); height: 60%; background: #000; border: 1px solid #474647; border-top: 0; border-radius: 0 0 4px 4px; z-index: 1; }
+.kb .key.on { background: var(--accent); }
+.kb .key.held { background: #3a8fd6; }
+.chord-name { font-size: 40px; font-weight: 300; text-align: center; padding-top: 8px; }
+.chord-played { font-size: 28px; text-align: center; min-height: 1.4em; }
+/* USB file manager (§9.5) */
+.file-item { display: flex; align-items: center; border-top: 1px solid var(--line); padding: 4px 0; }
+.file-item > * + * { margin-left: 6px; }
+.file-item .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.file-item .song-name { flex: 0 0 auto; min-width: 5em; font-variant-numeric: tabular-nums; }
+.file-item .song-info { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-item[data-state="empty"] .song-name { opacity: 0.6; }
+.file-item button { min-height: 36px; padding: 4px 10px; }
+/* user touch curve / per-note editors (§9.1, §9.2) */
+.editor { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; }
+.editor h4 { margin: 4px 0 8px; font-size: 15px; }
+/* the svg has a square viewBox, so height:auto keeps it square without aspect-ratio (Chrome 88) */
+svg.curve { width: 100%; max-width: 320px; height: auto; display: block; margin: 0 auto; touch-action: pan-y; }
+.curve-bg { fill: var(--bg); stroke: var(--raised-hi); }
+.curve-diag { stroke: var(--raised-hi); stroke-dasharray: 3 3; }
+.curve-line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.curve-pt { fill: var(--card); stroke: var(--accent); stroke-width: 1; }
+.curve-pt.on { fill: var(--accent); }
+.pn-overview { display: flex; align-items: flex-end; height: 48px; margin: 8px 0; background: var(--bg); border-radius: 6px; overflow: hidden; }
+.pn-bar { flex: 1; background: #474647; min-height: 1px; }
+.pn-bar + .pn-bar { margin-left: 1px; }
+.pn-bar.on { background: var(--accent); }
+.cm-result { font-variant-numeric: tabular-nums; }
+.cm-result[data-code="1"], .cm-result[data-code="2"], .cm-result[data-code="3"] { color: var(--danger); }
+/* USB firmware update mode on the panel (src/ui/updatemode.ts): covers the app until the
+   Kawai update page takes over */
+.update-mode { position: fixed; left: 0; top: 0; right: 0; bottom: 0; z-index: 97; overflow: auto; padding: 24px 16px; background: #111; color: #e6e5e5; }
+.update-mode[hidden] { display: none; }
+.update-mode h2 { margin: 0 0 12px; font-size: 22px; }
+.upd-warn { margin: 0 0 16px; padding: 12px; border-radius: 10px; background: #5c1c1c; color: #fff; font-size: 20px; font-weight: 600; }
+.upd-warn.ok { background: #10515a; }
+.upd-warn.bad { background: #6b3a0c; }
+.upd-bar { height: 16px; border-radius: 8px; background: #2d2c2c; overflow: hidden; }
+.upd-bar[hidden] { display: none; }
+.upd-fill { height: 100%; width: 0; background: #10818e; }
+.upd-pct { margin: 6px 0 12px; font-size: 18px; }
+.upd-files { margin: 0 0 12px; padding-left: 20px; word-break: break-all; }
+.upd-btns button { min-height: 44px; margin: 4px 8px 4px 0; }
+
+/* device picker rows (owner 2026-11-15): a device list, not settings buttons —
+   icon · name / how it connects · 「연결」 pill; the Bluetooth scan line is a small section label above its devices */
+.pick-sec { font-size: 12px; color: var(--muted); letter-spacing: .02em; padding: 6px 2px 0; }
+.pick-sec.pick-none { font-size: 14px; display: grid; gap: 8px; padding: 10px 2px; }
+.pick-sec.pick-none p { margin: 0; }
+button.item.dev { display: flex; align-items: center; padding: 10px 12px; min-height: 60px; }
+button.item.dev > * + * { margin-left: 12px; }
+.dev-ico { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--raised); color: #5fc3cf; }
+.dev-ico svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.dev-txt { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.dev-name { font-weight: 600; font-size: 16px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-sub { font-size: 12px; color: var(--muted); }
+.dev-go { flex: none; padding: 6px 14px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 14px; font-weight: 600; }
+button.item.dev.on .dev-go { background: none; color: #5fc3cf; padding: 6px 4px; }
+
+/* panel probe rows (Settings › 앱 · 화면): long URIs / paths must not widen the card — field 2026-11-15 the page
+   scrolled sideways on the 480 px panel */
+#usb-open select, #usb-open input, #android-peek select, #android-peek input { display: block; width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; }
+#usb-open output, #android-peek pre { display: block; max-width: 100%; overflow-wrap: anywhere; word-break: break-all; }
+
+/* ---- detail pass (2026-11-19): same palette and layout, quieter controls ----
+   header controls share one height and an outline; the connect button is an outline with a green dot once
+   connected (it is a status, not the main action); part buttons are one segmented control; chips are outlines
+   (one scrolling line below 900 px); the sound list is rows with hairlines. Chrome 71 rules apply (no gap in flex). */
+header { padding: 6px 12px 6px 16px; }
+header .brand { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+header .btchip, header .powerbtn, header button { min-height: 40px; border-radius: 10px; font-size: 14px; padding: 0 12px; background: transparent; border: 1px solid #353434; }
+header .btchip .ico, header .btchip .ico svg, header .powerbtn .ico, header .powerbtn .ico svg { width: 18px; height: 18px; }
+header button:active { background: var(--raised); }
+header[data-phase="ready"] #connect { color: var(--text); background: transparent; border-color: #353434; }
+header[data-phase="ready"] #connect::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: #2fbf71; vertical-align: 1px; }
+header[data-phase="ready"] .status::before { display: none; }
+header:not([data-phase="ready"]) #connect { background: var(--accent); border-color: transparent; color: var(--accent-ink); }
+@media (max-width: 439px) {
+  /* two lines on the left: name over status */
+  header { display: grid; grid-template-columns: 1fr auto auto auto; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; padding: 6px 10px 6px 14px; }
+  header > * + * { margin-left: 0; }
+  header .brand { grid-column: 1; grid-row: 1; align-self: end; line-height: 1.2; }
+  header .hinfo { grid-column: 1; grid-row: 2; align-self: start; }
+  header .status { font-size: 12px; }
+  header .btchip, header .powerbtn, header #connect { grid-row: 1 / span 2; margin-left: 6px; }
+  header .btchip, header .powerbtn { width: 40px; min-width: 40px; padding: 0; }
+  header #connect { padding: 0 10px; }
+}
+body.panel header .btchip, body.panel header .powerbtn, body.panel header button { min-height: 44px; }
+
+main { padding-left: 14px; padding-right: 14px; }
+.card { padding: 14px 16px 12px; border-radius: 14px; }
+.card h3 { font-size: 12px; letter-spacing: .08em; margin: 0 0 10px; }
+.row { min-height: 46px; }
+.row output { color: var(--muted); font-size: .92em; }
+
+.segmented { margin: 0; padding: 3px; background: var(--raised); border-radius: 11px; }
+.segmented > * { margin: 0; }
+.segmented button { flex: 1 1 auto; min-height: 36px; padding: 4px 12px; font-size: .9em; background: transparent; border: 0; border-radius: 8px; color: var(--muted); white-space: nowrap; }
+.segmented button:active { background: var(--raised-hi); }
+.segmented button.on { font-weight: 600; }
+@media (max-width: 599px) {
+  .segmented button { min-height: 40px; }
+  /* exactly five (the sound parts): 3 + 2 in one block instead of 4 + a stray one */
+  .segmented button:first-child:nth-last-child(5), .segmented button:first-child:nth-last-child(5) ~ button { flex: 1 1 30%; }
+  .segmented button:first-child:nth-last-child(5) ~ button:nth-child(n+4) { flex: 1 1 45%; }
+}
+body.panel .segmented button { min-height: 44px; }
+.current-sound { margin: 10px 2px 6px; font-size: .85em; }
+.card > .transport .star { flex: none; }
+
+.chip { background: transparent; border: 1px solid #383737; color: #c2c1c1; }
+.chips .chip.on { border-color: transparent; }
+@media (max-width: 899px) {
+  /* a grid item is as wide as its widest unbreakable child unless told otherwise: keep cards at the column width */
+  .screen { grid-template-columns: minmax(0, 1fr); }
+  .chips { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; margin-left: 0; margin-right: 0; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chips > * { flex: none; }
+  .chips > :first-child { margin-left: 0; }
+}
+
+.list { grid-gap: 0; }
+.sound-item { border-top: 1px solid var(--line); padding: 2px 0; }
+.sound-item:first-child { border-top: 0; }
+.sound-item .item { background: transparent; border-color: transparent; }
+.sound-item .item:active { background: var(--raised); }
+.sound-item .item.on { font-weight: 600; }
+.star { background: transparent; border-color: transparent; }
+
+input[type=range]::-webkit-slider-runnable-track { height: 3px; }
+input[type=range]::-webkit-slider-thumb { margin-top: -9.5px; border: 0; background: #fff; box-shadow: 0 0 0 3px var(--accent); width: 18px; height: 18px; margin: -7.5px 3px 0; }
+@media (min-width: 900px) { nav button { border-radius: 10px; } }
+/* song / file rows: short one-line buttons (the long label is the title) */
+.file-item button { white-space: nowrap; background: transparent; border-color: #353434; font-size: .9em; }
+.file-item button:active { background: var(--raised); }
+/* transport rows: even spacing, one weight */
+.transport button { background: transparent; border-color: #353434; }
+.transport button:active { background: var(--raised); }
+.file-item .song-info { min-width: 0; }
+.file-item .song-name { min-width: 3.2em; }
+@media (max-width: 439px) {
+  /* narrow phones: the song's state goes on a small second line so the buttons fit in every language */
+  .file-item { flex-wrap: wrap; }
+  .file-item .song-name { flex: 1 1 auto; }
+  .file-item .song-info { order: 9; flex: 1 0 100%; margin: 0 0 2px; font-size: .8em; }
+  .file-item button { padding: 4px 9px; }
+}
