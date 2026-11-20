@@ -33,7 +33,7 @@ import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright-core";
 
 import { buildApp, chooserHtml } from "./bundlecore.ts";
 import { SimProcessLink, SIM_BIN } from "./sim-link.ts";
@@ -333,16 +333,46 @@ async function audit(page: Page): Promise<Audit> {
 }
 
 /**
- * Open a tab the way a user does: its button in the tab list (wide) or the bottom tab row (narrow — every tab is
- * there since 2026-11-02; the row scrolls sideways, and the click scrolls the button into view first, as a swipe does).
+ * A user's tap on `loc`: scrolled into view (a tab in the bottom row that scrolls sideways, as a swipe does; a button
+ * in <main> vertically), then a real click.
+ *
+ * The click needs the control on the screen. When the page is wider than the screen, the emulated phone (isMobile)
+ * widens its layout viewport to the page and grows it in proportion (390×844 with a 534 px page → 534×1156) without
+ * zooming out like a phone's overview mode: the fixed bottom tab row then sits below the visible 844 px, the click
+ * lands on whatever <main> shows there and Playwright retried for 30 s ("… from <main> subtree intercepts pointer
+ * events" - a sound row or a song row depending on the screen) and the run died before its audit. That is a layout
+ * fault (the page scrolls sideways - audit overflow), not a control fault: it is logged as TAP BLOCKED with the
+ * geometry (fails the run), the control gets its own click() and the run goes on, so the screenshots and the audit
+ * show what is too wide.
  */
-async function openTab(page: Page, id: string): Promise<void> {
-  await page.locator(`nav button[data-tab="${id}"]`).click();
+async function tap(loc: Locator, what: string, log: string[]): Promise<void> {
+  const blocked = await loc.evaluate((e) => {
+    e.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const vv = window.visualViewport;
+    const vw = vv ? vv.width : innerWidth, vh = vv ? vv.height : innerHeight;
+    const r = e.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    const hit = x >= 0 && x < vw && y >= 0 && y < vh ? document.elementFromPoint(x, y) : null;
+    if (hit && e.contains(hit)) return "";
+    const d = document.documentElement;
+    const how = hit ? `${hit.tagName.toLowerCase()} "${(hit.textContent || "").trim().replace(/\s+/g, " ").slice(0, 24)}" covers it` : "off the screen";
+    return `centre ${Math.round(x)},${Math.round(y)} on a ${Math.round(vw)}×${Math.round(vh)} screen: ${how}; ` +
+      `page ${d.scrollWidth} px wide, layout viewport ${innerWidth}×${innerHeight}`;
+  });
+  if (!blocked) return loc.click();
+  log.push(`TAP BLOCKED ${what}: ${blocked}`);
+  await loc.evaluate((e) => (e as HTMLElement).click());
 }
 
-async function shootTabs(page: Page, out: string, shots: string[], audits: Record<string, Audit>): Promise<void> {
+/** Open a tab the way a user does: its button in the tab list (wide) or the bottom tab row (narrow — every tab is
+ *  there since 2026-11-02). */
+function openTab(page: Page, id: string, log: string[]): Promise<void> {
+  return tap(page.locator(`nav button[data-tab="${id}"]`), `tab ${id}`, log);
+}
+
+async function shootTabs(page: Page, out: string, shots: string[], audits: Record<string, Audit>, log: string[]): Promise<void> {
   for (let k = 0; k < TAB_IDS.length; k++) {
-    await openTab(page, TAB_IDS[k]);
+    await openTab(page, TAB_IDS[k], log);
     await sleep(700);
     await page.evaluate(() => window.scrollTo(0, 0));
     const name = `${String(k + 1).padStart(2, "0")}-${TAB_IDS[k]}`;
@@ -353,13 +383,13 @@ async function shootTabs(page: Page, out: string, shots: string[], audits: Recor
   }
   // 「정보」 after 「확인」 on a piano with the full slot payload (ngFullAnswer): every card the firmware turns on,
   // first as opened (collapsible sections as they start), then with every collapsible section open
-  await openTab(page, "info");
+  await openTab(page, "info", log);
   await sleep(300);
   const check = page.locator("#ng-check");
   if ((await check.count()) && (await check.isEnabled())) {
     ngFull = true;
     try {
-      await check.click();
+      await tap(check, "#ng-check", log);
       await sleep(2500);
       for (const [name, open] of [["11-info-ng", false], ["12-info-ng-open", true]] as const) {
         if (open) await page.evaluate(() => document.querySelectorAll("main details").forEach((d) => d.setAttribute("open", "")));
@@ -375,14 +405,14 @@ async function shootTabs(page: Page, out: string, shots: string[], audits: Recor
     }
   }
   // the connection menu sheet (not in the panel shell: always connected, no connect button)
-  await openTab(page, TAB_IDS[0]);
+  await openTab(page, TAB_IDS[0], log);
   await sleep(300);
   const menus: [string[], string][] = [[["#connect"], "90-connect-menu"]];
   for (const [sels, name] of menus) {
     for (const sel of sels) {
       const b = page.locator(sel);
       if (!(await b.count()) || !(await b.isVisible())) continue;
-      await b.click();
+      await tap(b, sel, log);
       await sleep(400);
       await page.screenshot({ path: join(out, `${name}.png`), scale: "css" });
       shots.push(`${name}.png`);
@@ -480,9 +510,9 @@ async function runPanel(browser: Browser, id: ProfileId, out: string, stage: str
     const ready = await waitReady(page);
     if (!ready) log.push("NOT CONNECTED within 25 s");
     await sleep(800);
-    await shootTabs(page, out, shots, audits);
+    await shootTabs(page, out, shots, audits, log);
     for (const tab of ["sound", "settings"]) {
-      await openTab(page, tab);
+      await openTab(page, tab, log);
       await sleep(500);
       await page.evaluate(() => window.scrollTo(0, 0));
       await screenCheck(page, phone, out, `81-screen-${tab}`, shots, log);
@@ -580,7 +610,7 @@ async function runWeb(browser: Browser, id: ProfileId, out: string, origin: stri
     const ready = await waitReady(page);
     if (!ready) log.push("NOT CONNECTED within 25 s");
     await sleep(800);
-    await shootTabs(page, out, shots, audits);
+    await shootTabs(page, out, shots, audits, log);
     return { shots, log, ready, audits };
   } finally {
     await ctx.close();
@@ -653,7 +683,7 @@ async function main(): Promise<number> {
       rmSync(out, { recursive: true, force: true });
       mkdirSync(out, { recursive: true });
       const r = updateMode ? await runUpdateMode(browser, out, stage) : PROFILES[id].kind === "panel" ? await runPanel(browser, id, out, stage) : await runWeb(browser, id, out, origin);
-      const errors = [...r.log.filter((l) => /^PAGEERROR|^NOT CONNECTED|^SCREEN FAIL|^UPDATE FAIL/.test(l)), ...(a["no-audit"] ? [] : auditErrors(id, r.audits))];
+      const errors = [...r.log.filter((l) => /^PAGEERROR|^NOT CONNECTED|^SCREEN FAIL|^UPDATE FAIL|^TAP BLOCKED/.test(l)), ...(a["no-audit"] ? [] : auditErrors(id, r.audits))];
       writeFileSync(join(out, "log.txt"), r.log.join("\n") + "\n");
       writeFileSync(join(out, "audit.json"), JSON.stringify(r.audits, null, 1) + "\n");
       const p = PROFILES[id];

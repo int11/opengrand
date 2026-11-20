@@ -409,10 +409,15 @@ header:not([data-phase="ready"]) #connect { background: var(--accent); border-co
   header .hinfo { grid-column: 1; grid-row: 2; align-self: start; }
   header .status { font-size: 12px; }
   header .btchip, header .powerbtn, header #connect { grid-row: 1 / span 2; margin-left: 6px; }
-  header .btchip, header .powerbtn { width: 40px; min-width: 40px; padding: 0; }
+  header .btchip, header .powerbtn { width: 44px; min-width: 44px; padding: 0; }
   header #connect { padding: 0 10px; }
 }
 body.panel header .btchip, body.panel header .powerbtn, body.panel header button { min-height: 44px; }
+/* touch widths (phones, small tablets): 44 px tap targets as on the panel - the 40 px above is for a mouse
+   (panelsim audit MIN_TAP; the phone header and part buttons were 40 px after the detail pass) */
+@media (max-width: 899px) {
+  header .btchip, header .powerbtn, header button { min-height: 44px; }
+}
 
 main { padding-left: 14px; padding-right: 14px; }
 .card { padding: 14px 16px 12px; border-radius: 14px; }
@@ -425,8 +430,8 @@ main { padding-left: 14px; padding-right: 14px; }
 .segmented button { flex: 1 1 auto; min-height: 36px; padding: 4px 12px; font-size: .9em; background: transparent; border: 0; border-radius: 8px; color: var(--muted); white-space: nowrap; }
 .segmented button:active { background: var(--raised-hi); }
 .segmented button.on { font-weight: 600; }
+@media (max-width: 899px) { .segmented button { min-height: 44px; } } /* touch: 44 px like the panel */
 @media (max-width: 599px) {
-  .segmented button { min-height: 40px; }
   /* exactly five (the sound parts): 3 + 2 in one block instead of 4 + a stray one */
   .segmented button:first-child:nth-last-child(5), .segmented button:first-child:nth-last-child(5) ~ button { flex: 1 1 30%; }
   .segmented button:first-child:nth-last-child(5) ~ button:nth-child(n+4) { flex: 1 1 45%; }
