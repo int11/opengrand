@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { findParam } from "../src/protocol/codecs.ts";
+import type { ParamDef } from "../src/protocol/params.gen.ts";
 import { FileAccessClient, FileAccessError } from "../src/protocol/fileaccess.ts";
 import { PianoSession } from "../src/protocol/session.ts";
 import { ParamStore } from "../src/state/store.ts";
@@ -27,6 +28,31 @@ async function boot(args: string[] = []) {
   return { link, session, store };
 }
 
+/**
+ * The value the piano reports for `p` once it equals `want`: resolves at once if the mirror already holds it, else on
+ * the notification that brings it (an event, not a guessed delay; the deadline only ends a hung run).
+ */
+function valueOf(store: ParamStore, p: ParamDef, part: number, want: number, what: string, ms = 10000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const done = () => (clearTimeout(timer), off(), resolve());
+    const timer = setTimeout(() => (off(), reject(new Error(`${what}: no notification within ${ms} ms`))), ms);
+    const off = store.subscribe(() => {
+      if (store.get(p, part)?.[0] === want) done();
+    });
+    if (store.get(p, part)?.[0] === want) done();
+  });
+}
+
+/** The next message from the piano with this v1 v2 (armed before the request that causes it is sent). */
+function nextMessage(store: ParamStore, v1: number, v2: number, what: string, ms = 10000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => (off(), reject(new Error(`${what}: no ${v1.toString(16)} ${v2.toString(16)} within ${ms} ms`))), ms);
+    const off = store.onMessage((m) => {
+      if (m.v1 === v1 && m.v2 === v2) (clearTimeout(timer), off(), resolve());
+    });
+  });
+}
+
 test("USB file manager: list, read, write, rename, delete, select, import, save-as-SMF, format (§9.5)", { skip }, async () => {
   const usb = mkdtempSync(join(tmpdir(), "ca79ng-usb-"));
   writeFileSync(join(usb, "B.MID"), tinySmf([60, 64]));
@@ -35,15 +61,8 @@ test("USB file manager: list, read, write, rename, delete, select, import, save-
   try {
     const fa = new FileAccessClient(session);
     // the simulator mounts the stick on its first USB poll; the piano notifies 10 51 2E 7F 01
-    for (let i = 0; i < 40 && store.get(findParam("USBMemory"), 0x7f)?.[0] !== 1; i++) await new Promise((r) => setTimeout(r, 50));
-    assert.equal(store.get(findParam("USBMemory"), 0x7f)?.[0], 1, "USBMemory attached");
-    // the attach notice can beat the simulator's first directory scan under load (make check-full runs
-    // ~30 emulators at once): a list right after it may answer "No data" (236) - retry briefly
-    let first: string[] = [];
-    for (let i = 0; i < 20; i++) {
-      try { first = await fa.list(); break; } catch (e) { if ((e as { code?: number }).code !== 236 || i === 19) throw e; await new Promise((r) => setTimeout(r, 100)); }
-    }
-    assert.deepEqual(first, ["A.MID", "B.MID"], "sorted, id = position");
+    await valueOf(store, findParam("USBMemory")!, 0x7f, 1, "USBMemory attached");
+    assert.deepEqual(await fa.list(), ["A.MID", "B.MID"], "sorted, id = position");
     assert.deepEqual([...(await fa.read("A.MID"))], [...tinySmf([72], [48])], "stop-and-wait read is byte exact");
 
     // a file larger than one packet group round-trips
@@ -63,8 +82,15 @@ test("USB file manager: list, read, write, rename, delete, select, import, save-
     assert.equal(await fa.select("D.MID"), 0);
     assert.equal(await store.set(findParam("SongSelect")!, 0x7f, [1, 0, 0]), true);
 
-    // import into internal song 1 (0-based 0), then save it back as SMF
+    // import into internal song 1 (0-based 0), then save it back as SMF.
+    // Selecting the (empty) song makes the piano report it to every bound controller AFTER the ACK: Result 0xEC "No
+    // data" (7E 03 00 01 6C), then MaxTime 10 52 18 (firmware src/system/music.c song_report). A Result names no
+    // operation, so if that one arrives after the next file operation has started, the operation takes it as its own
+    // answer (FileAccessClient.result -> FileAccessError 236; seen on a loaded CI runner). Wait for the MaxTime that
+    // ends the report before the next request; the client drops a Result left from before an operation.
+    const report = nextMessage(store, 0x52, 0x18, "song report after SongSelect");
     assert.equal(await store.set(findParam("SongSelect")!, 0x7f, [0, 0, 0]), true);
+    await report;
     assert.equal(await fa.load("AA.MID", 0), 0); // 24 09 00 02 (stock form)
     assert.equal(await fa.saveSongAsSmf(0), 0);
     assert.equal(await fa.saveSong(0, "S1.MID"), 0); // 24 0A 00 02 + name (stock form)
@@ -79,8 +105,7 @@ test("USB file manager: list, read, write, rename, delete, select, import, save-
     assert.equal(await fa.format(), 0);
     assert.deepEqual(await fa.list(), []);
     link.command("usb detach");
-    await new Promise((r) => setTimeout(r, 300));
-    assert.equal(store.get(findParam("USBMemory"), 0x7f)?.[0], 0, "detach notified");
+    await valueOf(store, findParam("USBMemory")!, 0x7f, 0, "detach notified"); // on the next 100 ms USB poll
     await assert.rejects(fa.list(), (e: unknown) => e instanceof FileAccessError && e.code === 0x21, "no media");
   } finally {
     link.close();
