@@ -18503,7 +18503,7 @@
   }
  ],
  "ng_versions": {
-  "current": 3,
+  "current": 4,
   "frozen": [
    59,
    119,
@@ -18522,6 +18522,10 @@
    {
     "ver": 3,
     "what": "ota_main from 2026-11-21 fold step 3: everything of version 2, with S3 read owner, S4 write owner, the MIDI channel judge and the executor gate always on - their off / on ops 1B 05 04 <x>, 1B 05 06 <x>, 1B 07 <x>, 1F 01 <x> answer rc 1 (the records 1B 05 05, 1B 05 07, 1B 07, 1F 00 stay)"
+   },
+   {
+    "ver": 4,
+    "what": "ota_main from 2026-11-21 (T1 canary): everything of version 3 + the RAM canary op 0x20 over the unreferenced SDRAM blocks T1-A / T1-B / T1-C / T1-D / T1-E / T2 (arm from a bound controller, bounded fill / verify per engine-loop pass, read, disarm)"
    }
   ],
   "features": [
@@ -18727,6 +18731,13 @@
     "bit": null,
     "since": 2,
     "what": "standby / wake notice 59 7F reaches every core-bound controller even while the panel holds the stock binding - the app needs no 19 00 poll"
+   },
+   {
+    "name": "ramcanary",
+    "byte": null,
+    "bit": null,
+    "since": 4,
+    "what": "RAM canary op 0x20: arm (bound controller) / status / region record / disarm over eight unreferenced SDRAM blocks, nothing written before an arm"
    }
   ]
  }

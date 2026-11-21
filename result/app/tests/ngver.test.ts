@@ -65,3 +65,13 @@ test("ngver 3 (fold step 3: S3 / S4 / MIDI channel / executor gate without off o
   const id3 = ident(3, [0x3b, 0x77, 0x7f, 0x3f]);
   for (const name of ALL) assert.equal(ngHas(id3, name), ngHas(id2, name), name);
 });
+
+test("ngver 4 (RAM canary op 0x20): ramcanary on from 4 only (no bit), every ngver 3 feature still on", () => {
+  assert.ok(NG_PROTO_VERSION >= 4);
+  const id3 = ident(3, [0x3b, 0x77, 0x7f, 0x3f]);
+  const id4 = ident(4, [0x3b, 0x77, 0x7f, 0x3f]);
+  assert.equal(ngHas(id3, "ramcanary"), false);
+  assert.equal(ngHas(id4, "ramcanary"), true);
+  assert.equal(ngHas(ident(1, [0x7f, 0x7f, 0x7f, 0x7f]), "ramcanary"), false); // the probe image's canary bit is op 0x09, not this
+  for (const name of ALL) if (name !== "ramcanary") assert.equal(ngHas(id4, name), ngHas(id3, name), name);
+});

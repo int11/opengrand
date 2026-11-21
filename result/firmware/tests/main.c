@@ -28,6 +28,7 @@ void suite_kpstart(void);
 void suite_xgate(void);
 void suite_kpchan(void);
 void suite_gpiodiag(void);
+void suite_ramcanary(void);
 
 int main(void)
 {
@@ -56,6 +57,7 @@ int main(void)
     suite_xgate();
     suite_kpchan();
     suite_gpiodiag();
+    suite_ramcanary();
     printf("\n%d checks, %d failures\n", t_checks, t_failures);
     return t_failures ? 1 : 0;
 }

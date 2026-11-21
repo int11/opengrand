@@ -150,7 +150,7 @@ OTA_PAYLOADS = {p.variant: p for p in (
                "save decision (feat3 0x04, op 1E 04), folded in after their field tests. "
                "IDENTIFY feat1 0x77, feat2 0x7F, feat3 0x3F. "
                "Fold step 2: one fixed source / define set, no per-feature "
-               "switches; IDENTIFY ngver (result/protocol/NGVER.md) with the feature bytes frozen at these values. S3, S4, the MIDI channel judge and the executor gate always on (boot-on 2026-11-16; fold step 3 / ngver 3 removed their off ops - the set forms answer rc 1)",
+               "switches; IDENTIFY ngver (result/protocol/NGVER.md) with the feature bytes frozen at these values. S3, S4, the MIDI channel judge and the executor gate always on (boot-on 2026-11-16; fold step 3 / ngver 3 removed their off ops - the set forms answer rc 1). ngver 4: the RAM canary op 0x20 over the unreferenced SDRAM blocks T1 / T2 (arm from a bound controller, a bounded fill / verify step per engine-loop pass)",
                feat2=FEAT2_BT | FEAT2_SESSION | FEAT2_RELAY | FEAT2_STARTUP | FEAT2_REC | FEAT2_PWROFF | FEAT2_S3,
                feat3=FEAT3_XGATE | FEAT3_S4 | FEAT3_MIDICH | FEAT3_REC2 | FEAT3_GATE | FEAT3_REC3, ngver=NG_PROTO_VERSION, boot_on=True),
 )}

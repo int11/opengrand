@@ -35,6 +35,8 @@ export const NgOp = {
   Startup: 0x1c,
   // slot payload ota_main (feat2 0x10): playback of the internal songs by the core (REMOTE_PROTOCOL.md section 10.9)
   Recorder: 0x1e,
+  // ota_main ngver 4: RAM canary over the unreferenced SDRAM blocks (REMOTE_PROTOCOL.md section 10.13)
+  RamCanary: 0x20,
 } as const;
 export type NgOpCode = (typeof NgOp)[keyof typeof NgOp];
 
@@ -64,6 +66,7 @@ const NOT_BOUND: Record<number, { subs: readonly number[]; rc: number }> = {
   0x1c: { subs: [0x01, 0x02, 0x03], rc: 2 }, // startup settings
   0x1d: { subs: [0x03, 0x05, 0x06, 0x07, 0x09, 0x0a], rc: 2 }, // BT port switches / source act / policy write / restart / AUTOCALL / class
   0x1e: { subs: [0x02], rc: 9 }, // recorder command (recctl RC_*, 9 = not bound)
+  0x20: { subs: [0x01], rc: 2 }, // RAM canary arm
 };
 
 /**

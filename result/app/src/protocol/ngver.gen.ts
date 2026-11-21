@@ -2,7 +2,7 @@
 // OpenGrand protocol version: Identify byte 1 (ngver), REMOTE_PROTOCOL.md section 10.0, protocol/NGVER.md.
 
 /** what ota_main built from this tree reports in Identify byte 1 */
-export const NG_PROTO_VERSION = 3;
+export const NG_PROTO_VERSION = 4;
 /** the four feature bytes every image with ngver >= 2 reports, unchanged from version to version */
 export const NG_FEAT_FROZEN: readonly number[] = [59, 119, 127, 63];
 
@@ -38,9 +38,10 @@ export const NG_FEATURE_TABLE: readonly NgFeatureDef[] = [
   {"name": "writeowner", "byte": 3, "bit": 32, "since": 2},
   {"name": "filexfer", "byte": null, "bit": null, "since": 2},
   {"name": "standbyfanout", "byte": null, "bit": null, "since": 2},
+  {"name": "ramcanary", "byte": null, "bit": null, "since": 4},
 ];
 
-export type NgFeatureName = "identify" | "status" | "nordump" | "port" | "echo" | "apo" | "canary" | "btlog" | "core" | "ota" | "hookdemo" | "power" | "sysex" | "tvwake" | "bt" | "session" | "panelui" | "startup" | "recorder" | "remoteoff" | "readowner" | "recordctl" | "intakegate" | "recsave" | "execgate" | "midichan" | "writeowner" | "filexfer" | "standbyfanout";
+export type NgFeatureName = "identify" | "status" | "nordump" | "port" | "echo" | "apo" | "canary" | "btlog" | "core" | "ota" | "hookdemo" | "power" | "sysex" | "tvwake" | "bt" | "session" | "panelui" | "startup" | "recorder" | "remoteoff" | "readowner" | "recordctl" | "intakegate" | "recsave" | "execgate" | "midichan" | "writeowner" | "filexfer" | "standbyfanout" | "ramcanary";
 
 const BY_NAME = new Map(NG_FEATURE_TABLE.map((f) => [f.name, f]));
 

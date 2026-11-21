@@ -101,6 +101,8 @@ POWER_SRC += $(FW)/src/kproto/kpgate.c
 POWER_SRC += $(FW)/src/system/xgate.c $(FW)/ports/cave/xgate_cave.c
 #   MIDI channel messages / delayed apply, op 1B 07, off at boot until 1B 07 01
 POWER_SRC += $(FW)/src/kproto/kpchan.c
+#   RAM canary over the unreferenced SDRAM blocks, op 0x20 (ngver 4), nothing written before an arm
+POWER_SRC += $(FW)/src/system/ramcanary.c $(FW)/ports/cave/canary_cave.c
 OTA_POWER_SRC := $(if $(filter-out 0,$(POWER)),$(POWER_SRC))
 # the two build switches left in the ports, both "cave vs host test", not features:
 #   CA79NG_SESSION=1  sysex_cave.c / power_hooks.c: the full front (the host test builds the bare Phase 3-1 front)

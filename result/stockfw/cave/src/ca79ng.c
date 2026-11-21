@@ -87,6 +87,10 @@
  *   (no bit)      every power-family payload built from source (ota_main) also answers the read-only
  *                 GPIO diagnostic op 0x17 (result/firmware/ports/cave/gpio_cave.c): GPIO bank snapshot, change log, change notices to a bound controller.  No feature
  *                 bit (as the APO test 19 04): an older payload stays silent.
+ *   (ngver 4)     ota_main also answers the RAM canary op 0x20 (result/firmware/ports/cave/canary_cave.c, core
+ *                 src/system/ramcanary.c): after an arm from a bound controller it fills the unreferenced SDRAM
+ *                 blocks T1 / T2 (never R1) a bounded step per engine-loop pass and keeps verifying them.  The only op of
+ *                 ota_main that writes RAM outside its own state, and only the armed blocks.
  * The probe ops only READ stock globals.
  */
 #include "stock.h"
@@ -235,6 +239,7 @@
 #include "startup_cave.h" /* result/firmware/ports/cave */
 #include "recctl_cave.h"  /* result/firmware/ports/cave */
 #include "xgate_cave.h"   /* result/firmware/ports/cave */
+#include "canary_cave.h"  /* result/firmware/ports/cave - RAM canary, op 0x20 */
 #endif
 
 /* dump states, reported verbatim by OP_STATUS */
@@ -734,6 +739,7 @@ void ng_tick(void)
     btc_tick();         /* port 2 latch clear, AS guard, BT module query, queued 0x1D */
     xgc_tick();         /* executor gate: hook its two v3 sites on the first pass */
     gdc_tick();         /* GPIO diagnostic (read only): sample the watched pins, answer a queued 0x17, change notice */
+    cnc_tick();         /* RAM canary (op 0x20): a queued request, then one bounded fill / verify step while armed */
 #endif
 #if HAVE_CANARY
     probe_tick();
@@ -902,6 +908,7 @@ void ng_sysex(u32 port, const u8 *buf, u32 len)
     case PW_OP_STANDBY:
     case PW_OP_DIAG: pwc_sysex((u8)port, buf, len);   break;   /* runs on the next tick */
     case GDC_OP:    gdc_sysex((u8)port, buf, len);    break;   /* read only; runs on the next tick */
+    case CNC_OP:    cnc_sysex((u8)port, buf, len);    break;   /* RAM canary; runs on the next tick */
     case SX_OP_FRONT:
 #if HAVE_POWER
         if (len == 9 && buf[7] == RL_DIAG_SUB) {   /* 1B 10: the relay's counters */

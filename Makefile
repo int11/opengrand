@@ -62,7 +62,8 @@ STOCK_FAST := \
 	roundtrip_midich.py:ota_main \
 	roundtrip_usbplay.py:ota_main \
 	roundtrip_fread.py:ota_main \
-	roundtrip_bootdefaults.py:ota_main
+	roundtrip_bootdefaults.py:ota_main \
+	roundtrip_canary_t1.py:ota_main
 STOCK_SLOW := \
 	roundtrip_ota.py:-q \
 	roundtrip_ota_apply.py:-q \

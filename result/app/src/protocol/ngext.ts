@@ -16,3 +16,4 @@ export * from "./ngext/power.ts";
 export * from "./ngext/startup.ts";
 export * from "./ngext/recorder.ts";
 export * from "./ngext/gpio.ts";
+export * from "./ngext/canary.ts";

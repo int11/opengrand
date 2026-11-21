@@ -1525,6 +1525,17 @@ TEST(power_frame_quiet_tells_polls_from_activity)
     CHECK(power_frame_quiet(gp_snap, sizeof gp_snap));
     CHECK(power_frame_quiet(gp_log, sizeof gp_log));
     CHECK(power_frame_quiet(gp_on, sizeof gp_on));
+    /* the RAM canary 0x20: status and region records are reads, arm / disarm are not */
+    static const uint8_t cn_st[] = {0xF0, 0x7D, 0x43, 0x41, 0x37, 0x39, 0x20, 0xF7};
+    static const uint8_t cn_st0[] = {0xF0, 0x7D, 0x43, 0x41, 0x37, 0x39, 0x20, 0x00, 0xF7};
+    static const uint8_t cn_reg[] = {0xF0, 0x7D, 0x43, 0x41, 0x37, 0x39, 0x20, 0x02, 0x01, 0xF7};
+    static const uint8_t cn_arm[] = {0xF0, 0x7D, 0x43, 0x41, 0x37, 0x39, 0x20, 0x01, 0x03, 0x00, 0xF7};
+    static const uint8_t cn_off[] = {0xF0, 0x7D, 0x43, 0x41, 0x37, 0x39, 0x20, 0x03, 0xF7};
+    CHECK(power_frame_quiet(cn_st, sizeof cn_st));
+    CHECK(power_frame_quiet(cn_st0, sizeof cn_st0));
+    CHECK(power_frame_quiet(cn_reg, sizeof cn_reg));
+    CHECK(!power_frame_quiet(cn_arm, sizeof cn_arm));
+    CHECK(!power_frame_quiet(cn_off, sizeof cn_off));
     CHECK(power_frame_quiet(lvl, sizeof lvl));
     CHECK(power_frame_quiet(fa_list, sizeof fa_list));
     CHECK(power_frame_quiet(fa_ack, sizeof fa_ack));

@@ -186,8 +186,8 @@ static inline bool power_apo_test_secs_ok(uint32_t s)
  *     opens).  Everything else (fn 10 sets, 31 / 32 commands incl. the panel
  *     touch 32 51 39, other 24 file operations, 09 staging, other 7E) is activity.
  *   OpenGrand (F0 7D 43 41 37 39 op [sub] ...): 01 identify, 03 status, 17 (GPIO diagnostic, every form), 18 00, 19 00, 1A, 1B reads (all but 1B 01),
- *     1C 00, 1D 00 / 01 / 02 / 04 / 08 / 0B / 0F, 1D 06 without arguments and 1D 09 [00 | 01] (reads), 1E 00 / 01, the panel's relay
- *     replies 70-7F.  Everything else (policy / standby / wake / remote off, 1B 01, 1C / 1D / 1E changes, relay
+ *     1C 00, 1D 00 / 01 / 02 / 04 / 08 / 0B / 0F, 1D 06 without arguments and 1D 09 [00 | 01] (reads), 1E 00 / 01, 20 00 / 02 (RAM
+ *     canary status / region record), the panel's relay replies 70-7F.  Everything else (policy / standby / wake / remote off, 1B 01, 1C / 1D / 1E changes, relay
  *     0x30-0x3F, unknown ops) is activity.  A bare op (no sub byte) is its read form where one exists.
  *   Any other frame: activity. */
 static inline __attribute__((always_inline)) bool power_frame_quiet(const uint8_t *m, uint32_t n)
@@ -216,8 +216,8 @@ static inline __attribute__((always_inline)) bool power_frame_quiet(const uint8_
         bool only_sub = n == 9;                   /* F0 .. op sub F7: no argument after the sub byte */
         if (op == 0x01 || op == 0x03 || op == 0x17 || op == 0x1A || (op >= 0x70 && op <= 0x7F))
             return true;
-        if (op == 0x18 || op == 0x19 || op == 0x1C || op == 0x1E)
-            return sub == 0x00 || (op == 0x1E && sub == 0x01);
+        if (op == 0x18 || op == 0x19 || op == 0x1C || op == 0x1E || op == 0x20)
+            return sub == 0x00 || ((op == 0x1E && sub == 0x01) || (op == 0x20 && sub == 0x02));
         if (op == 0x1B)
             return sub != 0x01;
         if (op == 0x1D)

@@ -880,6 +880,8 @@ test("BLE transfer estimate for the real app bundle (MTU 23, paced writer)", asy
   // list rows: 175 654 B)
   // 176 500 -> 177 500 (2026-11-19, ui/picker.ts: the desktop app's Bluetooth search inside the connection dialog -
   // the picker is shared with the panel, which never runs that branch: 176 596 B)
-  assert.ok(file.length < 177_500, `package ${file.length} B`);
+  // 177 500 -> 181 000 (2026-11-21, ui/ramcanary.ts 「RAM 카나리」 developer view (op 0x20) + ngext/canary.ts + its lines in
+  // en/ja/ko: 180 144 B)
+  assert.ok(file.length < 181_000, `package ${file.length} B`);
   console.log(`# real bundle: package ${file.length} B, ${e.frames} frames, ${e.blePackets} BLE packets; window ≈ ${e.windowedS.toFixed(0)} s, stop-and-wait ≈ ${e.stopAndWaitS.toFixed(0)} s`);
 });

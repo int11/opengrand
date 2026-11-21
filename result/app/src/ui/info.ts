@@ -8,6 +8,7 @@ import { panelUiBox } from "./paneluibox.ts";
 import { panelScreenBox } from "./panelscreenbox.ts";
 import { panelToolsBox } from "./paneltools.ts";
 import { powerDevSection } from "./power.ts";
+import { ramCanarySection } from "./ramcanary.ts";
 import { kwmcoreAvailable } from "../transport/kwmcore.ts";
 import {
   activeName, ApplyTarget, keyId, OTA_APPLY_STATE, OTA_CAP, OTA_CAP2, OTA_KEY_STORAGE, OTA_REASON, OtaClient, OtaTarget, type OtaStatus,
@@ -170,6 +171,7 @@ export function infoScreen(ctx: AppContext): HTMLElement {
       ngOut.textContent = t("Stock firmware (no reply)");
       ngDumpBox.hidden = true;
       ngProbeBox.hidden = true;
+      canaryBox.hidden = true;
       otaBox.hidden = true;
       btBox.show(false);
       devShown();
@@ -192,6 +194,7 @@ export function infoScreen(ctx: AppContext): HTMLElement {
       anyProbe ||= !btn.hidden;
     }
     ngProbeBox.hidden = !anyProbe;
+    canaryBox.hidden = !ngHas(info, "ramcanary");
     btBox.show(ngHas(info, "bt"));
     devShown();
     // The OTA ops live in the resident loader, not in the payload: a slot payload that does not
@@ -600,13 +603,16 @@ export function infoScreen(ctx: AppContext): HTMLElement {
   // owner 2026-11-16: every field-test tool lives here - the firmware slot tools, the power
   // tests (remote off, auto power-off test, GPIO; from Settings › 전원) and the panel USB tools (from Settings › 앱 · 화면)
   const powerDev = powerDevSection(ctx, () => devShown());
+  // 「RAM 카나리」 (op 0x20, ngver 4): the field canary over the unreferenced SDRAM blocks, shown when Identify says ramcanary
+  const canaryBox = ramCanarySection(() => ctx.session());
   const appDev = panelToolsBox(ctx.app);
   const devCard = h("section", { class: "card", id: "ng-dev", hidden: !panelShot && !appDev },
     cardFold(fold("ng-dev-fold", h("span", { class: "fold-title" }, t("Developer")), false,
-      h("div", { class: "fold-body" }, panelShot, otaDev, powerDev, ngProbeBox, btBox, ngDumpBox, appDev))));
+      h("div", { class: "fold-body" }, panelShot, otaDev, powerDev, canaryBox, ngProbeBox, btBox, ngDumpBox, appDev))));
   function devShown(): void {
     otaDev.hidden = otaBox.hidden;
-    devCard.hidden = !panelShot && !appDev && otaDev.hidden && powerDev.hidden && ngProbeBox.hidden && btBox.hidden && ngDumpBox.hidden;
+    devCard.hidden = !panelShot && !appDev && otaDev.hidden && powerDev.hidden && canaryBox.hidden && ngProbeBox.hidden && btBox.hidden
+      && ngDumpBox.hidden;
   }
 
   // Order: what runs (versions, the custom firmware) · the updates people use (firmware, panel UI, app / module) ·

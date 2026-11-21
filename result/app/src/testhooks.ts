@@ -1,6 +1,9 @@
 // Helpers for automated device tests that drive the app from outside (e.g. the desktop app over CDP).
 // `window.__H` — no UI, no effect unless a test calls it. Logs come from window.__midiLog (ring, "t RX|TX hex").
-type W = { __midiLog: unknown[]; __sendHex: (hex: string) => void; __ca79?: { session: () => { takeControl(): Promise<unknown> } | null; files: () => unknown } };
+import { NgClient, NgRamCanary } from "./protocol/ngext.ts";
+import type { PianoSession } from "./protocol/session.ts";
+
+type W = { __midiLog: unknown[]; __sendHex: (hex: string) => void; __ca79?: { session: () => PianoSession | null; files: () => unknown } };
 
 export function installTestHelpers(): void {
   const w = globalThis as unknown as W & { __H?: unknown };
@@ -40,6 +43,16 @@ export function installTestHelpers(): void {
     err: (e: unknown) => String((e as Error)?.message || e),
     /** file channel wedged after a fn24 timeout: CONNECT + re-sync, no BLE reconnect */
     recover: () => w.__ca79!.session()!.takeControl(),
+    /** RAM canary op 0x20 (ngver 4, REMOTE_PROTOCOL 10.13): arm(mask) (default T1-A + T1-B; this app must be bound),
+     *  status(), regions() (all eight records), read() (both), disarm(); null = no answer */
+    canary: {
+      c: () => new NgRamCanary(new NgClient(w.__ca79!.session()!)),
+      arm: (mask = 0x03) => H.canary.c().arm(mask),
+      status: () => H.canary.c().status(),
+      regions: () => H.canary.c().regions(),
+      read: async () => ({ status: await H.canary.c().status(), regions: await H.canary.c().regions() }),
+      disarm: () => H.canary.c().disarm(),
+    },
   };
   w.__H = H;
 }
