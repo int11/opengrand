@@ -71,12 +71,15 @@
 # (paused while a set / fan-out, staging, the startup restore, a flash job, the recorder or standby is in progress) and
 # sorts each difference: explained (a known stock path) or unexplained (fixed + fanned out to every bound controller).
 # op 1B 05 02 = counters, 1B 05 03 [k] = the ring of the last unexplained ones.  App + panel bound, panel = stock binding.
-# A boot-on payload (images boot_on) is switched to all four runtime
-# switches off first (switches_off) in 16-21, so they measure S2 / S3 alone as before; 19 checks the boot state:
+# S3 / S4 / the MIDI channel judge / the executor gate are always on in ota_main (boot-on 2026-11-16; fold step 3,
+# 2026-11-21, removed their off ops), so 16-21 and 25-26 run with all four on, as on the piano.  Where these checks
+# compared with "S3 off" before fold step 3 they compare with the stock alone (S) or with the stock getter's own answer
+# while the store is untrusted; 19 checks the boot state and that the old off op 1B 05 04 00 is refused:
 #   16 stock-originated changes, no set from anybody: the headphone jack (state byte 0x4139E7FA + the engine loop's
 #      notice FUN_4014C048(0x58) to the panel) and a MIDI Program Change on USB-MIDI (the stock's own channel path
 #      FUN_401475CC -> FUN_4016053C(ctx, 0, 7), no controller told) -> the periodic passes find 51 29 7F (NOTIFY) and
-#      55 00 00 (KEY): 2 explained, 0 unexplained, no extra frame (the app has 51 29 once, from the tap)
+#      55 00 00 (KEY): 2 explained, 0 unexplained (the app has 51 29 once, from the tap); with S3 on the silent key
+#      55 00 00 goes once to the app and the panel (before fold step 3, with S3 switched off: no frame)
 #   17 a hidden direct RAM write (metronome volume byte, no path at all) -> exactly 1 unexplained difference: the store
 #      is fixed, the app and the panel get F0 40 7F 10 04 1E 56 03 7F <new> F7 once each, 1B 05 03 shows the key with
 #      the old / new value, the next pass finds nothing
@@ -95,11 +98,11 @@
 #      32 51 7E 7F 00 00 reach the app, nothing reaches the panel (the tap does not relay 32 51 7E), binding 3 -> 4.
 #   24 the app stops ACKing mid-list: the stock's 16 sends then its unbind (FUN_4014B55C, binding 0, as for any non-panel
 #      binding) - the core gives the panel its binding back, the app is out of the table as the stock decided.
-#   25 Phase 3-4 S4, S3 + S4 on: a panel set of a pure key (speaker volume)
-#      keeps the store trusted - the app's request right after the ACK is served from the store, new value, == S3 off; the
+#   25 Phase 3-4 S4, S3 + S4 on (from boot): a panel set of a pure key (speaker volume)
+#      keeps the store trusted - the app's request right after the ACK is served from the store, the new value; the
 #      same key one byte short: ACKed, refused, the answer unchanged (the read-back undid the front's mirror)
-#   26 a set that is not pure (Sound of part 00): the S3 rule (untrusted until a clean walk); 1B 05 06 00 - the pure key's
-#      set is the S3 rule again, the S4 counters stand still
+#   26 a set that is not pure (Sound of part 00): the S3 rule (untrusted until a clean walk); the old off op 1B 05 06 00 ->
+#      rc 1, S4 stays on (before fold step 3 it switched S4 off: the pure key's set was the S3 rule again)
 from __future__ import annotations
 
 import pathlib
@@ -647,8 +650,6 @@ def state_s2(m, rows):
     n = NetF(side_settings(m, m.data), pump=True)
     n.pump_log = []
     both_bound(n)
-    if BOOT_ON:
-        assert switches_off(n) == [0, 0, 0, 0]
     s0 = wait_passes(n, 1)
     # ---- 16 stock-originated changes ----
     n0 = len(n.tx)
@@ -665,9 +666,13 @@ def state_s2(m, rows):
                f"+{s1 and s0 and s1['fanned'] - s0['fanned']}; 51 29 frames to the app {len(hp_app)} (tap), 55 00 frames "
                f"{pc_any}",
                s0 is not None and s1 is not None and s1["period"] == 5000 and d1["notify"] == 1 and d1["key"] == 1
-               and d1["none"] == 0 and s1["fanned"] == s0["fanned"] and len(hp_app) == 1 and not pc_any)
+               and d1["none"] == 0 and s1["fanned"] == s0["fanned"] and len(hp_app) == 1
+               and sorted(p for p, _f in pc_any) == [APP, PANEL] and pc_any[0][1] == pc_any[1][1])
+    # S3 always on (fold step 3): the silent stock key 55 00 00 (KEY, explained) is fanned once to every bound controller
+    # (kst_key_silent - the S3 rule, roundtrip_fanout 21); S2's own "fanned" (unexplained) count stays
     rows.append(("16", "S2: 스톡발 변경(헤드폰 통지 · USB-MIDI 프로그램 체인지)",
-                 f"주기 대조가 51 29 7F(통지) · 55 00 00(스톡 자체 키) 설명됨 2, 설명 안 됨 0, 팬아웃 0(51 29는 탭으로 앱 1)"))
+                 f"주기 대조가 51 29 7F(통지) · 55 00 00(스톡 자체 키) 설명됨 2, 설명 안 됨 0; 51 29는 탭으로 앱 1, "
+                 f"55 00 00은 S3 켬이라 조용한 키 팬아웃으로 앱 · 패널 1프레임씩"))
     # ---- 17 a hidden direct RAM write ----
     vol = n.b(METRO_CFG + 7)
     new = vol ^ 0x10
@@ -743,22 +748,8 @@ def s3_diag(side, port=APP):
 BOOT_ON = False   # main(): the payload's images boot_on
 
 
-def switches_off(n, port=APP):
-    """the four runtime switches off as the app turns them off - op 1B 05 04 00 (S3), 1B 05 06 00 (S4), 1B 07 00 (the
-    MIDI channel judge), 1F 01 00 (the executor gate) - then one pass (the gate unhooks there): the state a default-off
-    payload booted in, so the S2 / S3 checks below measure what they did before the boot-on change.  rc of each."""
-    rcs = [s3_set(n.s, 0, port)]
-    d = s4_diag(n.s, 0x06, 0, port)
-    rcs.append(d and d["rc"])
-    for body in (rs.rp.req(rs.OP_FRONT, 0x07, 0x00), rs.rp.req(0x1F, 0x01, 0x00)):
-        b = rs.rp.body_of(n.s.pn.sysex(port, body), port)
-        rcs.append(b[1][1] if b and len(b[1]) > 1 else None)
-    n.run(10)
-    return rcs
-
-
 def s3_set(side, on, port=APP):
-    """op 0x1B 05 04 <0|1>: rc."""
+    """op 0x1B 05 04 <0|1> - the S3 switch before fold step 3; from ngver 3 refused (rc 1): rc."""
     out = side.pn.sysex(port, rs.rp.req(rs.OP_FRONT, 0x05, 0x04, on))
     b = rs.rp.body_of(out, port)
     return b[1][1] if b and b[0] == rs.OP_FRONT | 0x40 and b[1][:1] == b"\x05" else None
@@ -803,10 +794,8 @@ def state_s3(m, rows):
     n.pump_log = []
     both_bound(n)
     wait_passes(n, 1)
-    d0 = s3_diag(n.s)                                      # the boot state: on for a boot-on payload
-    rc_off = switches_off(n) if BOOT_ON else [0, 0, 0, 0]
-    off = answer(n, [0x5F, 0x7F, 0x7F])                    # S3 off: the stock getter, as before
-    rc_on = s3_set(n.s, 1)
+    d0 = s3_diag(n.s)                                      # the boot state: on (always, from fold step 3)
+    rc_off = s3_set(n.s, 0)                                # the old off op: refused
     w0 = until_trusted(n)
     a = s3_diag(n.s)
     p0 = len(n.pump_log)
@@ -817,33 +806,32 @@ def state_s3(m, rows):
     dump_log = pump_stats(n.pump_log[p0:])
     dd, dk = s3_delta(a, b), s3_delta(b, c)
     # the app CONNECTs again (the stock binds it now: FUN_4015DE98 copies the VT ctx - those values change, the stock's)
-    # and syncs: CONNECT + identity change run state only - the store stays trusted and answers; S3 off == on
+    # and syncs: CONNECT + identity change run state only - the store stays trusted and answers; only the VT keys differ
+    # from the stock alone's boot dump (the stock's own VT ctx copy)
     n0 = len(n.tx)
     ok_c, _r = connect(n, APP, full=True)
     re_dump = values(n.tx[n0:], APP)
     e = s3_diag(n.s)
     de = s3_delta(c, e)
-    s3_set(n.s, 0)
-    re_off = answer(n, [0x5F, 0x7F, 0x7F])
-    s3_set(n.s, 1)
     moved = sorted({f[6:9].hex() for f, g in zip(re_dump, ref_s) if f != g})
     bad_keys = [i for i, (x, y) in enumerate(zip(keys_on, keys_s)) if x != y]
-    ok = check(f"19 S3 read owner: record at boot {d0 and hex(d0['flags'])} ({'on' if BOOT_ON else 'off'} expected), "
-               f"switched off {rc_off}, 1B 05 04 01 rc {rc_on}, trusted after {w0} ms; full dump "
-               f"{len(on)} values == S3 off {on == off} == the stock alone {on == ref_s} ({len(ref_s)}); per value read "
+    ok = check(f"19 S3 read owner: record at boot {d0 and hex(d0['flags'])} (on expected), the old off op 1B 05 04 00 rc "
+               f"{rc_off}, trusted after {w0} ms; full dump "
+               f"{len(on)} values == the stock alone {on == ref_s} ({len(ref_s)}); per value read "
                f"{dd}; {len(S3_KEYS)} single-key requests == the stock alone {bad_keys or 'all'} "
-               f"({[len(k) for k in keys_on]}, {dk}); app re-CONNECT + dump ({len(re_dump)}) == S3 off {re_dump == re_off}, "
-               f"{de}, flags {e and hex(e['flags'])}, keys the stock changed {moved}; pump tail during the dump {dump_log}",
-               d0 is not None and d0["layout"] == 8 and d0["flags"] & 0x03 == (0x03 if BOOT_ON else 0x01)
-               and rc_off == [0, 0, 0, 0] and rc_on == 0 and w0 is not None
-               and len(ref_s) == 239 and on == ref_s and off == ref_s and dd is not None and dd["served"] >= 140
+               f"({[len(k) for k in keys_on]}, {dk}); app re-CONNECT + dump ({len(re_dump)}), "
+               f"{de}, flags {e and hex(e['flags'])}, keys that differ from the stock alone's boot dump {moved}; pump tail "
+               f"during the dump {dump_log}",
+               d0 is not None and d0["layout"] == 8 and d0["flags"] & 0x03 == 0x03
+               and rc_off == 1 and w0 is not None
+               and len(ref_s) == 239 and on == ref_s and dd is not None and dd["served"] >= 140
                and dd["untrusted"] == 0 and dd["miss"] == 1 and dd["stale"] == 0
                and keys_on == keys_s and not bad_keys and sum(len(k) for k in keys_on) >= 20
                and dk["served"] > 0 and dk["stock"] > 0 and dk["untrusted"] == 0
-               and ok_c and len(re_dump) == 239 and re_dump == re_off and de["served"] >= 140 and de["untrusted"] == 0
+               and ok_c and len(re_dump) == 239 and de["served"] >= 140 and de["untrusted"] == 0
                and e["flags"] & 0x04 and all(0x30 <= int(k[4:], 16) <= 0x3F for k in moved))
     rows.append(("19", "S3: 요청 답을 store에서",
-                 f"전체 덤프 {len(on)}값 = S3 끔 = 스톡 단독(바이트 · 순서) — store가 답함 {dd and dd['served']} · 스톡 "
+                 f"전체 덤프 {len(on)}값 = 스톡 단독(바이트 · 순서) — store가 답함 {dd and dd['served']} · 스톡 "
                  f"{dd and dd['stock']} · store에 없음 {dd and dd['miss']}; 키 하나 요청 {len(S3_KEYS)}개 = 스톡; 앱 다시 "
                  f"CONNECT 뒤 덤프도 store {de and de['served']}"))
 
@@ -858,26 +846,22 @@ def state_s3(m, rows):
     i_ = s3_diag(n.s)
     late = answer(n, [0x55, 0x7F, 0x7F])
     j_ = s3_diag(n.s)
-    s3_set(n.s, 0)
-    late_off = answer(n, [0x55, 0x7F, 0x7F])
-    s3_set(n.s, 1)
-    until_trusted(n)
     quiet(n)
     set_and_wait(n, PANEL, [0x55, 0x00, 0x00, 0x00, 0x00, 0x00], ms=0)   # back: how long until the store answers again
     w1 = until_trusted(n)
     ref55 = [f for f in ref_s if f[6] == 0x55]
     dh, dj = s3_delta(g, h), s3_delta(i_, j_)
     ok &= check(f"20 S3 after a set: flags {g and hex(g['flags'])} (gen {f0 and f0['gen']} -> {g and g['gen']}); 02 55 7F 7F "
-                f"at once {len(early)} values {dh}; once trusted again {len(late)} values {dj}; early == late == S3 off "
-                f"{early == late == late_off}, changed from the boot dump {early != ref55}; the next set: trusted again "
+                f"at once {len(early)} values {dh}; once trusted again {len(late)} values {dj}; early (the stock getter while "
+                f"untrusted) == late (the store) {early == late}, changed from the boot dump {early != ref55}; the next set: trusted again "
                 f"{w1} ms after its ACK",
                 g is not None and not g["flags"] & 0x04 and g["gen"] > f0["gen"] and dh is not None
                 and dh["untrusted"] > 0 and w_early is not None and dj["served"] > 0 and dj["untrusted"] == 0
-                and early == late == late_off and len(early) == len(ref55) and early != ref55
+                and early == late and len(early) == len(ref55) and early != ref55
                 and w1 is not None and w1 <= 1500)
     rows.append(("20", "S3: 부수 효과 있는 set 뒤",
                  f"바로 읽기는 스톡이 답함(못 믿음 {dh and dh['untrusted']}, 덤프 도중 깨끗한 바퀴가 끝나면 store {dh and dh['served']}), "
-                 f"set ACK 뒤 {w1} ms면 다시 store; 바이트 = S3 끔"))
+                 f"set ACK 뒤 {w1} ms면 다시 store; 바이트 = 스톡 답"))
 
     # ---- 21 the stock's own changes: Program Change read through + fanned out; a hidden write = stale, counted ----
     quiet(n)
@@ -910,7 +894,6 @@ def state_s3(m, rows):
     rows.append(("21", "S3: 스톡 자체 변경",
                  f"프로그램 체인지 → `55 00 00` 바로 스톡 값(통과 읽기), 다음 바퀴에 앱 · 패널 1프레임씩(조용한 키 팬아웃); 숨은 "
                  f"RAM 쓰기는 다음 바퀴까지 옛 값(낡음 {d2 and d2['stale']}로 셈) → 그 뒤 새 값"))
-    s3_set(n.s, 0)
     n.s.close()
     return ok
 
@@ -938,15 +921,15 @@ def s4_delta(a, b):
 
 
 def state_s4(m, rows):
-    """25: S3 + S4 on, app and panel bound - a panel set of a pure key leaves the store trusted: the app's request right
-    after the ACK is answered from the store with the new value (= S3 off = the stock getter); a value the gate refuses
-    (one byte short) is ACKed like the stock and changes nothing.  26: a set of a key that is not pure (Sound of part 00) -
-    the S3 rule (untrusted until a clean walk); S4 off - the pure key's set is the S3 rule again (the stock answers first)."""
+    """25: S3 + S4 on (from boot), app and panel bound - a panel set of a pure key leaves the store trusted: the app's
+    request right after the ACK is answered from the store with the new value; a value the gate refuses (one byte short)
+    is ACKed like the stock and changes nothing.  26: a set of a key that is not pure (Sound of part 00) - the S3 rule
+    (untrusted until a clean walk); the old off op 1B 05 06 00 is refused and S4 stays on."""
     n = NetF(side_settings(m, m.data), pump=True)
     both_bound(n)
     wait_passes(n, 1)
-    rc3 = s3_set(n.s, 1)
-    on = s4_diag(n.s, 0x06, 1)
+    on3 = s3_diag(n.s)
+    on = s4_diag(n.s)
     w0 = until_trusted(n)
     quiet(n)
     a, a3 = s4_diag(n.s), s3_diag(n.s)
@@ -954,9 +937,6 @@ def state_s4(m, rows):
     b3 = s3_diag(n.s)
     got = answer(n, [0x51, 0x0B, 0x7F])                                # the app asks right after the ACK
     c, c3 = s4_diag(n.s), s3_diag(n.s)
-    s3_set(n.s, 0)
-    got_off = answer(n, [0x51, 0x0B, 0x7F])
-    s3_set(n.s, 1)
     fan_app = [f for f in values(tx, APP) if f[6:9] == b"\x51\x0B\x7F"]
     d, d3 = s4_delta(a, c), s3_delta(a3, c3)
     # the gate: the same key one byte short - ACKed (the front, like the stock), nothing applied, value unchanged
@@ -967,20 +947,22 @@ def state_s4(m, rows):
     got2 = answer(n, [0x51, 0x0B, 0x7F])
     f_ = s4_diag(n.s)
     d2 = s4_delta(e, f_)
-    ok = check(f"25 S4 write owner: 1B 05 04 01 rc {rc3}, 1B 05 06 01 {on and (on['rc'], hex(on['flags']))}, trusted after {w0} ms; "
+    ok = check(f"25 S4 write owner: from boot S3 flags {on3 and hex(on3['flags'])}, S4 1B 05 07 {on and (on['rc'], hex(on['flags']))}, "
+               f"trusted after {w0} ms; "
                f"panel speaker volume 21 -> trust kept (flags {b3 and hex(b3['flags'])}, gen {a3 and a3['gen']} -> {b3 and b3['gen']}), "
-               f"the app's 02 51 0B 7F at once {[x.hex() for x in got]} == S3 off {got == got_off} (S3 {d3}), S4 {d}, the app "
+               f"the app's 02 51 0B 7F at once {[x.hex() for x in got]} (S3 {d3}), S4 {d}, the app "
                f"was told {len(fan_app)}; short value 30 30: ACK {len(ack_frames(tx2, PANEL))}, answer {[x[9] for x in got2]}, S4 {d2}",
-               rc3 == 0 and on is not None and on["rc"] == 0 and on["flags"] & 0x03 == 0x03 and w0 is not None
+               on3 is not None and on3["flags"] & 0x03 == 0x03
+               and on is not None and on["rc"] == 0 and on["flags"] & 0x03 == 0x03 and w0 is not None
                and b3 is not None and b3["flags"] & 0x04 and b3["gen"] == a3["gen"]
-               and len(got) == 1 and got[0][9] == 0x21 and got == got_off and d3 is not None and d3["served"] == 1
+               and len(got) == 1 and got[0][9] == 0x21 and d3 is not None and d3["served"] == 1
                and d3["untrusted"] == 0 and d == dict(sets=1, values=1, own=1, followed=1, kept=1) and len(fan_app) == 1
                and len(ack_frames(tx2, PANEL)) == 1 and [x[9] for x in got2] == [0x21]
                and d2 == dict(sets=1, values=1, refused=1, dropped=1))
     rows.append(("25", "S4: 순수 키 set 뒤 바로 읽기",
-                 f"패널 스피커 음량 set → 믿음 유지, 앱 요청이 곧바로 store에서(새 값 = S3 끔); 한 바이트 짧은 값은 ACK만, 적용 · 값 변화 없음"))
+                 f"패널 스피커 음량 set → 믿음 유지, 앱 요청이 곧바로 store에서(새 값); 한 바이트 짧은 값은 ACK만, 적용 · 값 변화 없음"))
 
-    # ---- 26 a set that is not pure, and S4 off ----
+    # ---- 26 a set that is not pure; the old off op refused ----
     until_trusted(n)
     quiet(n)
     g, g3 = s4_diag(n.s), s3_diag(n.s)
@@ -988,26 +970,15 @@ def state_s4(m, rows):
     h, h3 = s4_diag(n.s), s3_diag(n.s)
     w1 = until_trusted(n)
     off = s4_diag(n.s, 0x06, 0)
-    w2 = until_trusted(n)
-    quiet(n)
-    i3 = s3_diag(n.s)
-    set_and_wait(n, PANEL, [0x51, 0x0B, 0x7F, 0x22], ms=0)
-    j3, j = s3_diag(n.s), s4_diag(n.s)
-    got3 = answer(n, [0x51, 0x0B, 0x7F])
-    k3 = s3_diag(n.s)
     dg = s4_delta(g, h)
     ok &= check(f"26 S4 Sound of part 00 (not pure): S4 {dg}, trust dropped (flags {h3 and hex(h3['flags'])}, gen "
-                f"{g3 and g3['gen']} -> {h3 and h3['gen']}), trusted again after {w1} ms; 1B 05 06 00 {off and off['rc']}: "
-                f"speaker volume 22 -> untrusted (gen {i3 and i3['gen']} -> {j3 and j3['gen']}), the answer from the stock "
-                f"{[x[9] for x in got3]} ({s3_delta(j3, k3)}), S4 counters still {j and j['sets']}",
+                f"{g3 and g3['gen']} -> {h3 and h3['gen']}), trusted again after {w1} ms; the old off op 1B 05 06 00 -> rc "
+                f"{off and off['rc']}, S4 still on (flags {off and hex(off['flags'])})",
                 dg is not None and dg.get("sets") == 1 and dg.get("own") == 1 and "kept" not in dg
                 and h3 is not None and not h3["flags"] & 0x04 and h3["gen"] > g3["gen"] and w1 is not None
-                and off is not None and off["rc"] == 0 and not off["flags"] & 0x02 and w2 is not None
-                and j3 is not None and not j3["flags"] & 0x04 and j3["gen"] > i3["gen"]
-                and [x[9] for x in got3] == [0x22] and s3_delta(j3, k3)["untrusted"] >= 1 and j["sets"] == off["sets"])
-    rows.append(("26", "S4: 순수하지 않은 set · S4 끔",
-                 f"Sound 파트 00 set → S3 규칙(못 믿음 → 깨끗한 바퀴 뒤 {w1} ms 믿음); S4 끄면 순수 키 set도 S3 규칙(스톡이 답함)"))
-    s3_set(n.s, 0)
+                and off is not None and off["rc"] == 1 and off["flags"] & 0x03 == 0x03)
+    rows.append(("26", "S4: 순수하지 않은 set · 옛 끄기 op",
+                 f"Sound 파트 00 set → S3 규칙(못 믿음 → 깨끗한 바퀴 뒤 {w1} ms 믿음); 옛 끄기 op `1B 05 06 00`은 rc 1, S4 켬 그대로"))
     n.s.close()
     return ok
 

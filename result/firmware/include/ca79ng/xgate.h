@@ -92,7 +92,7 @@ int xg_xport(xg_t *g, uint8_t cmd, uint8_t fileop);
 #define XG_F_BUILT 0x01      /* set by the port: the gate is in this payload                         */
 #define XG_F_ON    0x02      /* the gate is on (switched in the engine loop)                         */
 /* 0x04 / 0x08: XG_HK_MEDIA / XG_HK_XPORT << 2 - the site is hooked                                     */
-#define XG_F_WANT  0x10      /* set by the port: asked on (op 1F 01 01), applied on the next pass     */
+#define XG_F_WANT  0x10      /* set by the port: asked on (always, ota_main from ngver 3), applied on the next pass */
 #define XG_F_SVC   0x20      /* set by the port: the resident gave a hook service (ota_loader_v2 +)   */
 void xg_encode(const xg_t *g, uint8_t flags, uint8_t audio_state, uint8_t raw[XG_RAW]);
 

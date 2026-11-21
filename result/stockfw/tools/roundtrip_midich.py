@@ -9,23 +9,22 @@
 # byte) - the hooked sites 0x40148C4C (Program Change) / 0x40148C60 (Control Change) are reached the way the pumps reach
 # them.  Every stock-RAM byte (>= 0x41000000) a message writes is recorded on both sides.
 # Checks (numbered as printed):
-#   1  attach on v3: op 1B 07 = layout 9, built, three sites hooked (flags 0x70), ready, on at boot for a boot-on payload
-#      (images boot_on - ota_main since 2026-11-16: flags 0x77), else off;
-#      the three words are no longer the stock's; then the four runtime switches off (roundtrip_fanout switches_off - S3,
-#      S4, this judge, the executor gate: the state 2-4 were written for) -> flags 0x75; off: a Program Change on H writes
-#      the same stock bytes as on S (the stubs tail-call the stock)
-#   2  1B 07 01 -> rc 0, on; a matrix of channel messages on the USB port (unbound) and the panel port (the stock binding),
+#   1  attach on v3: op 1B 07 = layout 9, built, three sites hooked (flags 0x70), ready, on from boot (flags 0x77 - always
+#      on since fold step 3, 2026-11-21); the three words are no longer the stock's; the old off op 1B 07 00 -> rc 1, still
+#      0x77.  (Before fold step 3 this check switched the judge off and compared a Program Change with S - the off path is
+#      gone; 2 compares the on path with S.)  S3 / S4 / the executor gate are on all along, as on the piano.
+#   2  on from boot; a matrix of channel messages on the USB port (unbound) and the panel port (the stock binding),
 #      in the settings path, with omni on / off and in the part path (the mode byte): every message writes exactly the
 #      stock bytes S writes (same addresses, same values); each judgement agrees with what S did - drop = S wrote nothing
 #      beyond the parser's own bytes, setting = the read-back key; the in-flight flag is 0 after every message
 #   3  same tick: a Program Change -> 1B 07 shows the read-back key 55 00 00 and the store changed in that very parser
 #      call (no pump ran); the next S2 compare pass finds no difference of 55 00 (S2 counted it KEY = 1 when off -
 #      roundtrip_fanout 16); Local Control CC 7A -> 58 01 7F the same way
-#   4  with S3 on: the Program Change reaches the app and the panel as one value frame each right after the call (before
+#   4  with S3 on (from boot): the Program Change reaches the app and the panel as one value frame each right after the call (before
 #      any compare pass), and the next pass fans nothing more
 #   5  delayed apply: timers armed through the stock arm FUN_401604E8 and a pending value poked; H's hooked site (the core's
 #      walk) and S's FUN_401638E0 step 2 ms at a time - the tables (9 x 5 countdowns, values, armed word) and the applies
-#      FUN_4016053C(c, x, 0x46, v) are the same after every step; H off = the stock walk
+#      FUN_4016053C(c, x, 0x46, v) are the same after every step
 from __future__ import annotations
 
 import pathlib
@@ -166,30 +165,27 @@ def main(argv):
     ok = True
     table = []
 
-    # ---- 1 attach, off ----
+    if not p.boot_on:
+        raise SystemExit(f"{name}: the judge is always on from fold step 3 (images boot_on)")
+    # ---- 1 attach, on from boot ----
     s, h = sides(image, syms, data)
     d = chan_diag(h.s)
     words = {k: le(h.e.read_bytes(a, 4)) for k, (a, _w) in SITES.items()}
-    rc_off = rf.switches_off(h) if p.boot_on else [0, 0, 0, 0]
+    rc_off = chan_set(h.s, 0)
     d0 = chan_diag(h.s)
-    off_s, off_h = feed(s, USB, [0xC0, 0x02]), feed(h, USB, [0xC0, 0x02])
-    d_off = chan_diag(h.s)
-    ok &= check(f"1 attach on ota_loader_v4: 1B 07 at boot {d} ({'on' if p.boot_on else 'off'} expected); site words "
-                f"{{{', '.join(f'{k} {v:#010x}' for k, v in words.items())}}}; switched off {rc_off} -> flags "
-                f"{d0 and hex(d0['flags'])}; off: PC ch1 writes {len(off_h)} stock bytes == S {off_s == off_h}, judged nothing "
-                f"{d_off and d_off['pc']}",
-                d is not None and d["layout"] == 9 and d["flags"] == (0x77 if p.boot_on else 0x75)
-                and all(words[k] != w for k, (_a, w) in SITES.items()) and rc_off == [0, 0, 0, 0]
-                and d0 is not None and d0["flags"] == 0x75 and off_s == off_h and len(off_s) > 0 and d_off["pc"] == [0, 0, 0])
-    table.append(("1", "v3 붙이기 · 꺼짐", f"자리 셋 걸림 · 부팅 때 {'켬' if p.boot_on else '꺼짐'}(flags {d and hex(d['flags'])}), "
-                  f"끈 뒤 PC = 스톡 바이트 {len(off_h)}"))
+    ok &= check(f"1 attach on ota_loader_v4: 1B 07 at boot {d} (on expected); site words "
+                f"{{{', '.join(f'{k} {v:#010x}' for k, v in words.items())}}}; the old off op 1B 07 00 -> rc {rc_off}, flags "
+                f"{d0 and hex(d0['flags'])}",
+                d is not None and d["layout"] == 9 and d["flags"] == 0x77
+                and all(words[k] != w for k, (_a, w) in SITES.items()) and rc_off == 1
+                and d0 is not None and d0["flags"] == 0x77)
+    table.append(("1", "v3 붙이기 · 켬", f"자리 셋 걸림 · 부팅 때 켬(flags {d and hex(d['flags'])}), 옛 끄기 op rc {rc_off}"))
 
     # ---- 2 matrix ----
-    rc = chan_set(h.s, 1)
     m_ok, rows, acts = matrix(s, h)
     d2 = chan_diag(h.s)
-    ok &= check(f"2 1B 07 01 rc {rc}; {len(rows)} channel messages: every one writes the stock's bytes, judged "
-                f"PC {d2['pc']} CC {d2['cc']} (drop / stock / setting)", rc == 0 and m_ok and (d2["flags"] & 0x02) != 0)
+    ok &= check(f"2 on from boot; {len(rows)} channel messages: every one writes the stock's bytes, judged "
+                f"PC {d2['pc']} CC {d2['cc']} (drop / stock / setting)", m_ok and (d2["flags"] & 0x02) != 0)
     for r in rows:
         print(f"    {r[0]:<24} {r[1]:<8} port {r[2]}  act {r[3]}  stock bytes {r[4]:>4}  {r[5]}")
     want = {"PC ch1": 2, "PC ch2 (omni at boot)": 2, "Local off": 2, "Local 40": 0, "Local ch2": 0, "volume": 1, "mod (none)": 0,
@@ -216,8 +212,7 @@ def main(argv):
                 and c["changed"] == b["changed"] + 1 and dd is not None and dd["key"] == 0 and dd["none"] == 0)
     table.append(("3", "같은 차례 store", f"PC → `55 00 00`, CC 7A → `58 01 7F` 파서 호출 안에서 store 고침, 다음 대조 차이 {dd}"))
 
-    # ---- 4 S3 on: fanned at once ----
-    rc4 = rf.s3_set(h.s, 1)
+    # ---- 4 S3 on (from boot): fanned at once ----
     # in the emulator FUN_4013B644 maps every program to index 0 (its model getters FUN_400B39FC / FUN_400B3A74 answer
     # nothing here), so every Program Change gives 55 00 00 = 79 00 00: the panel sets another sound first
     rf.set_and_wait(h, PANEL, [0x55, 0x00, 0x00, 0x00, 0x05, 0x00])
@@ -233,18 +228,17 @@ def main(argv):
     s2 = rf.wait_passes(h, 1)
     k1 = rf.s3_diag(h.s)
     pc_all = [(pp, f.hex()) for _t, pp, f in h.tx[n0:] if f.startswith(VALUE_HEAD) and f[6:9] == b"\x55\x00\x00"]
-    ok &= check(f"4 S3 on (rc {rc4}, flags {k0 and hex(k0['flags'])}): PC -> store changed +{e['changed'] - c['changed']}, "
+    ok &= check(f"4 S3 on (flags {k0 and hex(k0['flags'])}): PC -> store changed +{e['changed'] - c['changed']}, "
                 f"fanned {e['fanned'] - c['fanned']}, frames within 200 ms {pc}; after the next pass {len(pc_all)} "
                 f"(fanned_key +{k1['fanned_key'] - k0['fanned_key']})",
-                rc4 == 0 and e["changed"] == c["changed"] + 1 and e["fanned"] == c["fanned"] + 1 and sorted(pp for pp, _f in pc) == [APP, PANEL] and len(pc_all) == 2
+                k0 is not None and k0["flags"] & 0x02 != 0 and e["changed"] == c["changed"] + 1 and e["fanned"] == c["fanned"] + 1 and sorted(pp for pp, _f in pc) == [APP, PANEL] and len(pc_all) == 2
                 and pc[0][1] == pc[1][1] and k1["fanned_key"] == k0["fanned_key"] and s2 is not None)
     table.append(("4", "S3 켬 팬아웃", "PC 직후 앱 · 패널에 `55 00 00` 1프레임씩(대조 바퀴 전), 다음 바퀴 추가 없음"))
-    rf.s3_set(h.s, 0)
 
     # ---- 5 delayed apply ----
     h.s.close()
     s, h = sides(image, syms, data)                        # a fresh pair: the matrix armed timers on H only
-    rc5 = chan_set(h.s, 1)
+    f5_0 = chan_diag(h.s)
     step_ok, steps = True, 0
     for side in (s, h):
         side.s.log = []                                    # rs.Side records every FUN_4016053C call ("apply")
@@ -273,7 +267,7 @@ def main(argv):
     ok &= check(f"5 delayed apply: {steps} steps, tables equal every step {step_ok}; applies (0x46) S {top['S']} H {top['H']}, "
                 f"every apply call equal {applies['S'] == applies['H']}; record applies {f5['applies']} passes {f5['passes']}; "
                 f"H's site -> {tgt:#x}",
-                rc5 == 0 and step_ok and steps == 220 and applies["S"] == applies["H"] and len(top["S"]) == 2
+                f5_0 is not None and f5_0["flags"] & 0x02 != 0 and step_ok and steps == 220 and applies["S"] == applies["H"] and len(top["S"]) == 2
                 and f5["applies"] == 2 and le(h.e.read_bytes(ANY, 4)) == 0)
     table.append(("5", "지연 적용 타이머", f"{steps} 차례 표 = 스톡, 적용 {top['H']}"))
     s.s.close()

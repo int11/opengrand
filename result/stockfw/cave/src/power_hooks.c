@@ -110,8 +110,8 @@ __asm__(
     "    .size   hk_pw_apo, . - hk_pw_apo\n"
     "    .popsection\n");
 
-/* Phase 4 (feat3 0x10): three ota_loader_v3 sites in task 19.  Off
- * (mcc_on 0): `b` to the stock target, every register as the parser's / the task's `bl` left it.  On, PC / CC: the core's
+/* Phase 4 (feat3 0x10): three ota_loader_v3 sites in task 19.  Before the
+ * front's init() (mcc_on 0): `b` to the stock target, every register as the parser's / the task's `bl` left it.  On, PC / CC: the core's
  * judgement first (a call that only reads) - 0 drop: return to the parser; 1 stock: tail call as when off; 2 setting:
  * `b` into mcc_*_run, which runs the stock routine under svc->inflight and returns to the parser itself.  The delayed
  * apply (r0 = elapsed) goes to mcc_defer, the core's walk of the same tables. */
@@ -188,7 +188,7 @@ static unsigned char mc_attach(const struct ota_svc *svc)
 }
 
 /* Phase 4 executor gate (feat3 0x08): two engine-loop sites of the
- * ota_loader_v3 allow-list, hooked only while the gate is on (xgate_cave.c xgc_tick, never in attach()).  Task 24 =
+ * ota_loader_v3 allow-list, hooked on the first engine-loop pass (xgate_cave.c xgc_tick, never in attach()).  Task 24 =
  * the resident's task: the body runs and returns; 0 -> back to the site + 4 without the stock executor (its pending
  * byte stays), else `b` to it - both executors take no argument. */
 #include "xgate_cave.h"
@@ -232,13 +232,6 @@ int xgh_set(int which)
         return 0xFF;
     return which ? xg_svc->hook_set(XGC_SITE_XPORT, XGC_WORD_XPORT, (unsigned int)hk_xg_xport, 0)
                  : xg_svc->hook_set(XGC_SITE_MEDIA, XGC_WORD_MEDIA, (unsigned int)hk_xg_media, 0);
-}
-
-int xgh_clear(int which)
-{
-    if (!xg_svc)
-        return 0xFF;
-    return xg_svc->hook_clear(which ? XGC_SITE_XPORT : XGC_SITE_MEDIA);
 }
 
 /* fn 0x24 Read job with 7-bit DataPacket counters (ports/cave/fread_cave.c):

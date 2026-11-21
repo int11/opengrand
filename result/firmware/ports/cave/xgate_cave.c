@@ -5,13 +5,11 @@
 
 #include "ca79ng/xgate.h"
 #include "recctl_cave.h"   /* sxc_tx */
-#include "sysex_cave.h"    /* sxc_ctrl_bound */
 
-/* payload .data (explicit initialisers: nothing zeroes .bss), fresh with every payload copy.  Boot-on (owner decision
- * 2026-11-16): want starts 1, so the first tick - after attach() gave
- * the service - hooks the two v3 sites, as op 1F 01 01 would; 1F 01 00 still unhooks them (exactly stock) */
+/* payload .data (explicit initialisers: nothing zeroes .bss), fresh with every payload copy.  The gate is always on
+ * (boot-on 2026-11-16, its off-switch op 1F 01 removed in fold step 3): the first tick - after attach() gave the
+ * service - hooks the two v3 sites once; nothing unhooks them */
 static xg_t gate = {0};
-static volatile uint8_t want = 1;    /* written by task 19 (op), read by task 24 (tick) - one byte, one writer */
 static uint8_t inited = 0;
 
 static uint8_t rd(uint32_t a)
@@ -43,18 +41,11 @@ void xgc_tick(void)
 {
     if (!inited)
         init();
-    if (want && !gate.on) {
+    if (!gate.on) {
         int m = xgh_set(0), x = xgh_set(1);
         gate.rc_media = (uint8_t)m, gate.rc_xport = (uint8_t)x;
         gate.hooked = (uint8_t)((m == 0 ? XG_HK_MEDIA : 0) | (x == 0 ? XG_HK_XPORT : 0));
         xg_enable(&gate, true);   /* refused sites stay stock: the gate is on, nothing reaches it */
-    } else if (!want && gate.on) {
-        if (gate.hooked & XG_HK_MEDIA)
-            gate.rc_media = (uint8_t)xgh_clear(0);
-        if (gate.hooked & XG_HK_XPORT)
-            gate.rc_xport = (uint8_t)xgh_clear(1);
-        gate.hooked = 0;
-        xg_enable(&gate, false);
     }
 }
 
@@ -79,18 +70,11 @@ void xgc_sysex(uint8_t port, const uint8_t *buf, uint32_t len)
     uint8_t sub = len >= 9 ? buf[7] : 0, rc = XGC_RC_OK;
     uint16_t o = 0;
     port &= 3;
-    if (len == 10 && sub == 1) {
-        if (buf[8] > 1)
-            rc = XGC_RC_ARG;
-        else if (buf[8] == 1 && sxc_ctrl_bound(port) != 1)
-            rc = XGC_RC_NOT_BOUND;   /* switching it on: a bound controller only; off: anyone */
-        else
-            want = buf[8];
-    } else if (!(len == 8 || (len == 9 && sub == 0))) {
+    /* 1F | 1F 00: the record; anything else - 1F 01 <x> (the switch before fold step 3) included - rc 1 + the record */
+    if (!(len == 8 || (len == 9 && sub == 0)))
         rc = XGC_RC_ARG;
-    }
-    if (inited)
-        xg_encode(&gate, (uint8_t)(XG_F_BUILT | (want ? XG_F_WANT : 0) | (xgh_have_svc() ? XG_F_SVC : 0)),
+    if (inited)   /* XG_F_WANT stays set: the gate is always asked on (the record keeps its layout) */
+        xg_encode(&gate, (uint8_t)(XG_F_BUILT | XG_F_WANT | (xgh_have_svc() ? XG_F_SVC : 0)),
                   rd(XG_A_AUDIO), raw);
     else
         for (uint16_t i = 0; i < XG_RAW; i++)

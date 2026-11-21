@@ -80,8 +80,8 @@ export const NG_FEAT2_RECORDER = 0x10;
  * ota_main = 0x7F. */
 export const NG_FEAT2_REMOTE_OFF = 0x20;
 /** feat2 bit: Phase 3-4 S3 - the piano's settings store answers parameter requests (byte-identical to the stock's),
- * switched by op 1B 05 04 <0|1> (on at boot from ota_main 63c98efb - earlier
- * builds start off); op 1B 05 05 its record. ota_main = 0x7F. */
+ * on at boot from ota_main 63c98efb (earlier builds start off, op 1B 05 04 <0|1> switches it); from ngver 3 always on,
+ * 1B 05 04 <x> answers rc 1. Op 1B 05 05 its record. ota_main = 0x7F. */
 export const NG_FEAT2_READ_OWNER = 0x40;
 /** Feature bits in the fourth identify byte (feat3, after feat2 - feat2 is full). Sent only when non-zero (and then
  * feat2 is there too): absent = 0, so older apps that stop at feat2 are unaffected. */
@@ -96,14 +96,15 @@ export const NG_FEATURES3: { bit: number; name: string }[] = [
 /** feat3 bit: Phase 3-6 R2 record control by the core (op 0x1E cmd 8-11: arm / count-in / start / finish). In ota_main since the 2026-11-16 fold (0x3F with 0x02 / 0x04). */
 export const NG_FEAT3_REC2 = 0x01;
 /** feat3 bit: Phase 4 - MIDI channel messages that change settings (Program Change, CC 0x7A / 0x5C) and the delayed
- * parameter apply judged by the core at the ota_loader_v3 sites, op 1B 07 <0|1> (on at boot from ota_main 63c98efb when the
- * sites are attached, earlier builds start off), record op 1B 07
+ * parameter apply judged by the core at the ota_loader_v3 sites (on at boot from ota_main 63c98efb when the sites are
+ * attached, earlier builds start off and op 1B 07 <0|1> switches it; from ngver 3 no off op - 1B 07 <x> answers rc 1),
+ * record op 1B 07
  * ota_main = 0x3F (every feat3 bit; the pre-fold ota_main_15 = 0x38). */
 export const NG_FEAT3_MIDICH = 0x10;
 /** feat3 bit: Phase 3-4 S4 - the piano's core judges every parameter set first (known key, length, the stock descriptor's
  * masks), lets the stock apply it and reads it back into its settings store; after a set of a key whose apply changes
- * nothing else the store keeps answering requests at once. Op 1B 05 06 <0|1> (on at boot from ota_main 63c98efb, earlier
- * builds start off); op 1B 05 07 its record
+ * nothing else the store keeps answering requests at once. On at boot from ota_main 63c98efb (earlier builds start off,
+ * op 1B 05 06 <0|1> switches it); from ngver 3 always on, 1B 05 06 <x> answers rc 1. Op 1B 05 07 its record
  * In ota_main. */
 export const NG_FEAT3_WRITE_OWNER = 0x20;
 

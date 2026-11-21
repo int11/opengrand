@@ -62,8 +62,8 @@
  *                 an APO expiry goes (standby / real off), refused while recording, a file operation or a flash job;
  *                 the power ops' bound test follows the core table (power_cave.c PWC_REMOTE_OFF); feat2 0x20.
  *   FEAT2_S3      Phase 3-4 S3 (with SESSION): the settings store answers the bound controllers' requests while it is
- *                 trusted (kpstate S3, sysex_cave.c), on at boot since 2026-11-16, op 1B 05 04 <0|1>; 1B 05 05
- *                 record; feat2 0x40.
+ *                 trusted (kpstate S3, sysex_cave.c), on at boot since 2026-11-16, always on (no off op)
+ *                 from fold step 3 / ngver 3; 1B 05 05 record; feat2 0x40.
  *   FEAT3_REC2    Phase 3-6 R2 record control by the core (with REC): arm / count-in / start / finish (= the stock
  *                 commit through ring FC) judged by recctl - one finish per take, deferred while a NOR job / file
  *                 operation runs, no start without arming (recctl_cave.c RCC_REC2, op 0x1E cmd 8-11); FEAT3 0x01 (fourth feature byte) - field-tested in
@@ -81,8 +81,8 @@
  *                 ports/cave/xgate_cave.c); FEAT3 0x08.
  *   FEAT3_S4      Phase 3-4 S4 (with S3): every set of a bound controller judged by the core first (known key, length,
  *                 descriptor masks), applied by the stock, read back into the store; the store stays trusted after a set
- *                 of pure keys (kpstate S4, sysex_cave.c), on at boot since 2026-11-16, op 1B 05 06 <0|1>; 1B 05 07
- *                 record; FEAT3 0x20.
+ *                 of pure keys (kpstate S4, sysex_cave.c), on at boot since 2026-11-16, always on (no off op)
+ *                 from fold step 3 / ngver 3; 1B 05 07 record; FEAT3 0x20.
  *                 ota_main = every feat2 bit + every feat3 bit: feat1 0x77, feat2 0x7F, feat3 0x3F.
  *   (no bit)      every power-family payload built from source (ota_main) also answers the read-only
  *                 GPIO diagnostic op 0x17 (result/firmware/ports/cave/gpio_cave.c): GPIO bank snapshot, change log, change notices to a bound controller.  No feature
@@ -150,7 +150,7 @@
 #define FEAT3_GATE    0x02   /* Phase 4 A intake gate (with SESSION) - in ota_main                     */
 #define FEAT3_REC3    0x04   /* Phase 3-6 R3 save decision (with REC2) - in ota_main                   */
 #define FEAT3_S4      0x20   /* settings store as write owner, op 1B 05 06 / 07 (with S3) - in ota_main */
-#define FEAT3_XGATE   0x08   /* Phase 4 executor gate, op 0x1F (with SESSION), on at boot (1F 01 0/1)   */
+#define FEAT3_XGATE   0x08   /* Phase 4 executor gate, op 0x1F (with SESSION), always on (record 1F 00)   */
 #define FEAT3_MIDICH  0x10   /* Phase 4 MIDI channel messages / delayed apply by the core, op 1B 07 (with SESSION) */
 
 #define FEATURES0 (CA79NG_FEAT0)
@@ -732,7 +732,7 @@ void ng_tick(void)
     pwc_tick();         /* power policy, standby, APO rule, queued 0x18 / 0x19 / 0x1A */
     sxc_tick();         /* Phase 3-1 front: its mirror store is set up on the first pass */
     btc_tick();         /* port 2 latch clear, AS guard, BT module query, queued 0x1D */
-    xgc_tick();         /* executor gate: hook / unhook its two v3 sites when switched (op 1F 01) */
+    xgc_tick();         /* executor gate: hook its two v3 sites on the first pass */
     gdc_tick();         /* GPIO diagnostic (read only): sample the watched pins, answer a queued 0x17, change notice */
 #endif
 #if HAVE_CANARY

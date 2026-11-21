@@ -1,7 +1,7 @@
-# roundtrip_bootdefaults.py - the four runtime switches of ota_main start ON (owner decision 2026-11-16): S3 read owner (op 1B 05 04), S4 write owner (1B 05 06), the Phase 4
-# MIDI channel judge (1B 07) and the executor gate (1F 01).  Each op still switches its part off (= the stock path, as
-# the per-feature round trips check: roundtrip_fanout 19 / roundtrip_sysex 2-6 / roundtrip_midich 1 / roundtrip_xgate 2, 8)
-# and on again.
+# roundtrip_bootdefaults.py - the four former runtime switches of ota_main start ON (owner decision 2026-11-16) and, from
+# fold step 3 (2026-11-21, ngver 3), stay on: S3 read owner, S4 write owner, the Phase 4 MIDI channel judge and the
+# executor gate.  Their old off / on ops (1B 05 04 <x>, 1B 05 06 <x>, 1B 07 <x>, 1F 01 <x>) answer rc 1 and change
+# nothing; the records (1B 05 05, 1B 05 07, 1B 07, 1F 00) stay.
 #
 #   cd result/stockfw && uv run python -I tools/roundtrip_bootdefaults.py [ota_main] [-q]
 #
@@ -13,8 +13,8 @@
 #      1, MIDI channel bit 1 with its three sites attached 0x70, gate 0x3F = built, on, both hooked, wanted, service), the
 #      two gate site words are the stubs' bl
 #   2  ota_loader_v4, power-on on that NOR (slot A boots): the same four on; Identify unchanged
-#   3  the app switches each off (1B 05 04 00, 1B 05 06 00, 1B 07 00, 1F 01 00 + one pass): rc 0 each, every record off,
-#      the gate site words the stock's again; and on again (01 each): rc 0, all on
+#   3  the old off ops (1B 05 04 00, 1B 05 06 00, 1B 07 00, 1F 01 00 + one pass): rc 1 each, all four still on, the gate
+#      site words still the stubs' bl; the old on ops (01 each): rc 1, all on
 from __future__ import annotations
 
 import pathlib
@@ -51,7 +51,7 @@ def state(rig):
 
 
 def setall(rig, on):
-    """the app switches all four (the gate applies on the next pass): rc of each."""
+    """the old off / on ops of all four (before fold step 3 the gate applied on the next pass): rc of each."""
     rcs = [front(rig, 0x05, 0x04, on), front(rig, 0x05, 0x06, on), front(rig, 0x07, on)]
     rcs = [r and r[0] for r in rcs]
     g = rx.status(rig, APP, rp.req(OP_GATE, 0x01, on))
@@ -86,7 +86,7 @@ def main(argv):
     ok = True
     print(f"payload {name}  {plen} B  sha256 {ro.pa.sha256(data)}")
     hooked = (rh.bl_word(SITE_MEDIA, WORD_MEDIA, psyms["hk_xg_media"]), rh.bl_word(SITE_XPORT, WORD_XPORT, psyms["hk_xg_xport"]))
-    stock = (WORD_MEDIA, WORD_XPORT)
+    stock = (WORD_MEDIA, WORD_XPORT)   # show() names them
 
     def all_on(s):
         return (s["s3"] and s["s4"] and s["gate"] and s["mc"] and s["mc_sites"] == 0x70
@@ -110,14 +110,13 @@ def main(argv):
                 st["active"] == ro.ACT_A and all_on(s_boot) and id_boot is not None and id_boot == id_live
                 and id_boot[0] == p.ngver)
 
-    # ---- 3 off / on again -------------------------------------------------------------------------------
+    # ---- 3 the old off / on ops: refused, nothing changes ---------------------------------------------
     rc_off = setall(rig, 0)
     s_off = state(rig)
     rc_on = setall(rig, 1)
     s_on = state(rig)
-    ok &= check(f"3 off from the app: rc {rc_off} -> {show(s_off)}; on again: rc {rc_on} -> {show(s_on)}",
-                rc_off == [0, 0, 0, 0] and not (s_off["s3"] or s_off["s4"] or s_off["mc"] or s_off["gate"])
-                and s_off["words"] == stock and s_off["gflags"] == 0x21 and rc_on == [0, 0, 0, 0] and all_on(s_on))
+    ok &= check(f"3 old off ops: rc {rc_off} -> {show(s_off)}; old on ops: rc {rc_on} -> {show(s_on)}",
+                rc_off == [1, 1, 1, 1] and all_on(s_off) and rc_on == [1, 1, 1, 1] and all_on(s_on))
     rig.close()
 
     return rtlib.finish(ok)

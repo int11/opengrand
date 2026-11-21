@@ -18503,7 +18503,7 @@
   }
  ],
  "ng_versions": {
-  "current": 2,
+  "current": 3,
   "frozen": [
    59,
    119,
@@ -18518,6 +18518,10 @@
    {
     "ver": 2,
     "what": "ota_main from 2026-11-16 fold step 2: everything ota_main 1ec47025 had (feat0 0x3B, feat1 0x77, feat2 0x7F, feat3 0x3F with R2 / intake gate / R3 folded in) + the fn 0x24 file transfer fixes (read past 129 packets, write past 2681 B, Cancel answered)"
+   },
+   {
+    "ver": 3,
+    "what": "ota_main from 2026-11-21 fold step 3: everything of version 2, with S3 read owner, S4 write owner, the MIDI channel judge and the executor gate always on - their off / on ops 1B 05 04 <x>, 1B 05 06 <x>, 1B 07 <x>, 1F 01 <x> answer rc 1 (the records 1B 05 05, 1B 05 07, 1B 07, 1F 00 stay)"
    }
   ],
   "features": [
@@ -18666,7 +18670,7 @@
     "byte": 2,
     "bit": 64,
     "since": 2,
-    "what": "S3 read owner, op 1B 05 04 (off at boot)"
+    "what": "S3 read owner, record op 1B 05 05 (on at boot; from ngver 3 always on, no off op)"
    },
    {
     "name": "recordctl",
@@ -18694,21 +18698,21 @@
     "byte": 3,
     "bit": 8,
     "since": 2,
-    "what": "executor gate, op 0x1F (off at boot)"
+    "what": "executor gate, record op 1F 00 (on at boot; from ngver 3 always on, no off op)"
    },
    {
     "name": "midichan",
     "byte": 3,
     "bit": 16,
     "since": 2,
-    "what": "MIDI channel / delayed apply, op 1B 07 (off at boot)"
+    "what": "MIDI channel / delayed apply, record op 1B 07 (on at boot with the ota_loader_v3+ sites; from ngver 3 no off op)"
    },
    {
     "name": "writeowner",
     "byte": 3,
     "bit": 32,
     "since": 2,
-    "what": "S4 write owner, op 1B 05 06 (off at boot)"
+    "what": "S4 write owner, record op 1B 05 07 (on at boot; from ngver 3 always on, no off op)"
    },
    {
     "name": "filexfer",

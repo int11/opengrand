@@ -61,17 +61,17 @@ void sxc_state(uint8_t raw[SX_DIAG_RAW]);
  * differences, the ring of the last unexplained ones (three from the k-th newest) */
 void sxc_state_s2(uint8_t raw[SX_DIAG_RAW], uint32_t now_ms);
 void sxc_state_ring(uint8_t raw[SX_DIAG_RAW], uint8_t k);
-/* op 0x1B 05 04 <0|1> / 05 (Phase 3-4 S3): the read owner off / on and its
+/* op 0x1B 05 04 / 05 (Phase 3-4 S3, always on from fold step 3; a set byte gets rc 1): the read owner's
  * record (layout 8) - flags, what the store answered, the trust generation. */
 void sxc_state_s3(uint8_t raw[SX_DIAG_RAW]);
-/* op 0x1B 05 06 <0|1> / 07 (Phase 3-4 S4): the write owner off / on and its
+/* op 0x1B 05 06 / 07 (Phase 3-4 S4, always on from fold step 3; a set byte gets rc 1): the write owner's
  * record (layout 9) - flags, what the gate / read-back / trust did. */
 void sxc_state_s4(uint8_t raw[SX_DIAG_RAW]);
 #endif
 
 /* ota_main feat3 0x10 (Phase 4): the MIDI channel messages that change
  * settings and the delayed parameter apply, judged by the core at the ota_loader_v3 sites below (task 19).  The stubs
- * live in src/power_hooks.c; they read mcc_on (op 1B 07 <0|1>; on from the front's init when attached). */
+ * live in src/power_hooks.c; they read mcc_on (set by the front's init when attached, never cleared - fold step 3). */
 #define MC_SITE_PC 0x40148C4Cu
 #define MC_SITE_CC 0x40148C60u
 #define MC_SITE_DEFER 0x40153998u

@@ -18,9 +18,10 @@
 # order), the stop reason and the end handler's state byte.  RTOS calls are stubbed as in p3_map.py
 # (queue post, semaphores, delay, the two stop-and-wait ACK waits) so the request / file tasks are not run -
 # except in 7, which runs the fn 0x10 stop-and-wait for real against a modelled clock and link.
-# A boot-on payload (images boot_on) starts with S3 / S4 / the MIDI channel judge / the executor gate
-# on: check 1 reads that, then H switches all four off (switches_off)
-# so 2-6 measure the front alone as before; 8 switches S4 on by itself.
+# A boot-on payload (images boot_on, ota_main) runs with S3 / S4 / the MIDI channel judge / the executor gate always on
+# (fold step 3, 2026-11-21: no off op any more): check 1 reads that and that the old off ops answer rc 1; 2-6 and 8 run
+# with all four on (before fold step 3, 2-6 switched them off to measure the front alone; check 8 still compares every
+# S4-owned set against the stock).
 # Checks (numbered as printed):
 #   1  static: the payload verifies (feat 0x37 + attach); stock_sysex.ld bindings and the stock words
 #      they rest on (fn 0x10 path 0x4014AA6C..0x4014AAA0, ctx table 0x400A710E = 01 02 03 04, device
@@ -38,10 +39,10 @@
 #      RW, the stack and the inflight flag
 #   6  op 0x1B: counters = what 2-4 sent; 1B 01 00 from the bound port turns the front off (H then enters
 #      FUN_4014A2C8 for a set, S == H), 1B 01 01 back on; unbound -> rc 2
-#   8  (payloads with feat3 0x20, Phase 3-4 S4) op 1B 05 06 01 turns the write
-#      owner on in H: check 2's 164 owned descriptors again S == H (the gate lets them through, the stock applies the same
-#      bytes, the read-back only reads), extra stack at FUN_4014EBFC; a packed set with a short entry reaches FUN_4014EBFC
-#      without it (S applies both); 1B 05 06 00: S == H again, counters still
+#   8  (payloads with feat3 0x20, Phase 3-4 S4) the write owner on in H (1B 05 07 flags; on from boot): check 2's 164
+#      owned descriptors again S == H (the gate lets them through, the stock applies the same bytes, the read-back only
+#      reads), extra stack at FUN_4014EBFC; a packed set with a short entry reaches FUN_4014EBFC without it (S applies
+#      both); the old switch 1B 05 06 00: rc 1, S4 still on
 #   7  field failure replay (2026-10-31): the
 #      logged full-sync values through the real stock sender FUN_4014BD1C and its real wait FUN_4014BCAC (no
 #      stub here), the app's ACKs back through the end handler while the sender waits (DumpReplay).  Far from
@@ -151,6 +152,13 @@ def view(r, regs=True):
             ev.append((kind, a[0], a[1], a[3], a[4]))            # ctx, fn, body, len (pointer and sp aside)
         elif kind == "a2c8":
             ev.append((kind,) + ((tuple(a[:12]) + (a[13], a[14])) if regs else ()))   # r0-r11, sp, lr (ip aside)
+        elif kind == "apply":
+            # the value pointer points into the set frame: bytes past its end F7 are not the set's (S: the stock RX
+            # buffer; H with S4: s4_apply's rebuilt frame rw.s4.buf - whatever an earlier longer set left there).  That
+            # the stock apply does not use them is not REA-checked; stock_w below (every store into stock RAM, in order)
+            # still has to be equal, so a byte past F7 that reached stock state would fail the comparison anyway
+            d = a[3]
+            ev.append((kind, a[0], a[1], a[2], d[:d.index(0xF7) + 1] if 0xF7 in d else d))
         else:
             ev.append((kind,) + tuple(a))
     return dict(ev=ev, stock_w=r["stock_w"], stop=r["res"].stop, state=r["state"])
@@ -370,10 +378,9 @@ SESSION_FNS = {0x02, 0x04, 0x05, 0x06, 0x07}
 BOOT_ON = False   # main(): the payload's images boot_on
 
 
-def switches_off(side, port=2):
-    """the four runtime switches off as the app turns them off - 1B 05 04 00 (S3), 1B 05 06 00 (S4), 1B 07 00 (MIDI channel
-    judge), 1F 01 00 (executor gate) - and one pass: what a default-off payload boots with, the state checks 2-6 were
-    written for (the front alone).  rc of each."""
+def old_switch_ops(side, port=2):
+    """the four off ops that existed before fold step 3 - 1B 05 04 00 (S3), 1B 05 06 00 (S4), 1B 07 00 (MIDI channel
+    judge), 1F 01 00 (executor gate) - and one pass: rc of each (1 = refused from ngver 3)."""
     rcs = [(front_diag(side, port, req) or {}).get("rc") for req in ((0x05, 0x04, 0x00), (0x05, 0x06, 0x00), (0x07, 0x00))]
     b = rp.body_of(side.pn.sysex(port, rp.req(0x1F, 0x01, 0x00)), port)
     rcs.append(b[1][1] if b and len(b[1]) > 1 else None)
@@ -395,17 +402,15 @@ def s4_record(side, req=(0x05, 0x07)):
 
 
 def s4_checks(image, syms, data):
-    """8: S4 on in H (op 1B 05 06 01) - every fn 0x10 descriptor of check 2 again: S == H wherever the gate lets the value
-    through (the stock applies the very same bytes, the read-back only reads); the gate's refusals never reach
-    FUN_4014EBFC; a packed set with a short entry reaches it without that entry; 1B 05 06 00 = check 2 again."""
+    """8: S4 on in H (always, from boot) - every fn 0x10 descriptor of check 2 again: S == H wherever the gate lets the
+    value through (the stock applies the very same bytes, the read-back only reads); the gate's refusals never reach
+    FUN_4014EBFC; a packed set with a short entry reaches it without that entry; the old off op 1B 05 06 00 is refused."""
     ok = True
     S, H = Side(image, syms), Side(image, syms, data)
-    if BOOT_ON:   # from the front alone, as before the boot-on change: S4 is switched on below by itself
-        assert switches_off(H) == [0, 0, 0, 0]
     for s in (S, H):
         s.poke(BINDING, b"\x03")
-    on = s4_record(H, req=(0x05, 0x06, 0x01))
-    ok &= check("8 S4: op 1B 05 06 01 -> rc 0, record layout 9, built + on (flags 0x03)",
+    on = s4_record(H)
+    ok &= check("8 S4: op 1B 05 07 -> rc 0, record layout 9, built + on (flags 0x03) from boot",
                 on is not None and on["rc"] == 0 and on["layout"] == 9 and on["flags"] & 0x03 == 0x03, str(on))
     cases = [c for c in p3.load_cases() if c["fn"] == 0x10 and not vt_prefix(c["v1"], c["v2"])]
     fails, refused, same, depth, stopped, extra = [], [], 0, [], 0, []
@@ -455,16 +460,10 @@ def s4_checks(image, syms, data):
                 len(s_ap) == 2 and len(h_ap) == 1 and h_ap[0] == s_ap[0] and h_eb
                 and h_eb[0][3] == bytes([0x5F, 0x00, 0x7F, 0x05, 0x51, 0x0B, 0x7F, 0x20, 0xF7]) and acks[0] == acks[1],
                 f"S {s_ap} H {h_ap} {h_eb and h_eb[0][3].hex()}")
-    # switched off: the S3 path (check 2's frames S == H again)
+    # the old off switch (before fold step 3): refused, S4 stays on
     off = s4_record(H, req=(0x05, 0x06, 0x00))
-    for s in (S, H):
-        s.poke(DEV_ID, b"\x00\x00\x00\x00")
-    eq_off = all(compare(S, H, 2, kawai(0x10, [c["v1"], c["v2"], c["part"]] + c["probe"]), owned=True)[0]
-                 for c in cases[:12])
-    rec2 = s4_record(H)
-    ok &= check("8 S4: op 1B 05 06 00 -> off (flags bit1 0); 12 sets after it: S == H, the S4 counters stand still",
-                off is not None and off["rc"] == 0 and not off["flags"] & 0x02 and eq_off and rec2 is not None
-                and rec2["sets"] == off["sets"], f"{off} {rec2 and rec2['sets']}")
+    ok &= check("8 S4: the old off op 1B 05 06 00 -> rc 1 (no off switch from ngver 3), S4 still on (flags bit1)",
+                off is not None and off["rc"] == 1 and bool(off["flags"] & 0x02), str(off))
     S.close(); H.close()
     return ok
 
@@ -518,22 +517,23 @@ def main(argv):
     global BOOT_ON
     BOOT_ON = p.boot_on
     S, H = Side(image, syms), Side(image, syms, data)
-    # boot state of the four runtime switches, then all off: checks 2-6 measure the front alone
+    # boot state of the four former runtime switches (always on in ota_main) and their old off ops (refused)
     b3 = (front_diag(H, req=(0x05, 0x05)) or {}).get("raw", b"\0\0")[1] & 0x02
     b4 = (front_diag(H, req=(0x05, 0x07)) or {}).get("raw", b"\0\0")[1] & 0x02
     bm = (front_diag(H, req=(0x07,)) or {}).get("raw", b"\0\0")[1] & 0x02
     bg = rp.body_of(H.pn.sysex(2, rp.req(0x1F)), 2)
     bg = rp.unpack7(bg[1][2:])[1] & 0x02 if bg else None
-    rc_off = switches_off(H) if BOOT_ON else [0, 0, 0, 0]
+    rc_off = old_switch_ops(H) if BOOT_ON else [1, 1, 1, 1]
     want_b = (2, 2, 2, 2) if BOOT_ON else (0, 0, 0, 0)
     ok &= check(f"1 H boot state: S3 / S4 / MIDI channel / executor gate on bits {(b3, b4, bm, bg)} (want {want_b} - "
-                f"{'boot-on payload' if BOOT_ON else 'all off'}); switched off {rc_off}",
-                (b3, b4, bm, bg) == want_b and rc_off == [0, 0, 0, 0])
+                f"{'always on' if BOOT_ON else 'all off'}); the old off ops refused: rc {rc_off}",
+                (b3, b4, bm, bg) == want_b and rc_off == [1, 1, 1, 1])
     hk = rh.hooks(H.pn)
     words = rh.words(H.pn)
-    # the power sites (+ the pump tail with the session core) + the three MIDI channel sites (the judge switched off keeps
-    # them, the stock path) + the fn 0x24 Read site; the executor gate's two sites go with the gate switched off
-    n_hk = (5 if session else 4) + (3 if p.feat3 & images.FEAT3_MIDICH else 0) + (1 if "hk_fr_file" in psyms else 0)
+    # the power sites (+ the pump tail with the session core) + the three MIDI channel sites + the fn 0x24 Read site
+    # (attach()) + the executor gate's two sites (its first engine pass, boot-on payloads)
+    n_hk = ((5 if session else 4) + (3 if p.feat3 & images.FEAT3_MIDICH else 0) + (1 if "hk_fr_file" in psyms else 0)
+            + (2 if BOOT_ON and p.feat3 & images.FEAT3_XGATE else 0))
     ok &= check(f"1 H: {which} applied live, attach() hooked {n_hk} sites, 0x40147E94 = bl hk_sx_kawai; front ready + hooked "
                 "(op 0x1B flags)",
                 H.applied and hk["hooked"] == n_hk and words[0] == rh.bl_word(0x40147E94, 0xEB00090B, lo)
@@ -656,8 +656,6 @@ def main(argv):
     # ---- 4. golden trace -------------------------------------------------------------------------
     S.close(); H.close()
     S, H = Side(image, syms), Side(image, syms, data)
-    if BOOT_ON:
-        assert switches_off(H) == [0, 0, 0, 0]
     if not TRACE.is_file():
         print(f"SKIP 4 golden trace ({TRACE.relative_to(REPO)} absent: a private capture, not in the repository)")
         for s in (S, H):   # the trace's CONNECT would have bound the app on port 2 (check 6 starts from that)
@@ -704,8 +702,11 @@ def main(argv):
                 f"frame ({stats['owned']} owned, {stats['silent']} silent, {stats['passed']} passed, {stats['acks']} ACK frames)",
                 not flag_bad and stats["owned"] > 0, str(flag_bad[:3]))
     extra = sorted(set(depth))
-    ok &= check(f"5 stack at FUN_4014EBFC: H uses {extra} B more than S (stock FUN_4014A2C8 frame 48 B; task 19 stack 0x4000)",
-                depth and max(depth) <= 128, str(extra))
+    # S4 always on (boot-on payloads): every owned set goes io_apply -> s4_apply, the bound of check 8 (192 B; 128 B for the
+    # front alone)
+    lim5 = 192 if BOOT_ON and p.feat3 & images.FEAT3_S4 else 128
+    ok &= check(f"5 stack at FUN_4014EBFC: H uses {extra} B more than S (<= {lim5}; stock FUN_4014A2C8 frame 48 B; task 19 "
+                "stack 0x4000)", depth and max(depth) <= lim5, str(extra))
     okw = [(RUN, RUN + 0x20000), (0x40180000, 0x401A0000), ro.STACK, (0x40B90000, 0x40B90200),
            (syms["ota_in_sysex"], syms["ota_in_sysex"] + 1)]
     mine = [w_ for w_ in H.pn.writes if RUN <= w_.pc < RUN + plen]

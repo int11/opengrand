@@ -2,7 +2,7 @@
 // OpenGrand protocol version: Identify byte 1 (ngver), REMOTE_PROTOCOL.md section 10.0, protocol/NGVER.md.
 
 /** what ota_main built from this tree reports in Identify byte 1 */
-export const NG_PROTO_VERSION = 2;
+export const NG_PROTO_VERSION = 3;
 /** the four feature bytes every image with ngver >= 2 reports, unchanged from version to version */
 export const NG_FEAT_FROZEN: readonly number[] = [59, 119, 127, 63];
 

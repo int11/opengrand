@@ -3,7 +3,7 @@
 #ifndef CA79NG_NGVER_GEN_H
 #define CA79NG_NGVER_GEN_H
 
-#define NG_PROTO_VERSION 2   /* what ota_main built from this tree reports */
+#define NG_PROTO_VERSION 3   /* what ota_main built from this tree reports */
 /* the four feature bytes every image with ngver >= 2 reports, unchanged from version to version */
 #define NG_FEAT0_FROZEN 0x3B
 #define NG_FEAT1_FROZEN 0x77

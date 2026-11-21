@@ -58,3 +58,10 @@ test("filexfer (no bit): off on ngver 1 whatever the bytes, on from ngver 2; a s
   assert.equal(ngFeature(3, [], "filexfer"), true); // a later version implies everything an earlier one did
   assert.equal(ngHas(null, "power"), false); // stock piano: no Identify reply
 });
+
+test("ngver 3 (fold step 3: S3 / S4 / MIDI channel / executor gate without off ops): every ngver 2 feature still on", () => {
+  assert.ok(NG_PROTO_VERSION >= 3);
+  const id2 = ident(2, [0x3b, 0x77, 0x7f, 0x3f]);
+  const id3 = ident(3, [0x3b, 0x77, 0x7f, 0x3f]);
+  for (const name of ALL) assert.equal(ngHas(id3, name), ngHas(id2, name), name);
+});

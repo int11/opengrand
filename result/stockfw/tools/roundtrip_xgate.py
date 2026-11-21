@@ -7,18 +7,18 @@
 # Same machine as roundtrip_power.py (its Rig: the real ota_loader_v4 image on StockEmu with the NOR model, SWI #0
 # emulated so the resident's real poke body writes the hook words, the payload uploaded over the 0x7D OTA ops and
 # applied live).  The engine-loop sites are run from their stock `bl` (Rig.site) - the stock executors run for real.
-# Every rule check runs a gated machine G and a stock machine S (gate never switched on) from the same stock RAM.
+# Every rule check runs a gated machine G and a stock machine S from the same stock RAM.  The gate is always on from fold
+# step 3 (2026-11-21, ngver 3: no off op), so S is the same applied payload with the two site words put back to the
+# stock `bl` by the test (an emulator poke - what the gate switched off did before fold step 3).
 # Checks (numbered as printed):
 #   1  static: Identify 41 01 02 13 3B 77 7F 28 (feat3 0x08 + S4 0x20); hk_xg_media / hk_xg_xport = push / bl body / pop /
 #      bxeq lr / `b` the stock target of their site (bl_target of 0xEBFF8EB2 / 0xEBFF80D5); the pass bodies call only
 #      the core module (no stock routine, no svc)
-#   2  boot state: applied, 20 engine passes.  A boot-on payload (images boot_on - ota_main since 2026-11-16): the first pass after attach() hooked both sites (bl -> stub, op 0x16
-#      seven hooked), 1F 00 flags 0x3F, rc 0 / 0; then 1F 01 00 from the unbound panel -> the next pass unhooks both (stock
-#      words, five hooked, flags 0x21).  Default-off payload: both site words stock, op 0x16 five hooked (+ the three MIDI
-#      channel sites and the fn 0x24 Read site 0x40143ACC, hooked at attach), 1F 00 = built + service, rc 0xFF.
-#      From here on every machine starts with the gate off (1F 01 00 first when it booted on)
-#   3  1F 01 01 from an unbound port -> rc 2, nothing; from the bound app -> rc 0, the next pass hooks both sites
-#      (bl -> stub, op 0x16 seven hooked), 1F 00 flags on + hooked + wanted, rc 0 / 0
+#   2  boot state: applied, 20 engine passes: the first pass after attach() hooked both sites (bl -> stub, op 0x16 seven
+#      hooked + the three MIDI channel sites and the fn 0x24 Read site 0x40143ACC, hooked at attach), 1F 00 flags 0x3F,
+#      rc 0 / 0; the old off op 1F 01 00 from the unbound panel -> 5F 01 01 (rc 1), the next pass changes nothing
+#   3  the old on op 1F 01 01 from an unbound port and from the bound app -> rc 1 each; both sites stay hooked, op 0x16
+#      seven hooked, 1F 00 flags 0x3F, rc 0 / 0
 #   4  media rule: a USB removal (0x41359E45 = 0x80) while the selected type is KSO (0x413CA3F5 = 3) and the recorder
 #      records (0x4191EF79 = 3 / 4 / 5 / 6): S's stock executor forces the state to 2 at once (the take is gone);
 #      G holds it 50 passes - pending byte, state unchanged, no stock store, no frame; the state goes to 2 (the take
@@ -31,7 +31,8 @@
 #      at the cap (625 passes) - the stock's Busy; play (0x81) during a file operation: G = S (Busy at once)
 #   7  stores: every store made by payload code in checks 3-6 lands in payload .data / core RW / the stack - the gate
 #      never writes stock RAM
-#   8  1F 01 00 from any port -> the next pass unhooks both (stock words), the media case of 4 behaves as S
+#   8  1F 01 00 from the bound app at the end -> rc 1, both sites still hooked, the media case of 4 still held (G != S)
+#      (before fold step 3: unhooked, = S)
 from __future__ import annotations
 
 import pathlib
@@ -83,20 +84,19 @@ def rig_of(image, syms):
 
 
 def machine(image, syms, data, gate):
-    """A Rig with ota_main applied live, the app (port 2) bound; gate=True: 1F 01 01 and one pass; gate=False: the gate
-    off - 1F 01 00 when the payload boots with it on (S = the stock path), else a plain 1F 00 (same passes / requests)."""
+    """A Rig with ota_main applied live, the app (port 2) bound, a 1F 00 and one pass (the gate hooks its sites on its
+    first pass); gate=False: S - the two site words put back to the stock `bl` afterwards (test poke: the stock path)."""
     rig = rig_of(image, syms)
     rc, _st = rpw.upload_apply(rig, data)
     assert rc == 0
     rig.emu.write_bytes(BINDING, bytes([APP + 1]))
     rig.tick(2)
-    if gate:
-        rig.ask(APP, rp.req(OP, 0x01, 0x01))
-    elif BOOT_ON:
-        rig.ask(APP, rp.req(OP, 0x01, 0x00))
-    else:
-        rig.ask(APP, rp.req(OP))   # the same number of passes / requests
+    rig.ask(APP, rp.req(OP))
     rig.tick(1)
+    if not gate:
+        rig.emu.write_bytes(SITE_MEDIA, WORD_MEDIA.to_bytes(4, "little"))
+        rig.emu.write_bytes(SITE_XPORT, WORD_XPORT.to_bytes(4, "little"))
+        assert (rig.emu.read_u32(SITE_MEDIA), rig.emu.read_u32(SITE_XPORT)) == (WORD_MEDIA, WORD_XPORT)
     return rig
 
 
@@ -132,6 +132,8 @@ def main(argv):
     BOOT_ON = p.boot_on
     if not p.feat3 & images.FEAT3_XGATE:
         raise SystemExit(f"{name}: no executor gate (feat3 0x08)")
+    if not BOOT_ON:
+        raise SystemExit(f"{name}: the gate is always on from fold step 3 (images boot_on)")
     # the MIDI channel port (feat3 0x10) hooks its three v3 sites at attach - counted on top
     mc = 3 if p.feat3 & images.FEAT3_MIDICH else 0
     mc += 1 if "hk_fr_file" in psyms else 0   # + the fn 0x24 Read site 0x40143ACC at attach
@@ -181,37 +183,27 @@ def main(argv):
     st = status(rig)
     words = (rig.emu.read_u32(SITE_MEDIA), rig.emu.read_u32(SITE_XPORT))
     want_w = (rh.bl_word(SITE_MEDIA, WORD_MEDIA, psyms["hk_xg_media"]), rh.bl_word(SITE_XPORT, WORD_XPORT, psyms["hk_xg_xport"]))
-    if BOOT_ON:
-        r_off = status(rig, PANEL, rp.req(OP, 0x01, 0x00))
-        rig.tick(1)
-        w_off = (rig.emu.read_u32(SITE_MEDIA), rig.emu.read_u32(SITE_XPORT))
-        hk_off = rh.hooks(rig.pn)
-        st_off = status(rig)
-        ok &= check("2 boot on: 20 passes after the apply both sites hooked (bl -> hk_xg_media / hk_xg_xport), op 0x16 seven "
-                    "hooked; 1F 00 -> 5F 00 00, flags 0x3F (built, on, both hooked, wanted, service), rc 0 / 0, 34 B; "
-                    "1F 01 00 from the unbound panel -> 5F 01 00, the next pass unhooks both (stock words, five hooked), flags 0x21",
-                    words == want_w and hk["hooked"] == 7 + mc and st is not None and st[:2] == (0, 0)
-                    and st[2]["flags"] == 0x3F and (st[2]["rc_m"], st[2]["rc_x"]) == (0, 0) and st[2]["n"] == 34
-                    and r_off is not None and r_off[:2] == (1, 0) and w_off == (WORD_MEDIA, WORD_XPORT)
-                    and hk_off["hooked"] == 5 + mc and st_off is not None and st_off[2]["flags"] == 0x21,
-                    f"{[hex(w) for w in words]} {hk['hooked']} {st and (hex(st[2]['flags']), st[2]['rc_m'], st[2]['rc_x'])} "
-                    f"off {r_off and r_off[:2]} {[hex(w) for w in w_off]} {hk_off['hooked']} {st_off and hex(st_off[2]['flags'])}")
-    else:
-        ok &= check("2 default off: 20 passes after the apply both site words stock, op 0x16 five hooked; 1F 00 -> 5F 00 00, "
-                    "flags built + service (0x21), rc 0xFF / 0xFF, 34 B",
-                    words == (WORD_MEDIA, WORD_XPORT) and hk["hooked"] == 5 + mc and st is not None and st[:2] == (0, 0)
-                    and st[2]["flags"] == 0x21 and (st[2]["rc_m"], st[2]["rc_x"]) == (0xFF, 0xFF) and st[2]["n"] == 34,
-                    f"{[hex(w) for w in words]} {hk['hooked']} {st}")
+    r_off = status(rig, PANEL, rp.req(OP, 0x01, 0x00))
+    rig.tick(1)
+    w_off = (rig.emu.read_u32(SITE_MEDIA), rig.emu.read_u32(SITE_XPORT))
+    hk_off = rh.hooks(rig.pn)
+    st_off = status(rig)
+    ok &= check("2 boot on: 20 passes after the apply both sites hooked (bl -> hk_xg_media / hk_xg_xport), op 0x16 seven "
+                "hooked; 1F 00 -> 5F 00 00, flags 0x3F (built, on, both hooked, wanted, service), rc 0 / 0, 34 B; "
+                "the old off op 1F 01 00 from the unbound panel -> 5F 01 01, the next pass changes nothing (still hooked, 0x3F)",
+                words == want_w and hk["hooked"] == 7 + mc and st is not None and st[:2] == (0, 0)
+                and st[2]["flags"] == 0x3F and (st[2]["rc_m"], st[2]["rc_x"]) == (0, 0) and st[2]["n"] == 34
+                and r_off is not None and r_off[:2] == (1, 1) and w_off == want_w
+                and hk_off["hooked"] == 7 + mc and st_off is not None and st_off[2]["flags"] == 0x3F,
+                f"{[hex(w) for w in words]} {hk['hooked']} {st and (hex(st[2]['flags']), st[2]['rc_m'], st[2]['rc_x'])} "
+                f"off {r_off and r_off[:2]} {[hex(w) for w in w_off]} {hk_off['hooked']} {st_off and hex(st_off[2]['flags'])}")
     rig.close()
 
-    # ---- 3. switch on -------------------------------------------------------------------------------
+    # ---- 3. the old on op -----------------------------------------------------------------------------
     g = rig_of(image3, syms3)
     rpw.upload_apply(g, data)
     g.emu.write_bytes(BINDING, bytes([APP + 1]))
     g.tick(2)
-    if BOOT_ON:   # start from off, as a default-off payload does
-        g.ask(APP, rp.req(OP, 0x01, 0x00))
-        g.tick(1)
     r_unb = status(g, PANEL, rp.req(OP, 0x01, 0x01))
     g.tick(1)
     w_unb = (g.emu.read_u32(SITE_MEDIA), g.emu.read_u32(SITE_XPORT))
@@ -222,11 +214,11 @@ def main(argv):
     w_on = (g.emu.read_u32(SITE_MEDIA), g.emu.read_u32(SITE_XPORT))
     hk = rh.hooks(g.pn)
     st = status(g)
-    ok &= check("3 1F 01 01 from the unbound panel port -> 5F 01 02, nothing hooked; from the bound app -> 5F 01 00 (flags "
-                "wanted, not yet on), the next pass hooks both sites (bl -> hk_xg_media / hk_xg_xport), op 0x16 seven hooked, "
+    ok &= check("3 the old on op 1F 01 01 from the unbound panel port -> 5F 01 01, from the bound app -> 5F 01 01 (rc 1: no "
+                "switch from ngver 3); both sites stay hooked (bl -> hk_xg_media / hk_xg_xport), op 0x16 seven hooked, "
                 "1F 00 flags 0x3F (built, on, both hooked, wanted, service), rc 0 / 0",
-                r_unb is not None and r_unb[:2] == (1, 2) and w_unb == (WORD_MEDIA, WORD_XPORT)
-                and r_on is not None and r_on[:2] == (1, 0) and r_on[2]["flags"] == 0x31 and w_on == want_w
+                r_unb is not None and r_unb[:2] == (1, 1) and w_unb == want_w
+                and r_on is not None and r_on[:2] == (1, 1) and r_on[2]["flags"] == 0x3F and w_on == want_w
                 and hk["hooked"] == 7 + mc and st is not None and st[2]["flags"] == 0x3F and (st[2]["rc_m"], st[2]["rc_x"]) == (0, 0),
                 f"{r_unb and r_unb[:2]} {r_on and (r_on[:2], hex(r_on[2]['flags']))} {[hex(w) for w in w_on]} "
                 f"{hk['hooked']} {st and hex(st[2]['flags'])}")
@@ -333,8 +325,8 @@ def main(argv):
     ok &= check(f"7 {len(allw)} stores by payload code in checks 3-6: only payload .data, core RW and the stack - no stock RAM",
                 allw and not stray, str([(hex(w.addr), hex(w.pc)) for w in stray[:4]]))
 
-    # ---- 8. switch off --------------------------------------------------------------------------------
-    r_off = status(g, PANEL, rp.req(OP, 0x01, 0x00))
+    # ---- 8. the old off op: refused, still gated -------------------------------------------------------
+    r_off = status(g, APP, rp.req(OP, 0x01, 0x00))
     g.tick(1)
     w_off = (g.emu.read_u32(SITE_MEDIA), g.emu.read_u32(SITE_XPORT))
     hk = rh.hooks(g.pn)
@@ -343,11 +335,11 @@ def main(argv):
     g_st, g_fr, _ = site_pass(g, SITE_MEDIA)
     s_st, s_fr, _ = site_pass(s, SITE_MEDIA)
     st = status(g)
-    ok &= check("8 1F 01 00 from the (unbound) panel port -> 5F 01 00; the next pass unhooks both (stock words, op 0x16 five "
-                "hooked), flags 0x21; the media case of 4 now = S (state 2 at once)",
-                r_off is not None and r_off[:2] == (1, 0) and w_off == (WORD_MEDIA, WORD_XPORT) and hk["hooked"] == 5 + mc
-                and g_st == s_st and g_fr == s_fr and get(g, "media", "rec") == (0, 2)
-                and st is not None and st[2]["flags"] == 0x21,
+    ok &= check("8 the old off op 1F 01 00 from the bound app -> 5F 01 01; the next pass changes nothing (both hooked, op 0x16 "
+                "seven hooked, flags 0x3F); the media case of 4 is still held (S: state 2 at once, G: pending byte kept)",
+                r_off is not None and r_off[:2] == (1, 1) and w_off == want_w and hk["hooked"] == 7 + mc
+                and not s_st == [] and get(s, "media", "rec") == (0, 2) and get(g, "media", "rec") == (0x80, 4)
+                and not g_fr and st is not None and st[2]["flags"] == 0x3F,
                 f"{r_off and r_off[:2]} {[hex(w) for w in w_off]} {hk['hooked']} {get(g, 'media', 'rec')} {st and hex(st[2]['flags'])}")
     g.close()
     s.close()

@@ -26,8 +26,9 @@
 /* CA79NG_SESSION is the one build switch left in this port: 1 = the slot payload ota_main (the session core and
  * everything on it - startup settings, playback / record control, MIDI channel, intake gate, S3 / S4, the BT port's
  * pwc_on), 0 = the host test of the bare Phase 3-1 front (tests/test_sysex_cave.c).  The per-feature switches
- * CA79NG_STARTUP / REC / REC3 / MIDICH / GATE / S3 / S4 and PWC_BTSRC were folded into it after their field tests
- * runtime switches (S3 / S4 / MIDI channel) stay - on at boot. */
+ * CA79NG_STARTUP / REC / REC3 / MIDICH / GATE / S3 / S4 and PWC_BTSRC were folded into it after their field tests;
+ * fold step 3 (2026-11-21, ngver 3) removed the runtime off-switches too: S3 / S4 / the MIDI channel judge are on from
+ * init() and no op turns them off (the set forms 1B 05 04 / 1B 05 06 / 1B 07 <x> answer rc 1 with the record). */
 
 #define S4_FRAME_MAX (16u + KP_PACKED_MAX)   /* F0 40 cc 10 08 02 5F 00 part + packed body (<= 0xF5) + F7, room to spare */
 
@@ -388,15 +389,14 @@ static void io_apply(void *c, uint8_t ctx_id, const uint8_t *body, uint16_t n)
 #endif
     (void)c;
 #if CA79NG_SESSION
-    if (rw.state.s4_on) {
-        if (stk_stage_flag != 0)
-            rw.s4.staged++;   /* the stock holds staged values unapplied (FUN_4015C410): nothing to read back yet */
-        else if (n > S4_FRAME_MAX)
-            rw.s4.big++;
-        else {
-            s4_apply(ctx_id, body - 6, n);
-            return;
-        }
+    /* S4 write owner (always on): staged / oversized sets stay on the S3 path below */
+    if (stk_stage_flag != 0)
+        rw.s4.staged++;   /* the stock holds staged values unapplied (FUN_4015C410): nothing to read back yet */
+    else if (n > S4_FRAME_MAX)
+        rw.s4.big++;
+    else {
+        s4_apply(ctx_id, body - 6, n);
+        return;
     }
 #endif
 #if CA79NG_SESSION
@@ -587,11 +587,11 @@ static int ss_value(void *c, uint8_t port, uint8_t cc, uint8_t i, uint8_t part, 
     return value_of(port, cc, i, part, j, out, false);
 }
 
-/* kps io.value: a request answer (fn 0x02 of a bound controller) - the store's when S3 is on */
+/* kps io.value: a request answer (fn 0x02 of a bound controller) - the store's when kst_s3_frame allows it (S3 always on) */
 static int ss_value_req(void *c, uint8_t port, uint8_t cc, uint8_t i, uint8_t part, uint8_t j, uint8_t out[KPS_FRAME_MAX])
 {
     (void)c;
-    return value_of(port, cc, i, part, j, out, rw.state.s3_on);
+    return value_of(port, cc, i, part, j, out, true);
 }
 
 /* stage 2: the k-th value frame of key v1 v2 part as the stock would notify it (cc 0x7F, the notify
@@ -799,7 +799,7 @@ static void s2_tick(uint32_t now)
         return;
     }
     /* S3: until a clean walk ran, requests read the stock - make that walk come soon (still paused by S2's rules) */
-    if (rw.state.s3_on && rw.state.synced && !kst_s3_trusted(&rw.state) && (int32_t)(rw.s2.next - (now + S3_SOON_MS)) > 0)
+    if (rw.state.synced && !kst_s3_trusted(&rw.state) && (int32_t)(rw.s2.next - (now + S3_SOON_MS)) > 0)
         rw.s2.next = now + S3_SOON_MS;
     if ((int32_t)(now - rw.s2.next) < 0)
         return;
@@ -894,9 +894,8 @@ static void init(void)
         static const kst_io_t kio = {.ctx = 0, .match = ss_match, .value = ss_value, .fan = st_fan};
         kpm_cfg_t cfg;
         kst_init(&rw.state, &rw.store, &kio);
-        /* boot-on (owner decision 2026-11-16): S3 / S4 on from the
-         * moment their ops would be accepted (ready) - what op 1B 05 04 01 / 1B 05 06 01 does right after init.  S3
-         * serves nothing until a clean walk makes the store trusted; S4's gen bump lands before the fill walk starts */
+        /* S3 / S4 always on (boot-on 2026-11-16, off-switches removed in fold step 3): S3 serves nothing until a clean
+         * walk makes the store trusted; S4's gen bump lands before the fill walk starts */
         kst_s3_enable(&rw.state, true);
         kst_s4_enable(&rw.state, true);
         kst_start(&rw.state, KST_FILL);   /* walked KST_CALLS value reads per pump-tail pass */
@@ -906,8 +905,8 @@ static void init(void)
         rw.s2.rec_prev = rd8(KPM_A_REC_STATE);
         rw.s2.on_prev = piano_on();
     }
-    /* boot-on: the MIDI channel judge on when op 1B 07 01 would be accepted - ready, and attach() put the ota_loader_v3
-     * sites in place (attach() runs before the first tick; on ota_loader_v2 nothing is hooked and it stays off) */
+    /* the MIDI channel judge on once ready, when attach() put the ota_loader_v3 sites in place (attach() runs before the
+     * first tick; without them - ota_loader_v2 - nothing is hooked and the stubs never run) */
     mcc_on = mc_hooked ? 1 : 0;
 #endif
     ready = 1;
@@ -976,12 +975,12 @@ void ssc_pump(void)
 #if CA79NG_SESSION
 /* ---- Phase 4: MIDI channel messages + delayed apply -------------
  * ota_loader_v3 sites 0x40148C4C (Program Change), 0x40148C60 (Control Change), 0x40153998 (delayed apply), task 19.
- * The stubs (src/power_hooks.c) tail-call the stock target while mcc_on is 0.  On: the stub asks mcc_*_judge (reads
+ * The stubs (src/power_hooks.c) tail-call the stock target while mcc_on is 0 (before init()).  On: the stub asks mcc_*_judge (reads
  * only, never blocks) - KCH_DROP returns to the parser, KCH_STOCK tail-calls the stock routine with the registers the
  * parser's bl left, KCH_SETTING enters mcc_*_run, which runs the stock routine under the resident's in-flight flag and
  * reads the key it may have changed back into the settings store before returning (the same task-19 call). */
 static void put32(uint8_t *p, uint32_t v);
-volatile uint8_t mcc_on = 0;      /* op 1B 07 <0|1>; init() turns it on when the sites are attached (boot-on) */
+volatile uint8_t mcc_on = 0;      /* init() sets it when the sites are attached; nothing clears it (fold step 3) */
 static uint8_t mc_hooked = 0;     /* bit 0 PC, 1 CC, 2 delayed apply: attached                */
 static kch_dec_t mc_dec = {0, {0, 0, 0}, 0, 0};   /* the judgement of the message mcc_*_run executes (task 19) */
 
@@ -1120,13 +1119,6 @@ void sxc_chan(uint8_t raw[SX_DIAG_RAW])
     raw[10] = (uint8_t)(rw.state.abs.bad > 0xFF ? 0xFF : rw.state.abs.bad);
 }
 
-static uint8_t chan_set(uint8_t on)
-{
-    if (!ready || on > 1 || (on && !mc_hooked))
-        return SX_BAD_VALUE;   /* nothing to switch on without the ota_loader_v3 sites (ota_loader_v2: harmless no) */
-    mcc_on = on;
-    return SX_OK;
-}
 #endif
 
 /* counts only - reads the frame, never blocks, never changes what the stock or the front does */
@@ -1515,13 +1507,6 @@ void sxc_state_s3(uint8_t raw[SX_DIAG_RAW])
     put32(raw + 40, s->st.passes);
 }
 
-static uint8_t state_s3_set(uint8_t on)
-{
-    if (!ready || on > 1)
-        return SX_BAD_VALUE;
-    kst_s3_enable(&rw.state, on != 0);
-    return SX_OK;
-}
 
 /* op 0x1B 05 06 / 07: settings state S4 - the write owner */
 void sxc_state_s4(uint8_t raw[SX_DIAG_RAW])
@@ -1549,13 +1534,6 @@ void sxc_state_s4(uint8_t raw[SX_DIAG_RAW])
     put32(raw + 44, s->ev);
 }
 
-static uint8_t state_s4_set(uint8_t on)
-{
-    if (!ready || on > 1)
-        return SX_BAD_VALUE;
-    kst_s4_enable(&rw.state, on != 0);
-    return SX_OK;
-}
 
 /* op 0x1B 05 01: one compare pass of the whole store (task 19, KST_CALLS value reads per pump-tail pass) */
 static uint8_t state_compare(void)
@@ -1598,18 +1576,15 @@ void sxc_sysex(uint8_t stock_port, const uint8_t *buf, uint32_t len)
             rw.front.enabled = buf[8] != 0;
 #if CA79NG_SESSION
     } else if ((len == 10 || len == 11) && sub == 5) {
-        /* 1B 05 01: start a compare pass of the settings store; 1B 05 02: S2 record; 1B 05 03 [k]: unexplained ring */
+        /* 1B 05 01: start a compare pass of the settings store; 1B 05 02: S2 record; 1B 05 03 [k]: unexplained ring;
+         * 1B 05 04 / 06 <x> (the S3 / S4 switches before fold step 3): rc 1 below, the record still answered */
         if (len == 10 && buf[8] == 1)
             rc = state_compare();
-        else if (len == 11 && buf[8] == 4)
-            rc = state_s3_set(buf[9]);   /* 1B 05 04 <0|1>: S3 read owner off / on */
-        else if (len == 11 && buf[8] == 6)
-            rc = state_s4_set(buf[9]);   /* 1B 05 06 <0|1>: S4 write owner off / on */
         else if (!(len == 10 && (buf[8] == 2 || buf[8] == 5 || buf[8] == 7)) && !(buf[8] == 3 && (len == 10 || buf[9] < KST_RING)))
             rc = SX_BAD_VALUE;
-    } else if (sub == 7 && (len == 9 || len == 10)) {   /* 1B 07: Phase 4 MIDI channel record, 1B 07 <0|1>: off / on */
+    } else if (sub == 7 && (len == 9 || len == 10)) {   /* 1B 07: Phase 4 MIDI channel record; 1B 07 <x>: rc 1 + record */
         if (len == 10)
-            rc = chan_set(buf[8]);
+            rc = SX_BAD_VALUE;
     } else if (!(len == 8 || (len == 9 && (sub == 0 || sub == 2 || sub == 3 || sub == 4 || sub == 5 || SX_GATE_SUB(sub))))) {
         rc = SX_BAD_VALUE;   /* + 1B 03 / 04 / 05 (+ 1B 06 in the gate build) */
     }

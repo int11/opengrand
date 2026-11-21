@@ -233,7 +233,7 @@ bool kst_ring_get(const kst_t *s, uint32_t k, kst_unexp_t *out);
 
 /* ---- S3: read owner ------------------------------------------------
  * Requests (fn 0x02) are answered from the store instead of the stock getter, value by value, when all of these hold:
- *   - S3 is on (kst_s3_enable; the cave: feature bit + op 1B 05 04)
+ *   - S3 is on (kst_s3_enable; the cave: on from init, no off op from ngver 3)
  *   - the descriptor is a settings descriptor (kst_s3_owned): REA FUN_4015E960 reads its value straight from the
  *     settings block (FUN_4015B4D8, ctx 0..5 = one block) / the live global (FUN_4015B4D0) or through a ROM table, and
  *     whether it has a value depends on x only - not a run-state call (recorder, BT, song, VT, MusicMode, Sound table)

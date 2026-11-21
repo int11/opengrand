@@ -29,15 +29,15 @@
 #          0x10 Phase 3-6 R1 playback control by the core (with 0x02: recctl at the front end 0x40147E94 and the
 #               pump tail 0x401539AC, op 0x1E)
 #          0x20 remote off (op 19 03)
-#          0x40 Phase 3-4 S3: the settings store answers the requests while trusted (with 0x02; op 1B 05 04 <0|1>,
-#               on at boot in ota_main since 2026-11-16)
+#          0x40 Phase 3-4 S3: the settings store answers the requests while trusted (with 0x02; record op 1B 05 05,
+#               on at boot in ota_main since 2026-11-16, always on - no off op - from fold step 3)
 #   feat3  (fourth byte, slot payloads only - -DCA79NG_FEAT3, IDENTIFY byte 7 when non-zero, needs feat2)
 #          0x01 Phase 3-6 R2 record control (with feat2 0x10; field 2026-11-15)
 #          0x02 Phase 4 A intake gate (field 2026-11-15)
 #          0x04 Phase 3-6 R3 save decision (with 0x01; field 2026-11-15)
-#          0x08 Phase 4 executor gate (op 0x1F, on at boot in ota_main)
-#          0x10 Phase 4 MIDI channel messages / delayed apply (op 1B 07, on at boot in ota_main)
-#          0x20 Phase 3-4 S4 write owner (op 1B 05 06, on at boot in ota_main)
+#          0x08 Phase 4 executor gate (record op 1F 00, always on in ota_main)
+#          0x10 Phase 4 MIDI channel messages / delayed apply (record op 1B 07, always on in ota_main with v3+ sites)
+#          0x20 Phase 3-4 S4 write owner (record op 1B 05 07, always on in ota_main)
 #   ota_main = every bit at once (feat1 0x77, feat2 0x7F, feat3 0x3F): the one slot payload kept on the piano.
 #          The power family is built only as ota_main: one fixed source / define set (cave/Makefile POWER_SRC), and
 #          the feature bytes are FROZEN at 0x3B / 0x77 / 0x7F / 0x3F (generated NG_FEATn_FROZEN, checked in ca79ng.c);
@@ -125,8 +125,8 @@ class OtaPayload:
     feat2: int = 0    # third feature byte (make FEAT2=..., IDENTIFY byte 6); 0 = not passed at all
     feat3: int = 0    # fourth feature byte (make FEAT3=..., IDENTIFY byte 7, needs feat2); 0 = not passed at all
     ngver: int = 1    # IDENTIFY byte 1 (OpenGrand protocol version): ota_main = NG_PROTO_VERSION, the test payloads 1
-    # S3 / S4 / the MIDI channel judge / the executor gate on from boot (ota_main).  Round trips read it for their
-    # expectations.
+    # S3 / S4 / the MIDI channel judge / the executor gate on from boot with no off op (ota_main, fold step 3).  Round
+    # trips read it for their expectations.
     boot_on: bool = False
 
 
@@ -140,17 +140,17 @@ OTA_PAYLOADS = {p.variant: p for p in (
                "playback control by the core (Phase 3-6 R1, op 0x1E) + "
                "remote off from any bound controller (op 19 03, feat2 0x20). "
                "The piano runs one slot payload at a time: this is the one kept on it. "
-               "+ the settings store as read owner (Phase 3-4 S3, feat2 0x40, op 1B 05 04) "
+               "+ the settings store as read owner (Phase 3-4 S3, feat2 0x40, record op 1B 05 05) "
                "+ the Phase 4 executor gate (feat3 0x08, op 0x1F; "
                "its two engine-loop sites exist only on ota_loader_v4). "
-               "+ the settings store as write owner (Phase 3-4 S4, feat3 0x20, op 1B 05 06) "
+               "+ the settings store as write owner (Phase 3-4 S4, feat3 0x20, record op 1B 05 07) "
                "+ the MIDI channel messages / delayed apply judged by the core at the "
                "ota_loader_v4 sites 6 / 7 / 8 (Phase 4, feat3 0x10, op 1B 07). "
                "+ the Phase 3-6 R2 record control (feat3 0x01), the Phase 4 A intake gate (feat3 0x02, op 1B 06) and the Phase 3-6 R3 "
                "save decision (feat3 0x04, op 1E 04), folded in after their field tests. "
                "IDENTIFY feat1 0x77, feat2 0x7F, feat3 0x3F. "
                "Fold step 2: one fixed source / define set, no per-feature "
-               "switches; IDENTIFY ngver 2 (result/protocol/NGVER.md) with the feature bytes frozen at these values. Boot-on: S3, S4, the MIDI channel judge and the executor gate start on (each op still switches it off = the stock path)",
+               "switches; IDENTIFY ngver (result/protocol/NGVER.md) with the feature bytes frozen at these values. S3, S4, the MIDI channel judge and the executor gate always on (boot-on 2026-11-16; fold step 3 / ngver 3 removed their off ops - the set forms answer rc 1)",
                feat2=FEAT2_BT | FEAT2_SESSION | FEAT2_RELAY | FEAT2_STARTUP | FEAT2_REC | FEAT2_PWROFF | FEAT2_S3,
                feat3=FEAT3_XGATE | FEAT3_S4 | FEAT3_MIDICH | FEAT3_REC2 | FEAT3_GATE | FEAT3_REC3, ngver=NG_PROTO_VERSION, boot_on=True),
 )}
