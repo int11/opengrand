@@ -47,7 +47,7 @@ function piano(link: InstanceType<typeof LoopbackLink>) {
 test("panel UI: the piano's 7E 01 01 after a live swap -> CONNECT + full request, fan-out reaches it again", async () => {
   const [panel, board] = LoopbackLink.pair();
   const p = piano(board);
-  // the panel builds: no boot re-grab
+  // the panel builds: no boot notice
   const mgr = new ConnectionManager({ makeSession: (l) => new PianoSession(l, { ackTimeoutMs: 60 }), replyMs: 300 });
   const banner = takeoverBanner(mgr);
   dom.window.document.body.append(banner.el);

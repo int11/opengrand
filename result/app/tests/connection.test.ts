@@ -116,18 +116,16 @@ const TABLE: [ConnState, ConnEvent, Phase, string[]][] = [
   [at("ready"), { type: "closed", gen: G - 1 }, "ready", []],
   [at("connecting"), { type: "failed", gen: G - 1, error: "x" }, "connecting", []],
   [at("connecting"), { type: "synced", gen: G + 1, model: "", version: "" }, "connecting", []],
-  // A3 boot re-grab: a start opens the window (only when enabled), the first displacement in it is taken back once
-  [at("idle", { key: null, bootRetake: true }), { type: "pick", key: "ble:A", link: "CA79" }, "connecting", ["start:choice", "grace"]],
-  [at("lost", { bootRetake: true }), { type: "retry" }, "connecting", ["start:reopen", "grace"]],
-  [at("idle", { suspended: true, bootRetake: true }), { type: "resume" }, "connecting", ["start:reopen", "grace"]],
-  [at("ready", { grace: true }), { type: "displaced", gen: G }, "displaced", ["autoArm"]],
-  [at("connecting", { grace: true }), { type: "displaced", gen: G }, "displaced", ["autoArm"]],
+  // boot notice (was the A3 re-grab): a start opens the window (only when enabled), a displacement in it is shown
+  // as the panel's start-up — nothing is scheduled, nothing is sent (field 2026-11-18)
+  [at("idle", { key: null, bootNotice: true }), { type: "pick", key: "ble:A", link: "CA79" }, "connecting", ["start:choice", "grace"]],
+  [at("lost", { bootNotice: true }), { type: "retry" }, "connecting", ["start:reopen", "grace"]],
+  [at("idle", { suspended: true, bootNotice: true }), { type: "resume" }, "connecting", ["start:reopen", "grace"]],
+  [at("ready", { grace: true }), { type: "displaced", gen: G }, "displaced", ["bootTook"]],
+  [at("connecting", { grace: true }), { type: "displaced", gen: G }, "displaced", ["bootTook"]],
   [at("ready", { grace: true }), { type: "displaced", gen: G - 1 }, "ready", []],
   [at("ready", { grace: true }), { type: "graceEnd", gen: G }, "ready", []],
-  [at("displaced", { autoRetake: true }), { type: "autoRetake", gen: G }, "retaking", ["retake"]],
-  [at("displaced"), { type: "autoRetake", gen: G }, "displaced", []],
-  [at("displaced", { autoRetake: true }), { type: "autoRetake", gen: G - 1 }, "displaced", []],
-  [at("ready", { autoRetake: true }), { type: "autoRetake", gen: G }, "ready", []],
+  [at("displaced", { bootTook: true }), { type: "retake" }, "retaking", ["retake"]],
   // auto-reconnect (desktop app, field 2026-11-03): lost schedules the next reopen; a failed reopen goes back to lost
   ...(["connecting", "syncing", "ready", "waking", "displaced", "retaking", "failed"] as Phase[]).map((p): [ConnState, ConnEvent, Phase, string[]] => [at(p, { autoReconnect: true }), { type: "closed", gen: G }, "lost", ["reconnectArm"]]),
   [at("ready", { autoReconnect: true, key: null }), { type: "closed", gen: G }, "lost", []],
@@ -179,20 +177,21 @@ test("re-bind flags: once per session for 'not bound'; a new session or a manual
   assert.deepEqual(connView(reduce(at("displaced"), { type: "retake" }).state).status, ["Taking control…"]);
 });
 
-test("A3 boot re-grab flags: the window closes on use and on graceEnd; a manual retake or a lost link cancels a pending re-grab", () => {
+test("boot notice flags: the window closes on use and on graceEnd; a retake or a lost link ends the notice", () => {
   assert.equal(reduce(at("ready", { grace: true }), { type: "graceEnd", gen: G }).state.grace, false);
   const d = reduce(at("ready", { grace: true }), { type: "displaced", gen: G }).state;
-  assert.deepEqual([d.grace, d.autoRetake], [false, true]);
-  assert.equal(reduce(d, { type: "displaced", gen: G }).state.autoRetake, true, "already displaced: nothing changes");
-  assert.equal(reduce(d, { type: "retake" }).state.autoRetake, false);
-  assert.equal(reduce(d, { type: "closed", gen: G }).state.autoRetake, false);
-  // without bootRetake (default, and the panel builds) a start opens no window
+  assert.deepEqual([d.grace, d.bootTook], [false, true]);
+  assert.equal(reduce(d, { type: "displaced", gen: G }).state.bootTook, true, "already displaced: nothing changes");
+  assert.equal(reduce(d, { type: "retake" }).state.bootTook, false);
+  assert.equal(reduce(d, { type: "closed", gen: G }).state.bootTook, false);
+  // without bootNotice (default, and the panel builds) a start opens no window
   const s = reduce(at("idle", { key: null }), { type: "pick", key: "ble:A", link: "CA79" }).state;
   assert.equal(s.grace, false);
-  assert.equal(reduce({ ...s, phase: "ready" }, { type: "displaced", gen: s.gen }).state.autoRetake, false);
-  // the banner says what is about to happen
-  assert.deepEqual(connView(d).banner?.msg, ["The panel took control while starting up — taking it back in a moment…"]);
-  assert.equal(connView(d).banner?.button?.action, "retake", "the user can still take it back at once");
+  assert.equal(reduce({ ...s, phase: "ready" }, { type: "displaced", gen: s.gen }).state.bootTook, false);
+  // the banner says what happened and offers the app, not "take control again"
+  assert.deepEqual(connView(d).banner?.msg, ["The piano's panel took control as it started up — this firmware lets one device control the piano at a time."]);
+  assert.deepEqual(connView(d).banner?.button, { label: "Use this app", action: "retake", disabled: false });
+  assert.match(connView({ ...d, bootTook: false }).banner!.msg[0], /Another device/);
 });
 
 test("auto-reconnect: attempts count up for the backoff, a sync resets them; the banner says it is retrying", () => {
@@ -395,79 +394,52 @@ test("symptom 1, no answer: retake ends in 'Connection failed · Try again', and
   assert.equal(await m.settled(), "ready");
 });
 
-// A3 (08_bt_audit): the panel's start-up CONNECT displaces an app that reached the freshly powered piano first
-const BOOT = { windowMs: 300, delayMs: 30 };
+// Boot notice: the panel's start-up CONNECT displaces an app that reached the freshly powered piano first (stock:
+// one binding). Until 2026-11-21 the app took control back once (A3, 08_bt_audit); field 2026-11-18 showed the
+// panel taking it again at once — now nothing automatic (tests/bootcontrol.test.ts runs the panel's start-up loop).
+const BOOT = { windowMs: 300 };
 
-test("A3: displaced right after connecting (panel start-up) → control taken back once; a later panel tap is final", async () => {
+test("boot notice: displaced right after connecting (panel start-up) → said so, nothing sent; the user's 'Use this app' retakes", async () => {
   const [app, piano] = LoopbackLink.pair();
   const { st, panelConnect } = stockWithPanel(piano);
-  const { m, phases } = mgrFor({ bootRetake: BOOT });
+  const { m, phases } = mgrFor({ bootNotice: BOOT });
   assert.equal(await m.attach(app), "ready");
   const s = m.session;
   panelConnect(); // the panel finished booting and CONNECTs: nobody touched it
   await tick(5);
   assert.equal(m.phase, "displaced");
-  assert.match(connView(m.state).banner!.msg[0], /taking it back in a moment/);
-  assert.equal(st.connects, 1, "not at once: the panel is still in its CONNECT / identify steps");
-  assert.equal(await m.settled(), "displaced");
-  await tick(BOOT.delayMs + 10);
+  assert.match(connView(m.state).banner!.msg[0], /panel took control as it started up/);
+  await tick(100);
+  assert.equal(m.phase, "displaced");
+  assert.equal(st.connects, 1, "no CONNECT of its own: the panel keeps control");
+  m.retake(); // the banner button
   assert.equal(await m.settled(), "ready");
   assert.equal(m.session, s, "the same session took control again");
   assert.equal(st.bound, "app");
   assert.equal(st.connects, 2);
-  // the user taps the panel's "App connected" overlay (still inside the window): no tug of war
+  // the panel takes it back (its user tapped it): the plain banner, nothing automatic
   panelConnect();
-  await tick(BOOT.delayMs * 3);
+  await tick(60);
   assert.equal(m.phase, "displaced");
-  assert.equal(st.bound, "panel");
   assert.equal(st.connects, 2, "nothing sent");
   assert.match(connView(m.state).banner!.msg[0], /Another device/);
   assert.deepEqual(phases, ["connecting", "syncing", "ready", "displaced", "retaking", "ready", "displaced"]);
 });
 
-test("A3: a panel that CONNECTs again right after the re-grab wins — once means once", async () => {
-  const [app, piano] = LoopbackLink.pair();
-  const { st, panelConnect } = stockWithPanel(piano);
-  const { m } = mgrFor({ bootRetake: BOOT });
-  await m.attach(app);
-  panelConnect();
-  // the original panel app reloads when displaced during its start-up and CONNECTs again
-  st.onConnect = (n) => { if (n === 2) setTimeout(panelConnect, 2); };
-  await tick(BOOT.delayMs + 60);
-  assert.equal(m.phase, "displaced");
-  await tick(BOOT.delayMs * 3);
-  assert.equal(m.phase, "displaced");
-  assert.equal(st.connects, 2, "one re-grab only");
-  assert.equal(st.bound, "panel");
-});
-
-test("A3: displacement after the window, or with the feature off, is never taken back automatically", async () => {
-  for (const bootRetake of [{ windowMs: 20, delayMs: 10 }, undefined]) {
+test("boot notice: displacement after the window, or with the feature off, shows the plain banner", async () => {
+  for (const bootNotice of [{ windowMs: 20 }, undefined]) {
     const [app, piano] = LoopbackLink.pair();
     const { st, panelConnect } = stockWithPanel(piano);
-    const { m } = mgrFor({ bootRetake });
+    const { m } = mgrFor({ bootNotice });
     await m.attach(app);
     await tick(40); // past the window
     panelConnect();
     await tick(60);
-    assert.equal(m.phase, "displaced", JSON.stringify(bootRetake));
+    assert.equal(m.phase, "displaced", JSON.stringify(bootNotice));
     assert.equal(st.connects, 1);
     assert.match(connView(m.state).banner!.msg[0], /Another device/);
+    assert.equal(connView(m.state).banner!.button!.label, "Take control again");
   }
-});
-
-test("A3: 'Take control again' during the wait does it at once and cancels the automatic one", async () => {
-  const [app, piano] = LoopbackLink.pair();
-  const { st, panelConnect } = stockWithPanel(piano);
-  const { m } = mgrFor({ bootRetake: { windowMs: 300, delayMs: 80 } });
-  await m.attach(app);
-  panelConnect();
-  await tick(5);
-  m.retake();
-  assert.equal(await m.settled(), "ready");
-  await tick(120);
-  assert.equal(st.connects, 2, "no second CONNECT from the cancelled timer");
-  assert.equal(m.phase, "ready");
 });
 
 // ---------------------------------------------------------------- 2b. apply now drops the binding (field 2026-11-09)

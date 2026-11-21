@@ -7,7 +7,7 @@ import { registerServiceWorker } from "./pwa.ts";
 import { attachPanelCache } from "./state/panelcache.ts";
 import { TAB_IDS, type TabId } from "./state/settings.ts";
 import { ParamStore } from "./state/store.ts";
-import { AUTO_RECONNECT, BOOT_RETAKE, ConnectionManager, connView, type ConnState, type LinkChoice } from "./state/connection.ts";
+import { AUTO_RECONNECT, BOOT_NOTICE, ConnectionManager, connView, type ConnState, type LinkChoice } from "./state/connection.ts";
 import { androidAvailable, androidCandidate, listAndroid, onShellLifecycle, panelInfo, scanBle, setBacklight } from "./transport/android.ts";
 import { bleReopenAvailable, connectBleDevice, reopenBleMidi, requestBleDevice, requestBleMidi } from "./transport/ble.ts";
 import { desktopBleScan, desktopBleScanAvailable, desktopReopenBle, desktopShell } from "./transport/desktop.ts";
@@ -132,9 +132,9 @@ const conn = new ConnectionManager({
     if (s) attachSession(s);
   },
   wake: (s) => autoWake(s),
-  // A3: displaced right after connecting = the panel's start-up CONNECT → take control back once.
+  // displaced right after connecting = the panel's start-up CONNECT (one-binding firmware): say so, take nothing back.
   // Not in the panel builds: they are the panel.
-  bootRetake: kwmShell || embedded ? null : BOOT_RETAKE,
+  bootNotice: kwmShell || embedded ? null : BOOT_NOTICE,
   // desktop app: a lost piano (power-cycled, out of range) is reopened on its own, minimized or not (field 2026-11-03).
   // Not in a browser tab / the phone shell: they let the piano go while in the background (state/handoff.ts).
   autoReconnect: desktopShell() ? AUTO_RECONNECT : null,

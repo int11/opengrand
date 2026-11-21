@@ -17,13 +17,16 @@
 // session (released, replaced) is dropped, so cleaning up our own old session can never look like
 // another device taking over.
 //
-// Boot re-grab (A3): the panel CONNECTs late in its own start-up,
+// Boot notice (was the A3 boot re-grab until 2026-11-21): the panel CONNECTs late in its own start-up,
 // so an app that reaches a freshly powered piano first is displaced (7E 01 00) seconds later without
-// anyone touching the panel. A session opens a window (`bootRetake.windowMs`); the first displacement
-// inside it takes control back ONCE, after `delayMs` (the original panel app reloads and CONNECTs again
-// when it is displaced during its CONNECT / identify steps — re-grabbing at once would start a tug of
-// war). Any later displacement (the user tapped the panel's "App connected" overlay) is final: the
-// banner offers "Take control again", nothing automatic. Off in the panel builds.
+// anyone touching the panel — on a firmware with one binding (the stock, the loader without a main). With the
+// session core (ota_main) the panel's CONNECT displaces nobody and none of this happens. A session opens a window
+// (`bootNotice.windowMs`); a displacement inside it is shown as "the panel took control as it started up" with
+// "Use this app" — nothing automatic. Field 2026-11-18 (escape boot, stock): the old rule took control back once,
+// 8 s later, and the panel took it again at once — its start-up keeps CONNECTing until one of its sessions
+// connects (main.ts tryLink: a session that hears nothing fails, the next try comes 3 s later), and the app
+// cannot see when that ends (the stock tells an unbound port nothing) — so any fixed delay can land in a gap and
+// the app was left with "Take control again" on a piano just switched on. Off in the panel builds.
 //
 // Auto-reconnect (desktop app, field 2026-11-03): the piano was power-cycled, the link closed (lost) and
 // nothing reopened it — lost waited for a click, and the header 「연결」 opened the device list instead of
@@ -70,12 +73,12 @@ export interface ConnState {
   error: string;
   /** idle because the app went to the background / was closed: resume reconnects */
   suspended: boolean;
-  /** boot re-grab enabled (manager option; constant for the manager's life) */
-  bootRetake: boolean;
-  /** the boot window of the current session is open and unused: a displacement now is taken back once */
+  /** boot notice enabled (manager option; constant for the manager's life) */
+  bootNotice: boolean;
+  /** the boot window of the current session is open and unused: a displacement now is the panel starting up */
   grace: boolean;
-  /** displaced inside the boot window: control is taken back when `autoRetake` fires */
-  autoRetake: boolean;
+  /** displaced inside the boot window: the panel took control as it started up (shown as such; nothing automatic) */
+  bootTook: boolean;
   /** auto-reconnect enabled (manager option; constant for the manager's life) */
   autoReconnect: boolean;
   /** the session under way reopens a lost link: a failure goes back to lost (and the next attempt), not failed */
@@ -88,7 +91,7 @@ export interface ConnState {
   rejoin: boolean;
 }
 
-export const INITIAL: ConnState = { phase: "idle", seq: 0, gen: 0, key: null, link: "", model: "", version: "", error: "", suspended: false, bootRetake: false, grace: false, autoRetake: false, autoReconnect: false, reopening: false, reconnects: 0, rebound: false, rejoin: false };
+export const INITIAL: ConnState = { phase: "idle", seq: 0, gen: 0, key: null, link: "", model: "", version: "", error: "", suspended: false, bootNotice: false, grace: false, bootTook: false, autoReconnect: false, reopening: false, reconnects: 0, rebound: false, rejoin: false };
 
 export type ConnEvent =
   | { type: "connectButton" } // header button
@@ -108,7 +111,6 @@ export type ConnEvent =
   | { type: "wakeStart"; gen: number }
   | { type: "wakeDone"; gen: number }
   | { type: "graceEnd"; gen: number } // the boot window of session `gen` closed
-  | { type: "autoRetake"; gen: number } // the boot re-grab delay of session `gen` ran out
   | { type: "reconnectTick"; seq: number } // the auto-reconnect delay of the lost phase entered at `seq` ran out
   | { type: "timeout"; seq: number }; // watchdog of the phase entered at `seq`
 
@@ -120,7 +122,7 @@ export type Effect =
   | { type: "disconnect" } // DISCONNECT (7E 01 00) + close the link
   | { type: "release" } // retire the session silently, keep the link
   | { type: "grace"; gen: number } // open the boot window of session `gen`
-  | { type: "autoArm"; gen: number } // schedule the boot re-grab of session `gen`
+  | { type: "bootTook" } // trace only: displaced inside the boot window
   | { type: "reconnectArm"; seq: number; attempt: number } // schedule auto-reconnect attempt `attempt` (0-based) of the lost phase `seq`
   | { type: "arm"; phase: Phase; seq: number }
   | { type: "disarm" };
@@ -135,8 +137,8 @@ const BUSY: readonly Phase[] = ["connecting", "syncing", "retaking"];
 const has = (list: readonly Phase[], p: Phase) => list.includes(p);
 
 function go(s: ConnState, phase: Phase, patch: Partial<ConnState> = {}): ConnState {
-  // a pending boot re-grab belongs to the displaced phase only (a manual retake, a lost link … cancel it)
-  return { ...s, autoRetake: false, rejoin: false, ...patch, phase, seq: s.seq + 1 };
+  // the boot notice belongs to the displaced phase only (a retake, a lost link … end it)
+  return { ...s, bootTook: false, rejoin: false, ...patch, phase, seq: s.seq + 1 };
 }
 
 /** The transition table. Unknown / stale events leave the state as it is, with no effects. */
@@ -153,8 +155,8 @@ function step(s: ConnState, ev: ConnEvent): { state: ConnState; effects: Effect[
   const start = (source: "choice" | "current" | "reopen", patch: Partial<ConnState> = {}) => {
     const gen = s.gen + 1;
     const effects: Effect[] = [{ type: "start", gen, source }];
-    if (s.bootRetake) effects.push({ type: "grace", gen });
-    return { state: go(s, "connecting", { gen, error: "", suspended: false, grace: s.bootRetake, reopening: false, reconnects: 0, rebound: false, ...patch }), effects };
+    if (s.bootNotice) effects.push({ type: "grace", gen });
+    return { state: go(s, "connecting", { gen, error: "", suspended: false, grace: s.bootNotice, reopening: false, reconnects: 0, rebound: false, ...patch }), effects };
   };
   // reopen the link just lost (banner / header button / auto-reconnect): with auto-reconnect a failure comes back to lost
   const reopen = (auto: boolean) => start("reopen", { reopening: s.autoReconnect, reconnects: s.reconnects + (auto ? 1 : 0) });
@@ -212,9 +214,9 @@ function step(s: ConnState, ev: ConnEvent): { state: ConnState; effects: Effect[
       return same;
     case "displaced":
       if (!has(LIVE, s.phase) || s.phase === "displaced") return same;
-      // inside the boot window: the panel's start-up CONNECT — take control back once, a little later
+      // inside the boot window: the panel's start-up CONNECT — say so, take nothing back (field 2026-11-18)
       // the link is up (someone answered): a later failure is not a reopen any more
-      if (s.grace) return { state: go(s, "displaced", { grace: false, autoRetake: true, reopening: false, reconnects: 0 }), effects: [{ type: "autoArm", gen: s.gen }] };
+      if (s.grace) return { state: go(s, "displaced", { grace: false, bootTook: true, reopening: false, reconnects: 0 }), effects: [{ type: "bootTook" }] };
       return { state: go(s, "displaced", { reopening: false, reconnects: 0 }), effects: [] };
     case "invited":
       // the piano asks the controller to CONNECT again (stock: to the panel when the bound controller
@@ -224,8 +226,6 @@ function step(s: ConnState, ev: ConnEvent): { state: ConnState; effects: Effect[
       return same;
     case "graceEnd":
       return s.grace ? { state: { ...s, grace: false }, effects: [] } : same;
-    case "autoRetake":
-      return s.phase === "displaced" && s.autoRetake ? { state: go(s, "retaking"), effects: [{ type: "retake" }] } : same;
     case "reconnectTick":
       return s.phase === "lost" && ev.seq === s.seq ? reopen(true) : same;
     case "closed":
@@ -260,6 +260,7 @@ export interface ConnView {
   banner: { msg: Text; button: { label: string; action: "retake" | "retry"; disabled: boolean } | null } | null;
 }
 
+const BOOT_TOOK = "The piano's panel took control as it started up — this firmware lets one device control the piano at a time.";
 const LOST_RETRYING = "The connection to {name} was lost — reconnecting automatically…";
 
 export function connView(s: ConnState): ConnView {
@@ -278,7 +279,9 @@ export function connView(s: ConnState): ConnView {
     case "waking":
       return { status: ["Waking the piano…"], button: { label: "Connected", action: "menu" }, banner: null };
     case "displaced":
-      return { status: id, button: { label: "Connected", action: "menu" }, banner: { msg: [s.autoRetake ? "The panel took control while starting up — taking it back in a moment…" : "Another device (the panel or another app) took control"], button: { label: "Take control again", action: "retake", disabled: false } } };
+      // the panel's start-up (boot window): what happened and the one way to the app, not an alarm (field 2026-11-18)
+      if (s.bootTook) return { status: id, button: { label: "Connected", action: "menu" }, banner: { msg: [BOOT_TOOK], button: { label: "Use this app", action: "retake", disabled: false } } };
+      return { status: id, button: { label: "Connected", action: "menu" }, banner: { msg: ["Another device (the panel or another app) took control"], button: { label: "Take control again", action: "retake", disabled: false } } };
     case "retaking":
       if (s.rejoin) return { status: ["Reconnecting to {name}…", { name: s.link }], button: { label: "Connecting…", action: "none" }, banner: null };
       return { status: ["Taking control…"], button: { label: "Connecting…", action: "none" }, banner: { msg: ["Taking control…"], button: { label: "Take control again", action: "retake", disabled: true } } };
@@ -304,10 +307,10 @@ export interface ManagerOptions {
   /** per-reply budget handed to connect() / takeControl() (default 3000) */
   replyMs?: number;
   /**
-   * Boot re-grab (A3): the first 7E 01 00 within `windowMs` of a session start is taken back once,
-   * `delayMs` later. Absent / null: off (the panel builds — they are the panel).
+   * Boot notice: a 7E 01 00 within `windowMs` of a session start is shown as the panel's start-up taking control
+   * (nothing automatic). Absent / null: off (the panel builds — they are the panel).
    */
-  bootRetake?: { windowMs: number; delayMs: number } | null;
+  bootNotice?: { windowMs: number } | null;
   /**
    * Auto-reconnect: a lost link is reopened after `delaysMs[attempt]` (the last delay repeats), until it is back or
    * the user disconnects. Absent / null: off — a lost link waits for the banner / header button.
@@ -342,13 +345,10 @@ export interface ManagerOptions {
 const LIMITS = { connecting: 20000, syncing: 260000, retaking: 280000, waking: 10000 };
 
 /**
- * Phone / PC app default for `bootRetake`. Window: the panel's start-up CONNECT comes after its Android
- * boot + 3.3 s of fixed waits + page loads — not measured yet
- * (bootms), 60 s is a margin. Delay: the original panel app answers CONNECT + 4 identity
- * queries in about a second when the piano answers; a displacement after that shows its "App connected"
- * overlay instead of a reload + CONNECT again [inference].
+ * Phone / PC app default for `bootNotice`. Window: the panel's start-up CONNECT comes after its Android boot, the
+ * UI chooser and the UI's own start — not measured yet (bootms); it only picks the banner's words, so it is wide.
  */
-export const BOOT_RETAKE = { windowMs: 60000, delayMs: 8000 };
+export const BOOT_NOTICE = { windowMs: 120000 };
 
 /**
  * Desktop app default for `autoReconnect` (field 2026-11-03): a power-cycled piano's BLE module advertises again
@@ -371,7 +371,6 @@ export class ConnectionManager {
   private offSession = () => {};
   private timer: unknown = null;
   private graceTimer: unknown = null;
-  private autoTimer: unknown = null;
   private reTimer: unknown = null;
   private readonly listeners = new Set<(s: ConnState) => void>();
   private readonly opt: ManagerOptions;
@@ -384,7 +383,7 @@ export class ConnectionManager {
     this.limits = { ...LIMITS, ...opt.limits };
     this.setTimer = opt.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = opt.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
-    this.state = { ...INITIAL, bootRetake: !!opt.bootRetake, autoReconnect: !!opt.autoReconnect?.delaysMs.length };
+    this.state = { ...INITIAL, bootNotice: !!opt.bootNotice, autoReconnect: !!opt.autoReconnect?.delaysMs.length };
   }
 
   get phase(): Phase {
@@ -503,9 +502,9 @@ export class ConnectionManager {
         this.dropSession();
         if (link && !this.dead.has(link)) link.close(); // BLE: GATT disconnect, the module is free for another device
         this.link = null;
-        // no session any more: its boot window, boot re-grab and a pending reconnect go with it
-        for (const h of [this.graceTimer, this.autoTimer, this.reTimer]) this.clearTimer(h);
-        this.graceTimer = this.autoTimer = this.reTimer = null;
+        // no session any more: its boot window and a pending reconnect go with it
+        for (const h of [this.graceTimer, this.reTimer]) this.clearTimer(h);
+        this.graceTimer = this.reTimer = null;
         this.freshNext = false;
         if (this.state.key === null) {
           this.reopenFn = null;
@@ -529,16 +528,13 @@ export class ConnectionManager {
       case "grace": {
         const gen = e.gen;
         this.clearTimer(this.graceTimer);
-        this.graceTimer = this.setTimer(() => this.dispatch({ type: "graceEnd", gen }), this.opt.bootRetake?.windowMs ?? 0);
+        this.graceTimer = this.setTimer(() => this.dispatch({ type: "graceEnd", gen }), this.opt.bootNotice?.windowMs ?? 0);
         break;
       }
-      case "autoArm": {
-        const gen = e.gen;
-        this.trace("displaced right after the session started (panel start-up?): taking control back once");
-        this.clearTimer(this.autoTimer);
-        this.autoTimer = this.setTimer(() => this.dispatch({ type: "autoRetake", gen }), this.opt.bootRetake?.delayMs ?? 0);
+      case "bootTook":
+        // the stock binds one controller: taking it back would only fight the panel's start-up (field 2026-11-18)
+        this.trace("displaced right after the session started (panel start-up?): not taking control back");
         break;
-      }
       case "reconnectArm": {
         const d = this.opt.autoReconnect?.delaysMs ?? [];
         if (!d.length) break;
