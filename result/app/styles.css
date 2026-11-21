@@ -278,7 +278,6 @@ input[type=file]::-webkit-file-upload-button { font: inherit; font-size: 15px; c
   button, select { min-height: 44px; }
   button { min-width: 44px; }
   .chip { min-height: 44px; font-size: 15px; }
-  main .file-item button { min-height: 44px; padding: 4px 10px; }
   input[type=range] { height: 44px; }
   input[type=range]::-webkit-slider-thumb { width: 26px; height: 26px; margin-top: -11px; }
   input[type=file], input[type=file]::-webkit-file-upload-button { min-height: 44px; }
@@ -329,14 +328,6 @@ html.display-off body { filter: brightness(0.05); }
 .kb .key.held { background: #3a8fd6; }
 .chord-name { font-size: 40px; font-weight: 300; text-align: center; padding-top: 8px; }
 .chord-played { font-size: 28px; text-align: center; min-height: 1.4em; }
-/* USB file manager (§9.5) */
-.file-item { display: flex; align-items: center; border-top: 1px solid var(--line); padding: 4px 0; }
-.file-item > * + * { margin-left: 6px; }
-.file-item .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.file-item .song-name { flex: 0 0 auto; min-width: 5em; font-variant-numeric: tabular-nums; }
-.file-item .song-info { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-item[data-state="empty"] .song-name { opacity: 0.6; }
-.file-item button { min-height: 36px; padding: 4px 10px; }
 /* user touch curve / per-note editors (§9.1, §9.2) */
 .editor { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; }
 .editor h4 { margin: 4px 0 8px; font-size: 15px; }
@@ -462,18 +453,103 @@ body.panel .segmented button { min-height: 44px; }
 input[type=range]::-webkit-slider-runnable-track { height: 3px; }
 input[type=range]::-webkit-slider-thumb { margin-top: -9.5px; border: 0; background: #fff; box-shadow: 0 0 0 3px var(--accent); width: 18px; height: 18px; margin: -7.5px 3px 0; }
 @media (min-width: 900px) { nav button { border-radius: 10px; } }
-/* song / file rows: short one-line buttons (the long label is the title) */
-.file-item button { white-space: nowrap; background: transparent; border-color: #353434; font-size: .9em; }
-.file-item button:active { background: var(--raised); }
 /* transport rows: even spacing, one weight */
 .transport button { background: transparent; border-color: #353434; }
 .transport button:active { background: var(--raised); }
-.file-item .song-info { min-width: 0; }
-.file-item .song-name { min-width: 3.2em; }
-@media (max-width: 439px) {
-  /* narrow phones: the song's state goes on a small second line so the buttons fit in every language */
-  .file-item { flex-wrap: wrap; }
-  .file-item .song-name { flex: 1 1 auto; }
-  .file-item .song-info { order: 9; flex: 1 0 100%; margin: 0 0 2px; font-size: .8em; }
-  .file-item button { padding: 4px 9px; }
+
+/* ---- recorder tab and music tab (owner 2026-11-22: readable - what is selected, what the piano is doing) ----
+   same palette and patterns as the detail pass: outline controls, segmented groups, hairline rows. Grids carry the gaps
+   (Chrome 66); no flex gap. ui/recorder.ts · ui/files.ts · ui/screens/music.ts · ui/screens/songctl.ts */
+/* state line: dot, the state in large type, bar / time at the right - drawn like a small display */
+.now { display: flex; align-items: center; min-height: 56px; padding: 8px 14px; border: 1px solid #353434; border-radius: 12px; background: var(--bg); }
+.now-dot { flex: none; width: 12px; height: 12px; margin-right: 12px; border-radius: 50%; background: #5a5959; }
+.now-text { flex: none; font-size: 20px; font-weight: 600; line-height: 1.2; white-space: nowrap; }
+.now-sub { flex: 1; min-width: 0; margin-left: 12px; text-align: right; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now[data-state="0"] .now-dot { background: #e0a33a; }
+.now[data-state="1"] .now-dot { background: #2fbf71; }
+.now[data-state="3"] .now-dot, .now[data-state="5"] .now-dot, .now[data-state="6"] .now-dot { background: transparent; border: 3px solid var(--danger); }
+.now[data-state="4"] .now-dot { background: var(--danger); }
+.now[data-state="4"] .now-text { color: #ff6b74; }
+.music .card > .segmented.modes { margin-bottom: 10px; }
+.segmented.modes button { padding-left: 8px; padding-right: 8px; }
+/* the recorder's display: the state line over the selected song */
+.deck { border: 1px solid #353434; border-radius: 12px; background: var(--bg); overflow: hidden; }
+.deck .now { border: 0; border-radius: 0; background: none; }
+.rec-song { display: flex; flex-wrap: wrap; align-items: baseline; padding: 9px 14px 10px; border-top: 1px solid var(--line); }
+.rec-song-name { margin-right: 10px; font-size: 17px; font-weight: 600; }
+.rec-song-info { color: var(--muted); font-size: .9em; }
+.rec-panel[data-play="4"] .deck { border-color: #7a2a2a; }
+.rec-panel > .segmented { margin-bottom: 10px; }
+/* a label with a segmented control at the right (part, seek, A-B) */
+.row > .segmented { flex: none; flex-wrap: nowrap; }
+.rec-panel .deck + .row { border-top: 0; margin-top: 4px; }
+.music-shared { margin-top: 10px; }
+.music-shared > .row:first-child { border-top: 1px solid var(--line); }
+.fold-body > .row:first-child { border-top: 0; }
+@media (max-width: 599px) {
+  /* seek and A-B: the buttons on their own line under the label */
+  .fold-body > .row.seg-row { flex-wrap: wrap; padding: 8px 0; }
+  .fold-body > .row.seg-row > span { flex: 1 0 100%; margin-bottom: 6px; }
+  .fold-body > .row.seg-row > .segmented { flex: 1 1 100%; margin-left: 0; }
 }
+/* transport: the sign (data-ico) over the word; Rec is red; the button of the piano's state is lit */
+.tp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-gap: 8px; gap: 8px; margin-top: 10px; }
+.tp.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tp-btn { min-width: 0; min-height: 64px; padding: 6px 2px; font-size: 13px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: transparent; border-color: #353434; border-radius: 12px; }
+.tp-btn::before { content: attr(data-ico); display: block; height: 24px; margin-bottom: 2px; font-size: 18px; line-height: 24px; }
+.tp-btn:active { background: var(--raised); }
+.tp-rec, .tp-row .rec { color: #ff6b74; }
+.tp-rec { border-color: #7a2a2a; }
+[data-play="1"] .tp-play, [data-play="0"] .tp-pause { background: var(--accent); border-color: transparent; color: var(--accent-ink); font-weight: 600; }
+[data-play="3"] .tp-rec, [data-play="5"] .tp-rec, [data-play="6"] .tp-rec { background: #2a1414; border-color: var(--danger); font-weight: 600; }
+[data-play="4"] .tp-rec { background: var(--danger); border-color: transparent; color: #fff; font-weight: 600; }
+/* two quieter buttons side by side (count-in / record practice, the overwrite question) */
+.tp-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-gap: 8px; gap: 8px; margin-top: 8px; }
+.tp-row button { min-width: 0; padding-left: 6px; padding-right: 6px; font-size: .9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: transparent; border-color: #353434; }
+.tp-row button:active { background: var(--raised); }
+#rec-overwrite { margin: 8px 0 0; }
+#rec-overwrite p { margin: 0; }
+#rec-overwrite .danger { border-color: #7a2a2a; }
+#rec-hint, #rec-note { margin: 8px 2px 0; }
+#rec-note:empty, .pane-result:empty { display: none; }
+.rec-panel > details.fold { margin-top: 12px; }
+/* songs and files: [Piano songs | USB memory], then a status line with its buttons, then hairline rows */
+#rec-lists button { flex: 1 1 0; min-width: 0; }
+.pane-head { display: flex; flex-wrap: wrap; align-items: center; min-height: 48px; margin-top: 6px; }
+.pane-head > p { flex: 1 1 auto; min-width: 0; margin: 6px 0; }
+.pane-btns { display: flex; flex: none; margin-left: auto; }
+.pane-btns > button { flex: none; margin: 2px 0 2px 8px; font-size: .9em; white-space: nowrap; background: transparent; border-color: #353434; }
+.pane-btns > button:active { background: var(--raised); }
+.pane > .list { grid-template-columns: minmax(0, 1fr); padding-top: 2px; }
+.pane > details.fold { margin-top: 0; }
+.song-row, .file-row { border-top: 1px solid var(--line); }
+.file-main { display: flex; align-items: center; min-height: 56px; }
+/* the row itself is a button: it selects the song / opens the file's buttons */
+.song-pick, .file-pick { display: flex; flex: 1; align-items: center; min-width: 0; min-height: 52px; padding: 4px 4px 4px 8px; text-align: left; background: transparent; border: 0; border-radius: 8px; }
+.song-pick:active, .file-pick:active { background: var(--raised); }
+.song-num { display: flex; flex: none; align-items: center; justify-content: center; width: 32px; height: 32px; margin-right: 12px; border: 1px solid #454444; border-radius: 50%; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.song-txt { display: block; flex: 1; min-width: 0; }
+.song-name { display: block; line-height: 1.3; }
+.song-info { display: block; overflow: hidden; color: var(--muted); font-size: .82em; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.song-row[data-state="empty"] .song-num { border-style: dashed; color: var(--muted); font-weight: 400; }
+.song-row[data-state="empty"] .song-name { color: var(--muted); }
+.song-row[data-on], .file-row[data-open] { background: rgba(16, 129, 142, .13); box-shadow: inset 3px 0 0 var(--accent); }
+.song-row[data-on] .song-num { border-color: transparent; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.song-row[data-on] .song-name { color: var(--text); font-weight: 600; }
+.file-name { flex: 1; min-width: 0; overflow: hidden; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
+.file-row[data-open] .file-name { overflow-wrap: break-word; word-wrap: break-word; word-break: break-all; white-space: normal; }
+.file-pick::after { content: ""; flex: none; width: 7px; height: 7px; margin: 0 8px 3px 10px; border: solid var(--muted); border-width: 0 2px 2px 0; -webkit-transform: rotate(45deg); transform: rotate(45deg); }
+.file-row[data-open] .file-pick::after { margin-bottom: -3px; -webkit-transform: rotate(-135deg); transform: rotate(-135deg); }
+.icon-btn { flex: none; width: 44px; min-width: 44px; height: 44px; min-height: 44px; margin: 0 6px; padding: 0; border-color: #353434; border-radius: 50%; background: transparent; font-size: 15px; line-height: 1; }
+.icon-btn:active { background: var(--raised); }
+.icon-btn.on { border-color: transparent; background: var(--accent); color: var(--accent-ink); }
+/* the selected song's / the opened file's other buttons, wrapping as a group */
+.row-acts { display: flex; flex-wrap: wrap; padding: 0 5px 8px 9px; }
+.row-acts > button { flex: 0 1 auto; margin: 3px; padding: 4px 12px; font-size: .9em; white-space: nowrap; background: transparent; border-color: #353434; }
+.row-acts > button:active { background: var(--raised); }
+.row-acts > .danger { border-color: #5a2626; }
+p.muted.row-note { margin: 0 12px 10px; font-size: .8em; }
+.song-row > .confirm-ask, .file-row > .confirm-ask { margin: 0 8px 8px 12px; }
+body.panel .tp-btn { min-height: 68px; font-size: 14px; }
+body.panel .now-text { font-size: 21px; }
+

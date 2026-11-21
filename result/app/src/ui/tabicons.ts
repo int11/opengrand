@@ -10,7 +10,8 @@ const SVG: Record<TabId, string> = {
   metronome: '<path d="M8.5 3h7l4 18h-15z"/><path d="M5.5 16.5h13M12 16l5-11"/>',
   technician: '<path d="M4 6h8M16 6h4M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="14" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',
   chords: '<ellipse class="f" cx="9.5" cy="18" rx="3" ry="2.2"/><ellipse class="f" cx="9.5" cy="12.5" rx="3" ry="2.2"/><ellipse class="f" cx="9.5" cy="7" rx="3" ry="2.2"/><path d="M12.5 18V2.5"/>',
-  files: '<path d="M9 2.5h6v5H9z"/><rect x="6" y="7.5" width="12" height="14" rx="2"/><path d="M10.5 4.5v1M13.5 4.5v1"/>',
+  // 「레코더」: the record sign (a ring with a filled dot; Music is the ring with a play triangle)
+  files: '<circle cx="12" cy="12" r="9"/><circle class="f" cx="12" cy="12" r="4"/>',
   settings: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><circle class="f" cx="12" cy="7.6" r="1.2"/>',
   bluetooth: '<path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/>',

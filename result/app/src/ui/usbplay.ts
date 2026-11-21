@@ -18,7 +18,7 @@ import { FileAccessError } from "../protocol/fileaccess.ts";
 import type { PianoSession } from "../protocol/session.ts";
 import { findParam } from "../protocol/codecs.ts";
 import type { AppContext } from "./context.ts";
-import { MUSIC_MODE } from "./screens.ts";
+import { MUSIC_MODE } from "./screens/songctl.ts";
 
 /** Music values (32 52 08 / 10 52 08): 0 Pause, 1 Play, 2 Reset (stop and rewind). */
 export const MUSIC = { Pause: 0, Play: 1, Reset: 2 } as const;

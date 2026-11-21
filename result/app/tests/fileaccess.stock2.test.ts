@@ -14,7 +14,7 @@ import assert from "node:assert/strict";
 const { ParamStore } = await import("../src/state/store.ts");
 const { bindStore } = await import("../src/ui/controls.ts");
 const { createContext } = await import("../src/ui/context.ts");
-const { filesScreen } = await import("../src/ui/files.ts");
+const { recorderScreen } = await import("../src/ui/recorder.ts");
 const { usbListState } = await import("../src/ui/usblist.ts");
 const FA = await import("../src/protocol/fileaccess.ts");
 const { fromHex, toHex } = await import("../src/protocol/sysex.ts");
@@ -159,7 +159,7 @@ async function setup() {
   ctx.usbFiles = ["TEST01.MID", "1.mp3", "SONG.KSO"];
   // a list this session already read (fresh cache): opening the tab does not ask again (ui/usblist.ts)
   Object.assign(usbListState(ctx), { at: Date.now(), session: p.session });
-  const el = filesScreen(ctx);
+  const el = recorderScreen(ctx);
   document.body.append(el);
   await tick(10);
   return { ...p, store, ctx, st, el };
@@ -221,7 +221,7 @@ test("USB playback: MP3 (no state report) still gets ■; the section ■ stops 
   assert.ok(row(el, "1.mp3", "stop"), "■ from the app's own ▶");
   // the tab replaced and opened again (same session): still ■
   el.remove();
-  const el2 = filesScreen(ctx);
+  const el2 = recorderScreen(ctx);
   document.body.append(el2);
   await tick(10);
   assert.ok(row(el2, "1.mp3", "stop"));
@@ -272,11 +272,13 @@ test("field log: import 24 09 without arguments -> 7E 03 00 01 70; now 24 09 <so
 
 test("save as SMF: 24 0A <song> 02 + SONG_nn.MID, answered 32 51 7E by the stock", async () => {
   const { el, sent, st } = await setup();
-  (el.querySelector('[data-song="3"] [data-act="song-save"]') as HTMLButtonElement).click(); // per-song 「USB로 (SMF)」
+  (el.querySelector('[data-song="3"] [data-act="song-pick"]') as HTMLButtonElement).click(); // choose song 3: its buttons appear
+  await tick(40);
+  (el.querySelector('[data-song="3"] [data-act="song-save"]') as HTMLButtonElement).click(); // 「USB로 (SMF)」
   await tick(60);
   assert.ok(sent.includes("F0 40 7F 24 08 02 0A 02 02 F7"));
   assert.deepEqual(st.saved, [[2, 4, "\\SONG_03.MID"]], "FUN_4014F0E4(song 2, type 4 = MID)");
-  assert.equal(el.querySelector("#usb-result")!.textContent, "Save as SMF: done");
+  assert.equal(el.querySelector("#songs-status")!.textContent, "Save as SMF: done", "said next to the song list");
   el.remove();
 });
 

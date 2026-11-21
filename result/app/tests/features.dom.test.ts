@@ -150,32 +150,51 @@ test("information screen shows app, model, firmware and BLE module versions (fea
   el.remove();
 });
 
-test("music tab: modes, song tempo, song transpose, part on/off, lesson & concert magic (11, 50, 51, 52)", async () => {
+test("music tab: lesson / concert magic / piano music modes, state line, song tempo, song transpose, part buttons (11, 50, 51, 52)", async () => {
   const { store, sent, notify } = await setup();
   const el = S.musicScreen(store, () => "");
   document.body.append(el);
-  // mode buttons send MusicMode via fn 0x31 and switch the visible section
-  byText(el, "button", "Lesson").click();
-  await tick();
-  assert.ok(sent.includes("F0 40 7F 31 08 02 52 1D 7F 04 F7"), "Lesson mode");
+  // three modes only: the recorder and the USB player are the Recorder tab
+  assert.deepEqual([...el.querySelectorAll(".modes button")].map((b) => b.textContent), ["Lesson", "Concert Magic", "Piano Music"]);
   const visible = () => [...el.querySelectorAll("section")].filter((s) => !s.hidden).map((s) => s.querySelector("h3")!.textContent);
-  assert.ok(visible().includes("Lesson") && !visible().includes("Recorder"));
+  assert.deepEqual(visible(), ["Music", "Lesson"], "Lesson is shown first; nothing was sent for it");
+  assert.ok(!sent.some((m) => m.includes(" 52 1D ")));
+  // mode buttons send MusicMode via fn 0x31 and switch the visible section
   byText(el, "button", "Concert Magic").click();
   await tick();
   assert.ok(sent.includes("F0 40 7F 31 08 02 52 1D 7F 05 F7"), "Concert Magic mode");
-  assert.ok(visible().includes("Concert Magic"));
+  assert.ok(visible().includes("Concert Magic") && !visible().includes("Lesson"));
   // a piano-side mode notification moves the UI too
   notify([0x52, 0x1d, 0x7f, 4]);
   await tick(5);
   assert.ok(visible().includes("Lesson"));
-  // lesson transport: play, count-in, A-B
+  // the recorder's mode (the Recorder tab, the panel) leaves this tab as it is ...
+  notify([0x52, 0x1d, 0x7f, 2]);
+  await tick(5);
+  assert.ok(visible().includes("Lesson"));
+  // ... and the first Play here sends the shown mode before the Music command
   const lesson = [...el.querySelectorAll("section")].find((s) => s.querySelector("h3")!.textContent === "Lesson")!;
-  byText(lesson, "button", /Play$/).click();
+  byText(lesson, "button", "Play").click();
+  await tick();
+  const k = sent.lastIndexOf("F0 40 7F 31 08 02 52 1D 7F 04 F7");
+  assert.ok(k >= 0 && k < sent.lastIndexOf("F0 40 7F 32 08 02 52 08 7F 01 F7"), "MusicMode 4, then Play");
+  // lesson transport: count-in, A-B (in the folded options), a lesson song
   byText(lesson, "button", "Count-in").click();
   byText(lesson, "button", "Set A").click();
-  change(field<HTMLSelectElement>(lesson, "Lesson song"), "0:7");
+  change(field<HTMLSelectElement>(lesson, "Lesson song"), "7");
   await tick();
-  for (const s of ["F0 40 7F 32 08 02 52 08 7F 01 F7", "F0 40 7F 32 08 02 52 08 7F 05 F7", "F0 40 7F 32 08 02 52 06 7F 01 F7", "F0 40 7F 10 08 02 52 00 7F 00 00 07 F7"]) assert.ok(sent.includes(s), s);
+  for (const s of ["F0 40 7F 32 08 02 52 08 7F 05 F7", "F0 40 7F 32 08 02 52 06 7F 01 F7", "F0 40 7F 10 08 02 52 00 7F 00 00 07 F7"]) assert.ok(sent.includes(s), s);
+  assert.equal(sent.filter((m) => m === "F0 40 7F 31 08 02 52 1D 7F 04 F7").length, 1, "the mode is sent once");
+  // the state line follows the piano's Music report (32 52 08) and lights the button of that state
+  const now = el.querySelector("#music-state")!;
+  assert.equal(now.querySelector(".now-text")!.textContent, "Stopped");
+  notify([0x52, 0x08, 0x7f, 1]);
+  await tick(5);
+  assert.equal(now.querySelector(".now-text")!.textContent, "Playing");
+  assert.equal(el.getAttribute("data-play"), "1");
+  notify([0x52, 0x08, 0x7f, 0]);
+  await tick(5);
+  assert.equal(now.querySelector(".now-text")!.textContent, "Paused");
 
   // song tempo (14-bit BPM), song transpose (offset 64, System part)
   change(field(el, "Song tempo"), "96", "input");
@@ -183,17 +202,18 @@ test("music tab: modes, song tempo, song transpose, part on/off, lesson & concer
   await tick(30);
   assert.ok(sent.includes("F0 40 7F 10 08 02 52 02 7F 00 60 F7"), "MusicTempo 96");
   assert.ok(sent.includes("F0 40 7F 10 08 02 53 02 7F 3D F7"), "song transpose -3");
-  // part on/off: turn part 2 off -> IntSongPart = Part1 (0); cannot turn both off
-  const p1 = field(el, "Part 1 (right hand)");
-  const p2 = field(el, "Part 2 (left hand)");
-  assert.equal(p1.checked && p2.checked, true);
-  change(p2, false);
+  // part buttons: one segmented control (IntSongPart 0 = part 1, 1 = part 2, 7F = both)
+  const part = (v: number) => el.querySelector(`[data-part-select] [data-part="${v}"]`) as HTMLElement;
+  const lit = () => [...el.querySelectorAll("[data-part-select] button.on")].map((b) => b.getAttribute("data-part"));
+  part(0).click();
   await tick();
   assert.ok(sent.includes("F0 40 7F 10 08 02 52 01 7F 00 F7"), "only part 1");
-  change(p1, false);
-  assert.equal(p1.checked, true, "at least one part stays on");
+  assert.deepEqual(lit(), ["0"]);
   notify([0x52, 0x01, 0x7f, 1]);
   await tick(5);
-  assert.deepEqual([p1.checked, p2.checked], [false, true]);
+  assert.deepEqual(lit(), ["1"], "the piano's value lights its button");
+  part(0x7f).click();
+  await tick();
+  assert.ok(sent.includes("F0 40 7F 10 08 02 52 01 7F 7F F7"), "both parts");
   el.remove();
 });

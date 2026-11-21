@@ -15,7 +15,7 @@ export const TAB_TITLES: Record<TabId, string> = {
   metronome: "Metronome",
   technician: "Technician",
   chords: "Chords",
-  files: "USB memory",
+  files: "Recorder", // recordings and files (owner 2026-11-22); the id is the old 「USB 메모리」 tab's
   bluetooth: "Bluetooth",
   settings: "Settings",
   info: "Information",

@@ -11,6 +11,10 @@
 //   npm run panelsim -- --btsrc              the 「블루투스」 page with three BT audio sources (op 0x1D 04 layout 2 /
 //                                            1D 09 answered here: TV selected and playing, PC refused, phone without a
 //                                            sound link; AUTOCALL on)
+//   npm run panelsim -- --recorder           the 「레코더」 tab on a piano with the playback control (Identify feat2 0x10,
+//                                            op 0x1E answered here: ten songs, three recorded, the core deletes) and a
+//                                            USB memory with a few files: the views 20-… (song chosen, playing, the
+//                                            overwrite question, record standby, options, the USB list) on top of the tabs
 //   npm run panelsim -- --updatemode         the piano in its USB firmware updater (E+A+B+C at power on): a model of
 //                                            the BootProgram's panel side (src/protocol/updatemode.ts UpdaterModel)
 //                                            instead of the firmware simulator. The panel page must show 「전원을 끄지
@@ -49,6 +53,10 @@ export const PROFILES = {
   panel: { width: 480, height: 800, dpr: 1, lang: "ko", kind: "panel" },
   "panel-en": { width: 480, height: 800, dpr: 1, lang: "en", kind: "panel" },
   phone: { width: 390, height: 844, dpr: 3, lang: "ko", kind: "web" },
+  // the narrowest phones in each language (--only phone-s,phone-en,phone-ja)
+  "phone-s": { width: 360, height: 760, dpr: 3, lang: "ko", kind: "web" },
+  "phone-en": { width: 360, height: 760, dpr: 3, lang: "en", kind: "web" },
+  "phone-ja": { width: 360, height: 760, dpr: 3, lang: "ja", kind: "web" },
   desktop: { width: 1280, height: 800, dpr: 1, lang: "ko", kind: "web" },
 } as const;
 type ProfileId = keyof typeof PROFILES;
@@ -151,7 +159,62 @@ function ngFullAnswer(m: Uint8Array): Uint8Array | null {
   le32(54, 0x55aaa55a); le32(58, 0xffffffff); le32(62, 0xffffffff);
   return Uint8Array.from([...head, 0x50, ...pack7(raw), 0xf7]);
 }
-const fakeAnswer = (m: Uint8Array, port: number) => ngFullAnswer(m) ?? coBoundAnswer(m, port) ?? btSrcAnswer(m);
+/**
+ * `--recorder`: the piano's playback control (0x7D op 0x1E, firmware recctl) - the firmware simulator does not answer
+ * it, so this script answers Identify (feat2 0x10), 1E 00 status (48 B, the core deletes), 1E 01 song table (songs 1, 2
+ * and 5 recorded) and 1E 02 commands (select / play / pause / stop) with the status notice that follows. A Kawai Music
+ * byte (32 52 08: 3 = record standby, 2 = stop) still goes to the simulator; the status notice it would cause is sent
+ * through `recPush` (set by the page's link).
+ */
+let recSim = false;
+let recPush: ((m: Uint8Array) => void) | null = null;
+const recState = { state: 2, song: 0 };
+const REC_SONGS: [number, number][] = [[12, 3], [24, 1], [0, 0], [0, 0], [8, 2], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]; // [bars, part bits]
+function recAnswer(m: Uint8Array): Uint8Array | null {
+  if (!recSim || m.length < 8 || m[0] !== 0xf0) return null;
+  const head = [0xf0, 0x7d, 0x43, 0x41, 0x37, 0x39];
+  const status = () => {
+    const raw = new Array<number>(48).fill(0);
+    raw[0] = 1; raw[1] = recState.state; raw[3] = recState.song; raw[6] = 2; raw[8] = 120; raw[10] = 120;
+    raw[16] = REC_SONGS[recState.song][0]; raw[29] = recState.state === 1 ? 5 : 0; raw[31] = 1;
+    return Uint8Array.from([...head, 0x5e, 0, 0, ...pack7(raw), 0xf7]);
+  };
+  // Kawai Music command (F0 40 7F 32 08 02 52 08 7F v F7): forwarded; the recorder state follows as a notice
+  if (m[1] === 0x40 && m[3] === 0x32 && m[6] === 0x52 && m[7] === 0x08) {
+    const v = m[9]!;
+    recState.state = v === 3 ? (recState.state === 3 ? 2 : 3) : v === 1 && recState.state === 3 ? 4 : v <= 2 ? v : recState.state;
+    setTimeout(() => recPush?.(status()), 120);
+    return null;
+  }
+  if (m[1] !== 0x7d || m[2] !== 0x43 || m[3] !== 0x41 || m[4] !== 0x37 || m[5] !== 0x39) return null;
+  if (m[6] === 0x01) return Uint8Array.from([...head, 0x41, 1, 2, 19, 0x3b, 0x77, 0x10, 0xf7]);
+  if (m[6] !== 0x1e) return null;
+  if (m[7] === 0x00) return status();
+  if (m[7] === 0x01) {
+    const raw = new Array<number>(70).fill(0);
+    REC_SONGS.forEach(([bars, bits], i) => { raw[7 * i] = bars ? 0x40 : 0x74; raw[7 * i + 1] = bars ? 2 : 0; raw[7 * i + 4] = bars; raw[7 * i + 6] = bits; });
+    return Uint8Array.from([...head, 0x5e, 1, 0, ...pack7(raw), 0xf7]);
+  }
+  if (m[7] !== 0x02) return null;
+  const cmd = m[8]!, arg = (m[9]! << 7) | m[10]!;
+  if (cmd === 1 && !REC_SONGS[recState.song][0]) return Uint8Array.from([...head, 0x5e, 2, 6, cmd, 0xf7]); // nothing recorded
+  if (cmd === 1) recState.state = 1;
+  if (cmd === 2) recState.state = 2;
+  if (cmd === 3) recState.state = 0;
+  if (cmd === 4 && arg < 10) recState.song = arg;
+  setTimeout(() => recPush?.(status()), 60);
+  return Uint8Array.from([...head, 0x5e, 2, 0, cmd, 0xf7]);
+}
+const fakeAnswer = (m: Uint8Array, port: number) => ngFullAnswer(m) ?? coBoundAnswer(m, port) ?? btSrcAnswer(m) ?? recAnswer(m);
+
+/** `--recorder`: a host directory the simulator mounts as the USB memory (hostfs), with a few files. */
+function usbDir(outRoot: string): string {
+  const dir = join(outRoot, "usb");
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  for (const f of ["SONG_01.MID", "SONG_02.KSO", "Nocturne Op.9 No.2 (practice take 3).MP3", "REC001.WAV"]) writeFileSync(join(dir, f), "MThd");
+  return dir;
+}
 
 async function freePort(): Promise<number> {
   return new Promise((ok, no) => {
@@ -188,6 +251,7 @@ async function fakeShell(ctx: BrowserContext, page: Page, sim: PianoPort, log: s
   sim.onMessage((m) => {
     if (live) void js(`KWM.onMidiMessage([${[...m].join(",")}],'USB','0')`);
   });
+  recPush = (m) => { if (live) void js(`KWM.onMidiMessage([${[...m].join(",")}],'USB','0')`); };
   await ctx.exposeBinding("__kwmPost", (_src, url: string) => {
     const i = url.indexOf("?");
     if (!url.startsWith("kwmcore://") || i < 0) return;
@@ -424,6 +488,49 @@ async function shootTabs(page: Page, out: string, shots: string[], audits: Recor
   }
 }
 
+/** `--recorder`: the 「레코더」 tab's states (recAnswer above), each shot whole and audited. */
+async function shootRecorder(page: Page, out: string, shots: string[], audits: Record<string, Audit>, log: string[]): Promise<void> {
+  const shot = async (name: string) => {
+    await sleep(500);
+    await page.screenshot({ path: join(out, `${name}.png`), fullPage: true, scale: "css" });
+    shots.push(`${name}.png`);
+    audits[name] = await audit(page);
+  };
+  const press = async (sel: string) => {
+    const b = page.locator(sel).first();
+    if (!(await b.count())) return void log.push(`RECORDER FAIL: no ${sel}`);
+    await b.evaluate((e) => e.scrollIntoView({ block: "center" })); // clear of the fixed tab row
+    await tap(b, sel, log);
+  };
+  await openTab(page, "files", log);
+  await sleep(900);
+  await press('#songs-list [data-song="2"] .song-pick');
+  await shot("20-recorder-song");
+  await press('#rec-panel [data-act="play"]');
+  await shot("21-recorder-playing");
+  await press('#rec-panel [data-act="stop"]');
+  await press('#rec-panel [data-act="rec"]');
+  await shot("22-recorder-overwrite");
+  await press('#rec-panel [data-act="rec-confirm"]');
+  await shot("23-recorder-standby");
+  await press('#rec-panel [data-act="stop"]');
+  await press("#rec-more > summary");
+  await shot("24-recorder-options");
+  await press("#rec-more > summary");
+  await press('#songs-list [data-song="2"] [data-act="song-delete"]');
+  await shot("25-recorder-delete-ask");
+  await press('#rec-lists [data-list="usb"]');
+  await sleep(1500);
+  await shot("26-recorder-usb");
+  await press("#usb-files .file-row:nth-child(3) .file-pick");
+  await press("#usb-manage > summary");
+  await shot("27-recorder-usb-open");
+  await press('#rec-lists [data-list="internal"]');
+  await openTab(page, "music", log);
+  await press("#music-more > summary");
+  await shot("28-music-options");
+}
+
 /** Audit lines that fail the run: sideways overflow on every profile, small tap targets on the touch profiles. */
 function auditErrors(id: ProfileId, audits: Record<string, Audit>): string[] {
   const touch = PROFILES[id].width < 900;
@@ -484,7 +591,7 @@ async function runPanel(browser: Browser, id: ProfileId, out: string, stage: str
   const shots: string[] = [];
   const audits: Record<string, Audit> = {};
   watch(page, log);
-  const sim = new SimProcessLink({ port: "panel" });
+  const sim = new SimProcessLink({ port: "panel", args: recSim ? ["--usb", usbDir(dirname(out))] : [] });
   await sim.ready;
   try {
     await fakeShell(ctx, page, sim, log);
@@ -511,6 +618,7 @@ async function runPanel(browser: Browser, id: ProfileId, out: string, stage: str
     if (!ready) log.push("NOT CONNECTED within 25 s");
     await sleep(800);
     await shootTabs(page, out, shots, audits, log);
+    if (recSim) await shootRecorder(page, out, shots, audits, log);
     for (const tab of ["sound", "settings"]) {
       await openTab(page, tab, log);
       await sleep(500);
@@ -588,7 +696,7 @@ async function runUpdateMode(browser: Browser, out: string, stage: string): Prom
 async function runWeb(browser: Browser, id: ProfileId, out: string, origin: string): Promise<{ shots: string[]; log: string[]; ready: boolean; audits: Record<string, Audit> }> {
   const p = PROFILES[id];
   const mobile = p.width < 600;
-  const ctx = await browser.newContext({ viewport: { width: p.width, height: p.height }, deviceScaleFactor: p.dpr, isMobile: mobile, hasTouch: mobile, locale: p.lang === "ko" ? "ko-KR" : "en-US", serviceWorkers: "block" });
+  const ctx = await browser.newContext({ viewport: { width: p.width, height: p.height }, deviceScaleFactor: p.dpr, isMobile: mobile, hasTouch: mobile, locale: p.lang === "ko" ? "ko-KR" : p.lang === "ja" ? "ja-JP" : "en-US", serviceWorkers: "block" });
   const page = await ctx.newPage();
   const log: string[] = [];
   const shots: string[] = [];
@@ -598,6 +706,7 @@ async function runWeb(browser: Browser, id: ProfileId, out: string, origin: stri
   // --cobound / --btsrc or the info-ng views (ngFull) answer it here
   await page.routeWebSocket(/\/midi$/, (ws) => {
     const server = ws.connectToServer();
+    recPush = (m) => ws.send(Buffer.from(m));
     ws.onMessage((msg) => {
       const m = typeof msg === "string" ? Uint8Array.from(Buffer.from(msg)) : Uint8Array.from(msg);
       const a = fakeAnswer(m, 2);
@@ -611,6 +720,7 @@ async function runWeb(browser: Browser, id: ProfileId, out: string, origin: stri
     if (!ready) log.push("NOT CONNECTED within 25 s");
     await sleep(800);
     await shootTabs(page, out, shots, audits, log);
+    if (recSim) await shootRecorder(page, out, shots, audits, log);
     return { shots, log, ready, audits };
   } finally {
     await ctx.close();
@@ -650,8 +760,9 @@ async function main(): Promise<number> {
   const a = args(process.argv.slice(2));
   coBound = !!a.cobound;
   btSrc = !!a.btsrc;
+  recSim = !!a.recorder;
   const updateMode = !!a.updatemode;
-  const outRoot = resolve(APP, a.out ?? (coBound ? ".panelsim/cobound" : btSrc ? ".panelsim/btsrc" : updateMode ? ".panelsim/updatemode" : ".panelsim"));
+  const outRoot = resolve(APP, a.out ?? (coBound ? ".panelsim/cobound" : btSrc ? ".panelsim/btsrc" : recSim ? ".panelsim/recorder" : updateMode ? ".panelsim/updatemode" : ".panelsim"));
   const only = updateMode ? (["panel"] as ProfileId[]) : a.only ? (a.only.split(",") as ProfileId[]) : (["panel", "phone", "desktop"] as ProfileId[]);
   for (const id of only) if (!(id in PROFILES)) throw new Error(`--only ${id}: one of ${Object.keys(PROFILES).join(", ")}`);
   if (!existsSync(SIM_BIN)) throw new Error(`firmware simulator not built: ${SIM_BIN} (make -C result/firmware sim)`);
@@ -671,7 +782,8 @@ async function main(): Promise<number> {
       const b = spawn(process.execPath, ["scripts/build.mjs"], { cwd: APP, stdio: "ignore" });
       if ((await new Promise<number | null>((r) => b.on("exit", r))) !== 0) throw new Error("web build failed (node scripts/build.mjs)");
       const port = await freePort();
-      server = spawn(process.execPath, ["scripts/dev-server.ts"], { cwd: APP, env: { ...process.env, PORT: String(port) }, stdio: "ignore" });
+      // --recorder: the dev server's simulator mounts a USB memory with a few files (SIM_USB)
+      server = spawn(process.execPath, ["scripts/dev-server.ts"], { cwd: APP, env: { ...process.env, PORT: String(port), ...(recSim ? { SIM_USB: usbDir(outRoot) } : {}) }, stdio: "ignore" });
       origin = `http://localhost:${port}`;
       for (let i = 0; i < 50; i++) {
         if (await fetch(origin).then((r) => r.ok, () => false)) break;
@@ -682,8 +794,10 @@ async function main(): Promise<number> {
       const out = join(outRoot, id);
       rmSync(out, { recursive: true, force: true });
       mkdirSync(out, { recursive: true });
+      recState.state = 2;
+      recState.song = 0;
       const r = updateMode ? await runUpdateMode(browser, out, stage) : PROFILES[id].kind === "panel" ? await runPanel(browser, id, out, stage) : await runWeb(browser, id, out, origin);
-      const errors = [...r.log.filter((l) => /^PAGEERROR|^NOT CONNECTED|^SCREEN FAIL|^UPDATE FAIL|^TAP BLOCKED/.test(l)), ...(a["no-audit"] ? [] : auditErrors(id, r.audits))];
+      const errors = [...r.log.filter((l) => /^PAGEERROR|^NOT CONNECTED|^SCREEN FAIL|^UPDATE FAIL|^RECORDER FAIL|^TAP BLOCKED/.test(l)), ...(a["no-audit"] ? [] : auditErrors(id, r.audits))];
       writeFileSync(join(out, "log.txt"), r.log.join("\n") + "\n");
       writeFileSync(join(out, "audit.json"), JSON.stringify(r.audits, null, 1) + "\n");
       const p = PROFILES[id];

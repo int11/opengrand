@@ -12,7 +12,7 @@ const { DisplayController, brightnessToBacklight } = await import("../src/ui/dis
 const settings = await import("../src/state/settings.ts");
 const i18n = await import("../src/i18n.ts");
 const { STARTUP_STRINGS } = await import("../src/ui/startup.ts");
-const { PIANO_SONGS_STRINGS } = await import("../src/ui/screens/music.ts");
+const { RECORDER_STRINGS } = await import("../src/ui/recorder.ts");
 const { OTA_LOADER_STRINGS } = await import("../src/ui/otaloader.ts");
 
 beforeEach(() => {
@@ -136,13 +136,13 @@ test("language: switching to Japanese/Korean persists, re-renders and translates
   // render every screen in each language; all t() strings must have an entry
   const { chordScreen } = await import("../src/ui/chords.ts");
   const { infoScreen } = await import("../src/ui/info.ts");
-  const { filesScreen } = await import("../src/ui/files.ts");
+  const { recorderScreen } = await import("../src/ui/recorder.ts");
   const { touchCurveEditor, perNoteEditor } = await import("../src/ui/vtedit.ts");
   const { PER_NOTE } = await import("../src/features/vtedit.ts");
   const { RESULT } = await import("../src/protocol/fileaccess.ts");
   for (const lang of ["ja", "ko"] as const) {
     i18n.setLang(lang);
-    for (const f of [() => S.soundScreen(store, ctx), () => S.vtScreen(store, ctx), () => S.metronomeScreen(store, new EventTarget()), () => S.musicScreen(store, () => ""), () => S.settingsScreen(store, ctx), () => chordScreen(ctx), () => infoScreen(ctx), () => filesScreen(ctx), () => touchCurveEditor(store).el, ...PER_NOTE.map((k) => () => perNoteEditor(store, k).el)]) f();
+    for (const f of [() => S.soundScreen(store, ctx), () => S.vtScreen(store, ctx), () => S.metronomeScreen(store, new EventTarget()), () => S.musicScreen(store, () => ""), () => S.settingsScreen(store, ctx), () => chordScreen(ctx), () => infoScreen(ctx), () => recorderScreen(ctx), () => touchCurveEditor(store).el, ...PER_NOTE.map((k) => () => perNoteEditor(store, k).el)]) f();
     for (const r of Object.values(RESULT)) i18n.t(r); // result codes are shown through tl()
     for (const r of S.CM_RESULT) i18n.t(r);
     for (const k of Object.values(S.TAB_TITLES)) i18n.t(k);
@@ -159,8 +159,8 @@ test("language: switching to Japanese/Korean persists, re-renders and translates
 const DYNAMIC = [
   // startup settings card (ui/startup.ts): shown only with a feat2 0x04 piano
   ...STARTUP_STRINGS,
-  // piano songs box (ui/screens/music.ts): shown only with a feat2 0x10 piano
-  ...PIANO_SONGS_STRINGS,
+  // Recorder tab (ui/recorder.ts): states, refusals and questions a screen test does not reach
+  ...RECORDER_STRINGS,
   // OTA loader v4 rows, refusals and confirm (ui/otaloader.ts): shown only with an ota_loader_v4 piano
   ...OTA_LOADER_STRINGS,
   "Writes a signed cave payload into the free NOR slot; the piano starts it at the next power-on and falls back to the previous one if it fails. Hold A0, A#0 and B0 while switching on to start the built-in cave.", "Key {id} imported.", "No key imported.", "empty", "confirmed", "unconfirmed", "rejected", "failed check", "That is not a 32-byte key.", "{n} bytes, features {f0}/{f1}, key {id}.", "Not a OpenGrand payload file (.c79).", "Import the key first.", "Pick a payload file first.", "Uploading… {a}/{b} bytes", "Writing to the slot… ({s})", "Written to {slot}. Turn the piano off and on to start it.", "The built-in cave is running: nothing to roll back.", "Slot rejected. Turn the piano off and on to go back.",

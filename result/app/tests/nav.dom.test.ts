@@ -21,7 +21,7 @@ const tabs = () => [...doc.querySelectorAll<HTMLButtonElement>("nav #tabbar butt
 test("tab row: all nine tabs, in order, each with icon and label — no 「더 보기」, no 「피아노」 (in 「음색」 since 2026-11-09)", () => {
   assert.deepEqual(tabs().map((b) => b.dataset.tab), [...TAB_IDS]);
   assert.deepEqual(tabs().map((b) => b.querySelector(".lbl")!.textContent),
-    ["음색", "뮤직", "메트로놈", "테크니션", "코드", "USB 메모리", "블루투스", "설정", "정보"]);
+    ["음색", "뮤직", "메트로놈", "테크니션", "코드", "레코더", "블루투스", "설정", "정보"]);
   for (const b of tabs()) assert.ok(b.querySelector(".ico svg"), `${b.dataset.tab} has its icon`);
   assert.equal(doc.querySelector("#nav-more"), null);
   assert.equal(doc.querySelector("header #more"), null, "no header ⋯ either");

@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 const { ParamStore } = await import("../src/state/store.ts");
 const { bindStore } = await import("../src/ui/controls.ts");
 const { createContext } = await import("../src/ui/context.ts");
-const { filesScreen } = await import("../src/ui/files.ts");
+const { recorderScreen } = await import("../src/ui/recorder.ts");
 const { usbListState } = await import("../src/ui/usblist.ts");
 const { USB_STOP, usbPlayback } = await import("../src/ui/usbplay.ts");
 const FA = await import("../src/protocol/fileaccess.ts");
@@ -185,7 +185,7 @@ async function setup(opt: { stuck?: boolean; syncMode?: number; lateAudio?: bool
     p.notify([0x52, 0x1d, 0x7f, opt.syncMode]);
     await tick(5);
   }
-  const el = filesScreen(ctx);
+  const el = recorderScreen(ctx);
   document.body.append(el);
   await tick(10);
   return { ...p, store, ctx, st, el };

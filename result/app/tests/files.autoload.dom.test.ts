@@ -1,4 +1,4 @@
-// Files tab shows its lists when it opens, without 「읽기」 / ↻:
+// Recorder tab (was the Files tab) shows its lists when it opens, without 「읽기」 / ↻:
 //   - USB: one 24 11 per reason (tab open with an old / other-session cache, stick inserted, ↻, after a file op),
 //     shared while running, none when the piano says the stick is out; Result 0x21 = "No USB memory", not an error;
 //     a failed request keeps the last list.
@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 const { ParamStore } = await import("../src/state/store.ts");
 const { bindStore } = await import("../src/ui/controls.ts");
 const { createContext } = await import("../src/ui/context.ts");
-const { filesScreen } = await import("../src/ui/files.ts");
+const { recorderScreen } = await import("../src/ui/recorder.ts");
 const { usbListState, USB_LIST_FRESH_MS, NO_MEDIA, USB_EMPTY_RETRY_MS, USB_SETTLE_MS } = await import("../src/ui/usblist.ts");
 const FA = await import("../src/protocol/fileaccess.ts");
 const ng = await import("../src/protocol/ngext.ts");
@@ -67,7 +67,7 @@ async function setup(attach?: 0 | 1) {
   if (attach !== undefined) p.notify([0x51, 0x2e, 0x7f, attach]);
   await tick(5);
   const open = () => {
-    document.body.replaceChildren(filesScreen(ctx));
+    document.body.replaceChildren(recorderScreen(ctx));
     return document.body.firstElementChild as HTMLElement;
   };
   return { ...p, store, ctx, usb, open, swap: (s: typeof session) => (session = s) };
@@ -287,6 +287,7 @@ function fakeSession(feat2: number | null, deletes = false) {
   const frames: ((f: { fn: number; body: number[] }) => void)[] = [];
   const sent: number[][] = [];
   const list = listRaw();
+  let song = 0;
   const push = (m: Uint8Array) => queueMicrotask(() => midi.forEach((l) => l(m)));
   const reply = (op: number, data: number[]) => push(Uint8Array.from([0xf0, 0x7d, 0x43, 0x41, 0x37, 0x39, op | 0x40, ...data, 0xf7]));
   return {
@@ -320,11 +321,17 @@ function fakeSession(feat2: number | null, deletes = false) {
       const op = m[6]!;
       if (op === 0x01) reply(0x01, [1, 2, 19, 0x3b, 0x77, feat2]);
       if (op === 0x1e && m[7] === 1) reply(0x1e, [1, 0, ...ng.pack7(list)]);
-      if (op === 0x1e && m[7] === 0) {
+      const status = () => {
         const raw = new Array(48).fill(0);
-        raw[0] = 1;
+        raw[0] = 1; raw[1] = 2; raw[3] = song; raw[6] = 2;
         raw[31] = deletes ? 1 : 0;   // recctl_cave.c rcc_status: the core deletes songs itself
         reply(0x1e, [0, 0, ...ng.pack7(raw)]);
+      };
+      if (op === 0x1e && m[7] === 0) status();
+      if (op === 0x1e && m[7] === 2) {   // a command (select): rc 0, then the status notice
+        if (m[8] === 4) song = (m[9]! << 7) | m[10]!;
+        reply(0x1e, [2, 0, m[8]!]);
+        status();
       }
     },
   };
@@ -334,7 +341,7 @@ const info = (el: HTMLElement, n: number) => el.querySelector(`[data-song="${n}"
 test("OpenGrand (feat2 0x10): the internal songs are there when the tab opens, read-only, notices update them", async () => {
   const s = fakeSession(0x1f);
   const ctx = createContext(new ParamStore(), { session: () => s as never });
-  const el = filesScreen(ctx);
+  const el = recorderScreen(ctx);
   document.body.replaceChildren(el);
   for (let i = 0; i < 20; i++) await tick(2);
   assert.equal(info(el, 1), "3 bars · Part 1");
@@ -351,7 +358,7 @@ test("OpenGrand (feat2 0x10): the internal songs are there when the tab opens, r
   for (let i = 0; i < 5; i++) await tick(2);
   assert.equal(info(el, 3), "7 bars · Part 2");
   // another tab and back: drawn from the cache at once
-  const el2 = filesScreen(ctx);
+  const el2 = recorderScreen(ctx);
   document.body.replaceChildren(el2);
   assert.equal(info(el2, 3), "7 bars · Part 2");
 });
@@ -359,7 +366,7 @@ test("OpenGrand (feat2 0x10): the internal songs are there when the tab opens, r
 test("without the op (stock / old payload): no automatic scan - the piano's song is not touched until 「읽기」", async () => {
   const s = fakeSession(null); // Identify unanswered
   const ctx = createContext(new ParamStore(), { session: () => s as never });
-  const el = filesScreen(ctx);
+  const el = recorderScreen(ctx);
   document.body.replaceChildren(el);
   await tick(800); // Identify timeout (700 ms)
   assert.equal(info(el, 1), "not scanned");
@@ -371,18 +378,23 @@ test("without the op (stock / old payload): no automatic scan - the piano's song
 // last take - Delete is offered only when the piano's core deletes (5E 00 byte 31 bit 0)
 const del = (el: HTMLElement, n: number, act: string) => el.querySelector(`[data-song="${n}"] [data-act="${act}"]`) as HTMLButtonElement;
 
-test("songs delete: a payload whose core does not delete (byte 31 = 0) keeps every Delete off and sends no 52 21", async () => {
+const pickSong = async (el: HTMLElement, n: number) => {
+  (el.querySelector(`[data-song="${n}"] [data-act="song-pick"]`) as HTMLElement).click();
+  for (let i = 0; i < 10; i++) await tick(2);
+};
+
+test("songs delete: a payload whose core does not delete (byte 31 = 0) offers no Delete and sends no 52 21", async () => {
   const s = fakeSession(0x1f, false);
   const ctx = createContext(new ParamStore(), { session: () => s as never });
-  const el = filesScreen(ctx);
+  const el = recorderScreen(ctx);
   document.body.replaceChildren(el);
   for (let i = 0; i < 20; i++) await tick(2);
   assert.equal(info(el, 2), "5 bars · Part 1 + Part 2");
-  for (const act of ["song-delete", "song-delete-p1", "song-delete-p2"]) {
-    assert.ok(del(el, 2, act).disabled, `${act} off`);
-    assert.match(del(el, 2, act).title, /OpenGrand song delete/);
-    del(el, 2, act).click();
-  }
+  await pickSong(el, 2);
+  assert.equal(el.querySelector('[data-song="2"]')!.getAttribute("data-on"), "1");
+  assert.ok(del(el, 2, "song-save"), "the selected song's export buttons are there");
+  for (const act of ["song-delete", "song-delete-p1", "song-delete-p2"]) assert.equal(del(el, 2, act), null, `no ${act}`);
+  assert.match(el.querySelector('[data-song="2"] .row-note')!.textContent!, /OpenGrand song delete/);
   await tick(20);
   assert.ok(!s.sent.some((m) => m[1] === 0x52 && m[2] === 0x21), "no InternalSongDelete");
 });
@@ -390,11 +402,14 @@ test("songs delete: a payload whose core does not delete (byte 31 = 0) keeps eve
 test("songs delete: the core deletes (byte 31 bit 0): part 2, then the song; the table is read again at once", async () => {
   const s = fakeSession(0x1f, true);
   const ctx = createContext(new ParamStore(), { session: () => s as never });
-  const el = filesScreen(ctx);
+  const el = recorderScreen(ctx);
   document.body.replaceChildren(el);
   for (let i = 0; i < 20; i++) await tick(2);
-  assert.ok(!del(el, 2, "song-delete-p2").disabled && !del(el, 2, "song-delete").disabled);
-  assert.equal(del(el, 2, "song-delete").title, "");
+  assert.equal(el.querySelectorAll('[data-song]:not([data-on]) [data-act^="song-delete"]').length, 0, "Delete is among the selected song's buttons only");
+  await pickSong(el, 2);
+  assert.ok(s.sent.some((m) => m[6] === 0x1e && m[7] === 2 && m[8] === 4 && m[10] === 1), "choosing the row selects song 2 on the piano (op 1E 02 04)");
+  assert.ok(del(el, 2, "song-delete-p1") && del(el, 2, "song-delete-p2") && del(el, 2, "song-delete"), "both parts recorded: per-part delete too");
+  assert.equal(el.querySelector('[data-song="2"] .row-note'), null);
   del(el, 2, "song-delete-p2").click();
   for (let i = 0; i < 5; i++) await tick(2);
   assert.ok(!s.sent.some((m) => m[1] === 0x52 && m[2] === 0x21), "first tap only asks");

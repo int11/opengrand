@@ -1,4 +1,4 @@
-// USB memory file list cache shared by the Files and Music tabs.
+// USB memory file list cache of the Recorder tab's USB list (ui/files.ts); it lives per context, so the tab draws it at once.
 // The list comes from fn 0x24 24 11 (stock FUN_4014F018: no media -> Result 0x21, a list already running -> Busy).
 // It is a stop-and-wait exchange of several frames, and on OpenGrand ota_main every fn 0x24 frame is APO activity
 // (power.h power_frame_quiet), so the app asks only when it has a reason: the tab opens with an old list (or one

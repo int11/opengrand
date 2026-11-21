@@ -1,4 +1,4 @@
-// Files tab "Internal songs" against the STOCK V2.19: replies replayed byte for byte from the stock image
+// Recorder tab, the piano's songs list (ui/recorder.ts; was the Files tab's "Internal songs") against the STOCK V2.19: replies replayed byte for byte from the stock image
 // run under Unicorn with a synthetic RecorderData (result/stockfw/tools/stock_songs.py --json
 // tests/fixtures/stock_songs.json).
 //   - SongSelect: empty song -> 7E 03 00 01 6C (0xEC); always MaxTime 10 52 18 7F [0, bars hi, lo, 0, 0, 0]
@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 const { ParamStore } = await import("../src/state/store.ts");
 const { bindStore } = await import("../src/ui/controls.ts");
 const { createContext } = await import("../src/ui/context.ts");
-const { filesScreen } = await import("../src/ui/files.ts");
+const { recorderScreen } = await import("../src/ui/recorder.ts");
 const { InternalSongs } = await import("../src/protocol/songs.ts");
 const { fromHex, toHex } = await import("../src/protocol/sysex.ts");
 const i18n = await import("../src/i18n.ts");
@@ -93,7 +93,7 @@ async function setup() {
   store.attach(p.session);
   const ctx = createContext(store, { session: () => p.session });
   const st = stockSongs(p.piano, p.sent);
-  const el = filesScreen(ctx);
+  const el = recorderScreen(ctx);
   document.body.append(el);
   await tick(10);
   return { ...p, store, ctx, st, el };
@@ -133,11 +133,14 @@ test("scan: 10 rows from the stock's answers, then the piano's song and part are
   for (let n = 5; n <= 10; n++) {
     assert.equal(info(el, n), "Empty");
     assert.equal(row(el, n).getAttribute("data-state"), "empty");
-    assert.ok((row(el, n).querySelector('[data-act="song-delete"]') as HTMLButtonElement).disabled);
+    assert.equal(row(el, n).querySelector('[data-act="song-play"]'), null, "nothing to play in an empty song");
   }
   assert.equal(el.querySelector("#songs-status")!.textContent, "4 of 10 songs recorded");
-  assert.ok(row(el, 2).querySelector('[data-act="song-delete-p2"]'), "both parts: per-part delete offered");
-  assert.equal(row(el, 1).querySelector('[data-act="song-delete-p2"]'), null);
+  // the scan put the piano's song 3 back: it is the lit row, with its export buttons
+  assert.equal(row(el, 3).getAttribute("data-on"), "1");
+  assert.ok(row(el, 3).querySelector('[data-act="song-save"]') && row(el, 3).querySelector('[data-act="song-save-kso"]'));
+  assert.equal(row(el, 1).querySelector('[data-act="song-save"]'), null, "the other rows show ▶ only");
+  assert.equal(el.querySelector("#rec-selected")!.textContent, "Song 34 bars · Part 2", "the panel names the selected song");
 
   assert.equal(sent.find((m) => m.includes(" 52 1D ")), "F0 40 7F 31 08 02 52 1D 7F 02 F7", "MusicMode 2 (internal recorder) first");
   const tail = sent.filter((m) => / 10 08 02 52 0[01] /.test(m)).slice(-2);
@@ -148,15 +151,17 @@ test("scan: 10 rows from the stock's answers, then the piano's song and part are
 
 // the stock's InternalSongDelete re-writes the song from the last take instead of deleting it (emulator + field
 // 2026-11-15): on a stock piano the rows offer no Delete
-test("delete on the stock: every Delete is off and nothing is sent", async () => {
+test("delete on the stock: no Delete is offered (the selected song says why) and nothing is sent", async () => {
   const { el, sent } = await setup();
   (el.querySelector('[data-act="songs-scan"]') as HTMLElement).click();
   await tick(400);
-  for (const [n, act] of [[2, "song-delete-p2"], [2, "song-delete-p1"], [1, "song-delete"]] as const) {
-    const b = row(el, n).querySelector(`[data-act="${act}"]`) as HTMLButtonElement;
-    assert.ok(b.disabled, `song ${n} ${act} off`);
-    b.click();
-  }
+  (row(el, 2).querySelector('[data-act="song-pick"]') as HTMLElement).click();
+  await tick(60);
+  assert.equal(row(el, 2).getAttribute("data-on"), "1");
+  assert.ok(sent.includes("F0 40 7F 10 08 02 52 00 7F 00 00 01 F7"), "choosing the row selects song 2 on the piano");
+  assert.ok(row(el, 2).querySelector('[data-act="song-save"]'), "export is there");
+  assert.equal(el.querySelectorAll('[data-act^="song-delete"]').length, 0, "no Delete anywhere");
+  assert.match(row(el, 2).querySelector(".row-note")!.textContent!, /OpenGrand song delete/);
   await tick(100);
   assert.ok(!sent.some((m) => m.includes(" 52 21 ")), "no InternalSongDelete");
   assert.equal(info(el, 2), "5 bars · Part 1 + Part 2");
@@ -172,14 +177,15 @@ test("play / stop / save as SMF from a song row", async () => {
   const k = sent.indexOf("F0 40 7F 32 08 02 52 08 7F 01 F7");
   assert.ok(i >= 0 && i < j && j < k, "MusicMode 2, SongSelect 4, Play");
   assert.deepEqual(st.played, [1]);
-  (el.querySelector('[data-act="songs-stop"]') as HTMLElement).click();
+  assert.equal(row(el, 4).getAttribute("data-on"), "1", "the played song is the selected one");
+  (el.querySelector('#rec-panel [data-act="stop"]') as HTMLElement).click(); // the recording panel's ■
   await tick(20);
   assert.deepEqual(st.played, [1, 2], "Stop = Music Reset");
   (row(el, 4).querySelector('[data-act="song-save"]') as HTMLElement).click();
   await tick(80);
   assert.ok(sent.includes("F0 40 7F 24 08 02 0A 03 02 F7"), "24 0A <song 4 = 3> <type MID>");
   assert.equal(st.saved.length, 1);
-  assert.equal(el.querySelector("#usb-result")!.textContent, "Save as SMF: done");
+  assert.equal(el.querySelector("#songs-status")!.textContent, "Save as SMF: done");
   el.remove();
 });
 

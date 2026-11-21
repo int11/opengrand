@@ -22,7 +22,7 @@ import { usbPlayback } from "./ui/usbplay.ts";
 import { bindStore } from "./ui/controls.ts";
 import { DisplayController } from "./ui/display.ts";
 import { h } from "./ui/dom.ts";
-import { filesScreen } from "./ui/files.ts";
+import { recorderScreen } from "./ui/recorder.ts";
 import { APP_VERSION, infoScreen } from "./ui/info.ts";
 import { confirmLoaderOnConnect } from "./ui/otaloader.ts";
 import { installPanelScreenGlobals } from "./ui/panelscreenbox.ts";
@@ -77,7 +77,8 @@ const screens: Record<TabId, () => HTMLElement> = {
   metronome: () => metronomeScreen(store, beatEvents),
   technician: () => vtScreen(store, ctx),
   chords: () => chordScreen(ctx),
-  files: () => filesScreen(ctx),
+  // 「레코더」 (the tab id stays "files": stored start tabs, ?tab=files links and test drivers keep working)
+  files: () => recorderScreen(ctx, () => lastProgress),
   // 「블루투스」: BT audio sources / AUTOCALL / this app's BLE-MIDI link / the piano's BT settings (ui/bluetooth.ts)
   bluetooth: () => bluetoothPage(() => (session ? new BtPort(new NgClient(session)) : null), {
     store, link: () => (session && linkKind ? { kind: linkKind, name: linkName } : null),
@@ -204,7 +205,7 @@ conn.onChange((s) => {
   if (s.phase === "ready" && lastPhase !== "waking" && lastPhase !== "ready") {
     connectedOnce = true;
     updWatch.pianoRunning();
-    usbPlayback(ctx); // follow the USB players from the connect on, not only while the Files tab is open (ui/usbplay.ts)
+    usbPlayback(ctx); // follow the USB players from the connect on, not only while the Recorder tab is open (ui/usbplay.ts)
     // panel UI loader (panelui/uiloader.js): this UI version reached the piano → keep it
     (globalThis as unknown as { CA79UI?: { confirm(): void } }).CA79UI?.confirm();
     // the same for a loader this app uploaded over Bluetooth: it reached the app again → confirm it (op 0x0F);
@@ -534,7 +535,8 @@ function installLifecycle(): void {
 const qs = new URLSearchParams(location.search);
 const tabArg = (): TabId => {
   const q = qs.get("tab");
-  const v = q === "piano" ? "sound" : q ?? current; // the Piano tab is in the Sound tab since 2026-11-09
+  // the Piano tab is in the Sound tab since 2026-11-09; the Recorder tab is the tab that was 「USB 메모리」 (id "files")
+  const v = q === "piano" ? "sound" : q === "recorder" ? "files" : q ?? current;
   return (TAB_IDS as readonly string[]).includes(v) ? (v as TabId) : (TAB_IDS[Number(v)] ?? current);
 };
 if (qs.has("sim")) void openWebSocket(`ws://${location.host}/midi`).then((l) => conn.attach(l)).then(() => show(tabArg()));

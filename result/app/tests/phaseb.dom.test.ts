@@ -10,7 +10,7 @@ const { bindStore } = await import("../src/ui/controls.ts");
 const { createContext } = await import("../src/ui/context.ts");
 const S = await import("../src/ui/screens.ts");
 const { touchCurveEditor, perNoteEditor } = await import("../src/ui/vtedit.ts");
-const { filesScreen } = await import("../src/ui/files.ts");
+const { recorderScreen } = await import("../src/ui/recorder.ts");
 const { PER_NOTE, interpolate } = await import("../src/features/vtedit.ts");
 const FA = await import("../src/protocol/fileaccess.ts");
 const { encodeFrame, decodeFrame } = await import("../src/protocol/sysex.ts");
@@ -226,7 +226,7 @@ test("USB file manager lists files, deletes / renames by name, formats, reports 
   usbPiano(piano, files, sent);
   notify([0x51, 0x2e, 0x7f, 1]);
   await tick(5);
-  const el = filesScreen(ctx);
+  const el = recorderScreen(ctx);
   document.body.append(el);
   await tick(40);
   assert.equal(el.querySelector("#usb-status")!.textContent, "USB memory attached");
@@ -247,11 +247,13 @@ test("USB file manager lists files, deletes / renames by name, formats, reports 
   assert.ok(sent.includes("F0 40 7F 24 08 02 06 F7"), "delete by name (24 06)");
   assert.deepEqual(names(), ["LONG_NAME_FOR_TWO_PACKETS.MID", "Z.MID"]);
 
-  (el.querySelector('[data-song="1"] [data-act="song-save"]') as HTMLElement)?.click();
+  (el.querySelector('[data-song="1"] [data-act="song-pick"]') as HTMLElement).click();
+  await tick(30);
+  (el.querySelector('[data-song="1"] [data-act="song-save"]') as HTMLElement).click();
   await tick(30);
   assert.ok(sent.includes("F0 40 7F 24 08 02 0A 00 02 F7"), "save internal song 0 as MID by name (24 0A 00 02), which the stock executes");
   assert.ok(!sent.some((m) => m.startsWith("F0 40 7F 32 08 02 52 20")), "not 32 52 20: a no-op on the stock");
-  assert.equal(el.querySelector("#usb-result")!.textContent, "Save as SMF failed: No media");
+  assert.equal(el.querySelector("#songs-status")!.textContent, "Save as SMF failed: No media");
 
   tapTwice(el.querySelector('[data-act="format"]'));
   await tick(40);
@@ -264,7 +266,7 @@ test("USB file manager lists files, deletes / renames by name, formats, reports 
   el.remove();
 });
 
-test("music tab: USB songs in the picker (numType 1) and Concert Magic settings + result display", async () => {
+test("music tab: the song picker holds the mode's songs only (USB files play from the Recorder tab) and Concert Magic settings + result display", async () => {
   const { store, ctx, sent, notify } = await setup();
   ctx.usbFiles = ["X.MID", "Y.MID"];
   const el = S.musicScreen(store, () => "", ctx);
@@ -274,10 +276,10 @@ test("music tab: USB songs in the picker (numType 1) and Concert Magic settings 
   byText(el, "button", "Concert Magic").click();
   const cm = [...el.querySelectorAll("section")].find((s) => s.querySelector("h3")!.textContent === "Concert Magic")!;
   const pick = field<HTMLSelectElement>(cm, "Concert Magic song");
-  assert.deepEqual([...pick.options].slice(-2).map((o) => o.textContent), ["USB · X.MID", "USB · Y.MID"]);
-  change(pick, "1:1");
+  assert.deepEqual([...pick.options].map((o) => o.textContent), Array.from({ length: 10 }, (_, i) => `Song ${i + 1}`), "no USB entries");
+  change(pick, "1");
   await tick(20);
-  assert.ok(sent.includes("F0 40 7F 10 08 02 52 00 7F 01 00 01 F7"), "SongSelect USB id 1");
+  assert.ok(sent.includes("F0 40 7F 10 08 02 52 00 7F 00 00 01 F7"), "SongSelect song 2 of the mode (numType 0)");
 
   notify([0x52, 0x0d, 0x7f, 0, 1, 1]);
   await tick(5);
