@@ -416,11 +416,14 @@ test("「피아노에 넣기」 on a MID: read, convert to KSO (checked), write 
   const store = new ParamStore();
   const s = fakeSession(0x1f);
   const calls: unknown[][] = [];
+  const written = new Map<string, Uint8Array>();
+  let corrupt = false;
   let smf: Uint8Array = buildSmf(0, 96, [smfNote(0, 0, 96, 60)]);
   const files = {
     list: async () => ctx.usbFiles,
-    read: async (n: string) => (calls.push(["read", n]), smf),
-    write: async (n: string, d: Uint8Array) => (calls.push(["write", n, checkKso(d)]), ctx.usbFiles.push(n), 0),
+    read: async (n: string) => (calls.push(["read", n]), written.get(n) ?? smf),
+    write: async (n: string, d: Uint8Array) => (calls.push(["write", n, checkKso(d)]), written.set(n, corrupt ? d.slice(1) : d), ctx.usbFiles.push(n), 0),
+    delete: async (n: string) => (calls.push(["delete", n]), 0),
     load: async (n: string, song: number) => (calls.push(["load", n, song]), 0),
   };
   const ctx = createContext(store, { session: () => s as never, files: () => files as never });
@@ -433,7 +436,7 @@ test("「피아노에 넣기」 on a MID: read, convert to KSO (checked), write 
   (el.querySelector('[data-file="S.MID"] [data-act="import"]') as HTMLElement).click();
   await wait();
   // songs 1 and 2 are recorded: song 3 (index 2) is the first empty one; S.KSO exists, so the new file is S_2.KSO
-  assert.deepEqual(calls, [["read", "S.MID"], ["write", "S_2.KSO", null], ["load", "S_2.KSO", 2]], "the KSO passed checkKso before 24 09");
+  assert.deepEqual(calls, [["read", "S.MID"], ["write", "S_2.KSO", null], ["read", "S_2.KSO"], ["load", "S_2.KSO", 2]], "the KSO passed checkKso and was read back before 24 09");
   assert.equal(el.querySelector("#rec-note")!.textContent, "S.MID is now piano song 3.");
   // a file the converter refuses: said in plain words, nothing written, nothing imported
   calls.length = 0;
@@ -442,5 +445,13 @@ test("「피아노에 넣기」 on a MID: read, convert to KSO (checked), write 
   await wait();
   assert.deepEqual(calls, [["read", "BAD.MID"]]);
   assert.equal(el.querySelector("#usb-result")!.textContent, "Convert to a piano song failed: This is not a MIDI file the app can read.");
+  // the file on the USB memory is not what was written: deleted, never imported (a bad KSO can format all ten songs)
+  calls.length = 0;
+  corrupt = true;
+  smf = buildSmf(0, 96, [smfNote(0, 0, 96, 60)]);
+  (el.querySelector('[data-file="S.MID"] [data-act="import"]') as HTMLElement).click();
+  await wait();
+  assert.deepEqual(calls.map((c) => c[0]), ["read", "write", "read", "delete"]);
+  assert.match(el.querySelector("#usb-result")!.textContent!, /did not pass the safety check/);
   el.remove();
 });

@@ -3,8 +3,9 @@
 //
 // The bytes are the stock's (V2.19; the apply function's handler of 10 52 23 at 0x401608D8, the audio recorder's
 // engine handler FUN_40123E34, the fn 0x24 worker FUN_4014F364):
-//   1. MusicMode 2, SongSelect 10 52 00 <song>, IntSongPart 10 52 01 7F (both parts) - the song the piano will play.
-//      The compound frame below takes a song only in MusicMode 2, so it is chosen first.
+//   1. MusicMode 2, ABRepeat off (32 52 06 00), SongSelect 10 52 00 <song>, IntSongPart 10 52 01 7F (both parts,
+//      sent only if another part is chosen) - the song the piano will play. The compound frame below takes a song
+//      only in MusicMode 2, so it is chosen first.
 //   2. 10 52 23 7F 03 <fmt 0 WAV | 1 MP3> 02 7F 7F 7F 03 - MusicMode 3 (USB memory), AudioRecFormat, RecMode 2
 //      (convert), Music 3 (record standby) in one frame, as the stock panel sends it. The piano answers 52 1D 03 and
 //      52 08 03. Without a USB memory the mode does not change (52 1D says the old one) and Result 0x21 comes.
@@ -12,10 +13,11 @@
 //      (FUN_40166E74 on the recorder's start confirmation); it says 52 08 04 and, once a second, the recorded time
 //      as MusicProgress 52 03 [1, ms].
 //   4. the song's end stops the recorder by itself (FUN_4016D9B0, RecMode 2 only): 52 08 02. A cancel is Music 2.
-//   5. the take is still \kawairectempfile.tmp: 24 07 renames it to the name wanted (the piano has no save of its
+//   5. the take is still \kawairectempfile.tmp, loaded into the piano's audio player: Music 2 (Reset, as the stock
+//      panel sends before its rename), then 24 07 renames it to the name wanted (the piano has no save of its
 //      own; a name that exists would be replaced silently - the caller picks a free one), or 24 06 deletes it.
-//   6. RecMode 0 again (left at 2, the end of every piano song would post a stop to the audio recorder) and
-//      MusicMode 2, where the Recorder tab lives.
+//   6. RecMode 0 again (left at 2, the end of every piano song would post a stop to the audio recorder),
+//      MusicMode 2, where the Recorder tab lives, and Music 2 there (after a cancel the piano song still plays).
 // Music and MusicMode are never sent while a file operation is pending (the stock drops them then).
 import { findParam, progress } from "../protocol/codecs.ts";
 import { resultCode } from "../protocol/fileaccess.ts";
@@ -70,6 +72,7 @@ export function convertToAudio(ctx: AppContext, o: { song: number; format: Audio
     const timers = new Set<ReturnType<typeof setTimeout>>();
     let recording = false;
     let armed = false; // the piano is in record standby or records: a stop is owed
+    let wasArmed = false;
     let noMedia = false;
     const off = store.onMessage((m) => {
       if (m.v1 !== 0x52) return;
@@ -115,17 +118,32 @@ export function convertToAudio(ctx: AppContext, o: { song: number; format: Audio
       // 1. the song, in the recorder mode
       pb.mode = MUSIC_MODE.Recorder;
       await store.command(modeP, 0x7f, [MUSIC_MODE.Recorder]);
+      // A-B repeat off: with it on the song never reaches its end (FUN_4016D928 jumps back instead of stopping)
+      await store.command(findParam("ABRepeat", 0x32)!, 0x7f, [0]);
+      // the piano answers a song choice with its length (MaxTime 52 18); the OpenGrand core takes one recorder
+      // command at a time, so the part goes out after that - and only if it is not both parts already
+      const chosen = wait(0x18, () => true, Math.min(1000, AUDIOREC.stepMs));
       await store.set(findParam("SongSelect")!, 0x7f, [0, (o.song >> 7) & 0x7f, o.song & 0x7f]);
-      await store.set(findParam("IntSongPart")!, 0x7f, [0x7f]);
+      await chosen;
+      const partP = findParam("IntSongPart")!;
+      if (store.get(partP, 0x7f)?.[0] !== 0x7f) {
+        await store.set(partP, 0x7f, [0x7f]);
+        await sleep(Math.min(300, AUDIOREC.stepMs));
+      }
       if (cancelled) return "cancelled";
-      // 2. USB memory mode + format + convert + record standby, one frame
-      const mode = wait(0x1d, () => true, AUDIOREC.stepMs);
+      // 2. USB memory mode + format + convert + record standby, one frame. The standby report is the sign that it
+      // worked; a 52 1D that still says another mode (after this frame went out) or Result 0x21 means no USB memory
+      let mode: number | undefined;
+      const offMode = store.onMessage((m) => {
+        if (m.v1 === 0x52 && m.v2 === 0x1d) mode = m.data[0];
+      });
       const standby = wait(0x08, (d) => d[0] === 3, AUDIOREC.stepMs);
       await store.send({ v1: 0x52, v2: 0x23, part: 0x7f, data: [MUSIC_MODE.UsbMemory, o.format === "MP3" ? 1 : 0, 2, 0x7f, 0x7f, 0x7f, 3] });
-      const said = await mode;
-      if (noMedia || (said && said[0] !== MUSIC_MODE.UsbMemory)) throw new AudioRecError("no-usb");
-      if (!(await standby)) throw new AudioRecError(noMedia ? "no-usb" : "no-standby");
+      const ready = await standby;
+      offMode();
+      if (!ready) throw new AudioRecError(noMedia || (mode !== undefined && mode !== MUSIC_MODE.UsbMemory) ? "no-usb" : "no-standby");
       armed = true;
+      wasArmed = true;
       if (cancelled) return await stopAndDrop().then(() => "cancelled" as const);
       // 3. record: the piano starts the song itself
       const started = wait(0x08, (d) => d[0] === 4, AUDIOREC.stepMs);
@@ -139,7 +157,11 @@ export function convertToAudio(ctx: AppContext, o: { song: number; format: Audio
       if (cancelled) return await stopAndDrop().then(() => "cancelled" as const);
       if (!end) throw new AudioRecError("no-end");
       armed = false;
-      // 5. the take gets its name
+      // 5. the take gets its name. The piano has loaded it into its audio player (FUN_40123DEC): Reset first, as the
+      // stock panel does before its rename
+      const reset = wait(0x08, (d) => d[0] === 2, AUDIOREC.stepMs);
+      await store.command(music, 0x7f, [2]);
+      await reset;
       await fa.rename(AUDIO_TEMP, o.name);
       return "saved";
     } catch (e) {
@@ -149,10 +171,12 @@ export function convertToAudio(ctx: AppContext, o: { song: number; format: Audio
       off();
       offResult();
       for (const timer of timers) clearTimeout(timer); // a wait nobody needs any more (the song's end after a cancel)
-      // 6. back to a plain recorder
+      // 6. back to a plain recorder; the piano song the piano was playing (a cancel, an error) is stopped there -
+      // Music 2 in MusicMode 3 reaches only the audio recorder
       await store.send({ v1: 0x52, v2: 0x1c, part: 0x7f, data: [0] });
       pb.mode = MUSIC_MODE.Recorder;
       await store.command(modeP, 0x7f, [MUSIC_MODE.Recorder]);
+      if (wasArmed) await store.command(music, 0x7f, [2]);
       pb.sel = undefined; // the piano loaded its take into the audio player
       pb.recording = false;
     }
@@ -165,6 +189,8 @@ export function convertToAudio(ctx: AppContext, o: { song: number; format: Audio
     },
   };
 }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** A name for a new file that no file on the USB memory has: BASE.EXT, then BASE_2.EXT, BASE_3.EXT ... */
 export function freeName(files: readonly string[], base: string, ext: string): string {

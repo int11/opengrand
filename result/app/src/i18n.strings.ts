@@ -2,6 +2,10 @@
 // Written for this app (not taken from the original UI bundle).
 export const STRINGS: Record<"ja" | "ko", Record<string, string>> = {
   ja: {
+    "No piano song is empty.": "空きのソングがありません。",
+    "The piano's songs have not been read yet (Scan reads them).": "ピアノのソング一覧をまだ読み込んでいません(「読み込み」で読み込みます)。",
+    "Playing {name} puts it into song {n} and replaces what is there.": "{name} を再生するにはソング {n} に入れる必要があり、その内容は置き換えられます。",
+    "{name} goes into song {n} and replaces what is there.": "{name} をソング {n} に入れると、その内容は置き換えられます。",
     "This is not a MIDI file the app can read.": "アプリが読めないMIDIファイルです。",
     "The file has no notes.": "ファイルに音符がありません。",
     "The song is too long for a piano song.": "曲が長すぎてピアノのソングに入りません。",
@@ -13,8 +17,6 @@ export const STRINGS: Record<"ja" | "ko", Record<string, string>> = {
     "Save to USB": "USBに保存",
     "All 10 piano songs are used. Choose the song to record over below, then press Rec.": "ピアノのソング10曲がすべて使用中です。上書きする曲を下で選んでから録音を押してください。",
     "Replace song {n}": "ソング {n} を置き換える",
-    "No piano song is empty. Playing {name} puts it into song {n} and replaces what is there.": "空きのソングがありません。{name} を再生するにはソング {n} に入れる必要があり、その内容は置き換えられます。",
-    "No piano song is empty. {name} goes into song {n} and replaces what is there.": "空きのソングがありません。{name} をソング {n} に入れると、その内容は置き換えられます。",
     "{name} is now piano song {n}.": "{name} をピアノのソング {n} に入れました。",
     "Playing {name} from piano song {n}.": "{name} — ピアノのソング {n} に入れて再生中",
     "Stop the recording first.": "先に録音を止めてください。",
@@ -546,6 +548,10 @@ export const STRINGS: Record<"ja" | "ko", Record<string, string>> = {
     "Power hold": "電源保持", "NOR ready (RY/BY#)": "NOR準備完了(RY/BY#)",
   },
   ko: {
+    "No piano song is empty.": "빈 피아노 녹음곡이 없습니다.",
+    "The piano's songs have not been read yet (Scan reads them).": "피아노 녹음곡 목록을 아직 읽지 않았습니다(「읽기」를 누르면 읽습니다).",
+    "Playing {name} puts it into song {n} and replaces what is there.": "{name} 파일을 재생하려면 곡 {n}에 넣어야 하고, 그 곡에 있던 녹음은 지워집니다.",
+    "{name} goes into song {n} and replaces what is there.": "{name} 파일을 곡 {n}에 넣으면 그 곡에 있던 녹음은 지워집니다.",
     "This is not a MIDI file the app can read.": "앱이 읽을 수 없는 MIDI 파일입니다.",
     "The file has no notes.": "파일에 음표가 없습니다.",
     "The song is too long for a piano song.": "곡이 너무 길어 피아노 녹음곡에 들어가지 않습니다.",
@@ -557,8 +563,6 @@ export const STRINGS: Record<"ja" | "ko", Record<string, string>> = {
     "Save to USB": "USB로 저장",
     "All 10 piano songs are used. Choose the song to record over below, then press Rec.": "피아노 녹음곡 10개가 모두 차 있습니다. 덮어쓸 곡을 아래에서 고른 뒤 녹음을 누르세요.",
     "Replace song {n}": "곡 {n} 바꾸기",
-    "No piano song is empty. Playing {name} puts it into song {n} and replaces what is there.": "빈 피아노 녹음곡이 없습니다. {name} 파일을 재생하려면 곡 {n}에 넣어야 하고, 그 곡의 녹음은 지워집니다.",
-    "No piano song is empty. {name} goes into song {n} and replaces what is there.": "빈 피아노 녹음곡이 없습니다. {name} 파일을 곡 {n}에 넣으면 그 곡의 녹음은 지워집니다.",
     "{name} is now piano song {n}.": "{name} 파일을 피아노 녹음곡 {n}에 넣었습니다.",
     "Playing {name} from piano song {n}.": "{name} — 피아노 녹음곡 {n}에 넣어서 재생 중",
     "Stop the recording first.": "먼저 녹음을 멈추세요.",

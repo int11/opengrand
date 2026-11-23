@@ -35,6 +35,7 @@ function audioPiano(piano: { send(m: Uint8Array): void; onMessage(h: (m: Uint8Ar
     const fn = m[3], v1 = m[6], v2 = m[7];
     if (fn === 0x10) piano.send(Uint8Array.from([0xf0, 0x40, 0x7f, 0x07, 0x04, 0x1e, v1, v2, m[8], 0xf7]));
     if (fn === 0x10 && v1 === 0x52 && v2 === 0x1c) st.recMode = m[9];
+    if (fn === 0x10 && v1 === 0x52 && v2 === 0x00) piano.send(note(0x18, 0, 0, 2, 0, 0, 0)); // MaxTime after a SongSelect
     if (fn === 0x10 && v1 === 0x52 && v2 === 0x23) {
       // 0x401608D8: MusicMode queued, format and RecMode written only for mode 3, Music 3 queued
       if (!usb) {
@@ -154,12 +155,15 @@ test("MID / KSO: 24 0A <song> <type> + SONG_nn, then the USB list is read again"
 });
 
 test("MP3: song + part in MusicMode 2, 10 52 23 (mode 3, MP3, convert, standby), Music 4, the song's end, rename of the take, RecMode 0", async () => {
-  const { sheet, chip, status, cancel, st, sent, piano, ctx, counts } = await setup();
+  const { sheet, chip, status, cancel, st, sent, piano, ctx, counts, store } = await setup();
   ctx.usbFiles = ["SONG_02.MP3"]; // the name is taken: the piano would replace that file silently
+  store.fromWire({ fn: 0x10, v1: 0x52, v2: 0x01, part: 0x7f, data: [0x7f] }); // both parts already
   sheet.open(1);
   chip("MP3").click();
-  await tick(60);
-  order(sent, MODE2, "F0 40 7F 10 08 02 52 00 7F 00 00 01 F7", "F0 40 7F 10 08 02 52 01 7F 7F F7", "F0 40 7F 10 08 02 52 23 7F 03 01 02 7F 7F 7F 03 F7", REC);
+  await tick(80);
+  // A-B repeat off (with it on the song never ends: FUN_4016D928), the song, then the one compound frame
+  order(sent, MODE2, "F0 40 7F 32 08 02 52 06 7F 00 F7", "F0 40 7F 10 08 02 52 00 7F 00 00 01 F7", "F0 40 7F 10 08 02 52 23 7F 03 01 02 7F 7F 7F 03 F7", REC);
+  assert.ok(!sent.includes("F0 40 7F 10 08 02 52 01 7F 7F F7"), "the part is not sent again when it is both parts");
   assert.deepEqual([st.mode, st.fmt, st.recMode, st.state], [3, 1, 2, 4]);
   assert.equal(counts().quiet, 1, "what plays is stopped first");
   // the piano records: the time it reports (52 03, time form), Cancel instead of Close, no second format
@@ -173,8 +177,9 @@ test("MP3: song + part in MusicMode 2, 10 52 23 (mode 3, MP3, convert, standby),
   piano.send(note(0x08, 2));
   await tick(80);
   assert.deepEqual(st.ops, [[0x07, "\\kawairectempfile.tmp", "\\SONG_02_2.MP3"]]);
-  order(sent, REC, "F0 40 7F 24 08 02 07 F7", RECMODE0, MODE2);
-  assert.ok(!sent.includes(STOP), "no stop from the app: the piano ended the take");
+  // Reset before the rename (the piano loaded the take into its audio player; the stock panel does the same), and
+  // a stop in the recorder mode at the very end
+  order(sent, REC, STOP, "F0 40 7F 24 08 02 07 F7", RECMODE0, MODE2, STOP);
   assert.equal(status(), "Saved to USB: SONG_02_2.MP3");
   assert.deepEqual([cancel.hidden, chip("WAV").disabled, counts().refreshed], [true, false, 1]);
   assert.deepEqual([st.recMode, st.mode], [0, 2], "RecMode 2 left on would stop the audio recorder at every song's end");
@@ -184,14 +189,14 @@ test("WAV, cancelled: Music 2, the take is deleted (24 06 kawairectempfile.tmp),
   const { sheet, chip, status, cancel, st, sent } = await setup();
   sheet.open(0);
   chip("WAV").click();
-  await tick(60);
-  assert.ok(sent.includes("F0 40 7F 10 08 02 52 23 7F 03 00 02 7F 7F 7F 03 F7"), "format 0 = WAV");
+  await tick(260);
+  order(sent, "F0 40 7F 10 08 02 52 00 7F 00 00 00 F7", "F0 40 7F 10 08 02 52 01 7F 7F F7", "F0 40 7F 10 08 02 52 23 7F 03 00 02 7F 7F 7F 03 F7"); // both parts, format 0 = WAV
   assert.equal(st.state, 4);
   sheet.close();
   assert.equal(sheet.el.hasAttribute("open"), true, "not closed while the piano records");
   cancel.click();
   await tick(80);
-  order(sent, REC, STOP, "F0 40 7F 24 08 02 06 F7", RECMODE0, MODE2);
+  order(sent, REC, STOP, "F0 40 7F 24 08 02 06 F7", RECMODE0, MODE2, STOP); // the last stop: the piano song still played
   assert.deepEqual(st.ops, [[0x06, "\\kawairectempfile.tmp"]]);
   assert.equal(status(), "Cancelled. Nothing was saved.");
 });
@@ -200,7 +205,7 @@ test("the piano has no USB memory after all (mode not changed, Result 0x21): no 
   const { sheet, chip, status, sent } = await setup(false);
   sheet.open(0);
   chip("MP3").click();
-  await tick(250);
+  await tick(600);
   assert.equal(status(), "MP3 failed: No USB memory");
   assert.ok(!sent.includes(REC));
   order(sent, "F0 40 7F 10 08 02 52 23 7F 03 01 02 7F 7F 7F 03 F7", RECMODE0, MODE2);

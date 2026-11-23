@@ -281,7 +281,7 @@ test("field log: import 24 09 without arguments -> 7E 03 00 01 70; now 24 09 <so
   // replace is asked about (the chosen one, else the last)
   (el.querySelector('[data-file="SONG.KSO"] [data-act="import"]') as HTMLElement).click();
   await tick(20);
-  assert.match(el.querySelector("#rec-overwrite")!.textContent!, /No piano song is empty\. SONG\.KSO goes into song 10/);
+  assert.match(el.querySelector("#rec-overwrite")!.textContent!, /have not been read yet \(Scan reads them\)\. SONG\.KSO goes into song 10/);
   assert.ok(!sent.some((m) => m.startsWith("F0 40 7F 24 08 02 09")), "nothing before the answer");
   (el.querySelector('#rec-overwrite [data-act="into-confirm"]') as HTMLElement).click();
   await tick(60);
@@ -355,5 +355,13 @@ test("a tap on a KSO row: into a piano song (24 09 <song> 03), then that song is
   assert.equal(el.querySelector("#rec-note")!.textContent, "Playing SONG.KSO from piano song 10.");
   assert.match(el.querySelector("#rec-panel-info")!.textContent!, /^Song 10/, "the bar holds the piano song");
   assert.equal(el.querySelector('[data-song="10"]')!.getAttribute("data-state"), "data");
+  // the same file tapped again: the song it is in plays again - no second import
+  const loads = () => sent.filter((m) => m.startsWith("F0 40 7F 24 08 02 09")).length;
+  (el.querySelector('#rec-panel [data-act="stop"]') as HTMLElement).click();
+  await tick(40);
+  (el.querySelector('[data-file="SONG.KSO"] [data-act="file-pick"]') as HTMLElement).click();
+  await tick(120);
+  assert.equal(loads(), 1);
+  assert.equal(st.music.at(-1), 1, "played again");
   el.remove();
 });

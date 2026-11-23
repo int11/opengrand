@@ -888,10 +888,10 @@ test("BLE transfer estimate for the real app bundle (MTU 23, paced writer)", asy
   // 186 500 -> 192 500 (2026-11-23, the player bar: ui/screens/songctl.ts playerBar with its icons, progress line /
   // bar-seek slider and options sheet, the USB file in the bar (ui/usbplay.ts position), row marks and ⋯, their styles
   // and en/ja/ko lines; the state line, labelled transport and four unused strings went: HEAD was 185 292 B)
-  // 192 500 -> 200 500 (2026-11-23: 「USB로 저장」 sheet with Convert to Audio (ui/savesheet.ts, ui/audiorec.ts), the
+  // 192 500 -> 201 500 (2026-11-23: 「USB로 저장」 sheet with Convert to Audio (ui/savesheet.ts, ui/audiorec.ts), the
   // capability table (ui/songkinds.ts), KSO / MID into a piano song with the MID -> KSO converter (protocol/kso.ts,
   // ui/midikso.ts - about 4.5 KB of the growth), their en/ja/ko lines; the import-target select and the two export
-  // buttons went: HEAD was 191 771 B, this 200 002 B)
-  assert.ok(file.length < 200_500, `package ${file.length} B`);
+  // buttons went: HEAD was 191 771 B, this 200 615 B)
+  assert.ok(file.length < 201_500, `package ${file.length} B`);
   console.log(`# real bundle: package ${file.length} B, ${e.frames} frames, ${e.blePackets} BLE packets; window ≈ ${e.windowedS.toFixed(0)} s, stop-and-wait ≈ ${e.stopAndWaitS.toFixed(0)} s`);
 });

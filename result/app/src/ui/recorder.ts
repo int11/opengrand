@@ -81,8 +81,8 @@ export const RECORDER_STRINGS = [
   "Song {n} may already have a recording. Recording replaces it.", "Record over it", "Cancel",
   "Delete part 1", "Delete part 2", "Delete", "Delete song {n} on the piano?", "Delete part {p} of song {n} on the piano?", "Save to USB",
   "All 10 piano songs are used. Choose the song to record over below, then press Rec.", "Replace song {n}",
-  "No piano song is empty. Playing {name} puts it into song {n} and replaces what is there.",
-  "No piano song is empty. {name} goes into song {n} and replaces what is there.",
+  "No piano song is empty.", "The piano's songs have not been read yet (Scan reads them).",
+  "Playing {name} puts it into song {n} and replaces what is there.", "{name} goes into song {n} and replaces what is there.",
   "{name} is now piano song {n}.", "Playing {name} from piano song {n}.", "Stop the recording first.", "Import", "Piano",
   ...Object.values(KSO_TEXT), "Convert to a piano song", "{n} details a piano song cannot hold were left out or rounded.",
   "Needs OpenGrand song delete: the piano's own delete does not remove the song.", "Play a key or press Play to start recording.",
@@ -93,6 +93,9 @@ type ListId = "internal" | "usb";
 /** The list last shown and what the bar last held, per context (the tab is rebuilt on every visit and language change). */
 const shownList = new WeakMap<AppContext, ListId>();
 const shownSource = new WeakMap<AppContext, ListId>();
+/** The piano song a USB file was put into (a KSO tap), per context and session: the next tap plays that song again
+ *  instead of filling another one. */
+const putInto = new WeakMap<AppContext, { session: unknown; at: Map<string, number> }>();
 
 export function recorderScreen(ctx: AppContext): HTMLElement {
   const store = ctx.store;
@@ -159,6 +162,8 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     if (!i.hasData) return t("Empty");
     return [i.bars !== null ? t("{n} bars", { n: i.bars }) : "", partsText(i)].filter(Boolean).join(" · ");
   };
+  /** The files the USB player plays itself - what ⏮ ⏭ step through (a KSO is played through a piano song). */
+  const direct = () => ctx.usbFiles.filter((f) => { const k = kindOf(f); return !k || KINDS[k].howPlayed === "direct"; });
   /** The USB file the bar is about: the one that plays, else the one chosen in the list. */
   const usbItem = () => (usbAnyRunning(pb) ? usbNow(pb)?.name ?? null : usb.selected());
   const view = (): PlayerView => {
@@ -166,7 +171,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       const on = usbAnyRunning(pb);
       const now = on ? usbNow(pb) : null;
       const name = usbItem();
-      const files = ctx.usbFiles;
+      const files = direct();
       const k = name === null ? -1 : files.indexOf(name);
       const kind = name === null ? null : kindOf(name);
       return {
@@ -274,7 +279,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   const step = (d: -1 | 1) => {
     if (usbView()) {
       const name = usbItem() ?? usb.selected();
-      const files = ctx.usbFiles;
+      const files = direct();
       const to = files[(name === null ? (d > 0 ? -1 : files.length) : files.indexOf(name)) + d];
       if (to !== undefined) usb.pick(to, false); // plays only if a USB file plays now
       return;
@@ -473,6 +478,11 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       return;
     }
     const leaf = name.slice(name.lastIndexOf("\\") + 1);
+    const put = () => {
+      let c = putInto.get(ctx);
+      if (!c || c.session !== ctx.session()) putInto.set(ctx, (c = { session: ctx.session(), at: new Map() }));
+      return c.at;
+    };
     const go = async (n: number) => {
       if (usbAnyRunning(pb)) await usb.stop();
       if (state === 0 || state === 1) {
@@ -498,6 +508,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       const lossy = left.length ? ` ${t("{n} details a piano song cannot hold were left out or rounded.", { n: left.length })}` : "";
       note.title = left.join("; ");
       if (!(await usb.run(t("Import"), () => ctx.files()!.load(file, n), false))) return;
+      put().set(name, n);
       // the song now holds the file: the song table says so on OpenGrand; on the stock it is noted here (its length
       // comes with the select)
       if (!(rec && (await readNg()))) {
@@ -513,11 +524,22 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       await play(true);
       note.textContent = t("Playing {name} from piano song {n}.", { name: leaf, n: n + 1 }) + lossy;
     };
+    // tapped before in this session and the song still holds something: that song again, no second copy
+    const was = put().get(name);
+    if (andPlay && was !== undefined && songs[was]?.hasData) {
+      if (usbAnyRunning(pb)) await usb.stop();
+      if (!(await pick(was, true))) return;
+      await play(true);
+      note.textContent = t("Playing {name} from piano song {n}.", { name: leaf, n: was + 1 });
+      return;
+    }
     const to = emptySong();
     if (to >= 0) return go(to);
     const n = sel >= 0 ? sel : SONGS - 1;
-    const ask = andPlay ? "No piano song is empty. Playing {name} puts it into song {n} and replaces what is there." : "No piano song is empty. {name} goes into song {n} and replaces what is there.";
-    askOver(t(ask, { name: leaf, n: n + 1 }), t("Replace song {n}", { n: n + 1 }), "into-confirm", () => void go(n));
+    // the stock before a scan: the songs are not known - say that, not that none is empty
+    const why = songs.some((i) => i) ? t("No piano song is empty.") : t("The piano's songs have not been read yet (Scan reads them).");
+    const ask = andPlay ? "Playing {name} puts it into song {n} and replaces what is there." : "{name} goes into song {n} and replaces what is there.";
+    askOver(`${why} ${t(ask, { name: leaf, n: n + 1 })}`, t("Replace song {n}", { n: n + 1 }), "into-confirm", () => void go(n));
   };
   // a tap on a song row: choose it and - when it holds a recording - play it, as a media player does (owner 2026-11-23:
   // a tap that only chose read as 「재생이 안 된다」). An empty song is only chosen: it is where Rec records. The

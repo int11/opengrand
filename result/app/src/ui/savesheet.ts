@@ -95,6 +95,14 @@ export function saveSheet(ctx: AppContext, id: string, deps: SaveSheetDeps): Sav
     if (!fa) return say(t("Connect to the piano first."));
     const n = song;
     const base = `SONG_${String(n + 1).padStart(2, "0")}`;
+    const audio = fmt === "MP3" || fmt === "WAV";
+    if (audio) {
+      // before the lock: stopping a USB playback is a file operation of its own
+      job = { done: Promise.resolve("cancelled"), cancel() {} };
+      sync();
+      await deps.quiet();
+      job = null;
+    }
     deps.lock.busy = true;
     try {
       if (fmt === "MID" || fmt === "KSO") {
@@ -110,7 +118,6 @@ export function saveSheet(ctx: AppContext, id: string, deps: SaveSheetDeps): Sav
         }
       } else {
         const name = freeName(ctx.usbFiles, base, fmt);
-        await deps.quiet();
         const from = Date.now();
         let ms: number | null = null;
         const show = () => (status.textContent = t("Making {fmt}… {time}", { fmt, time: clock(ms ?? Date.now() - from) }));
