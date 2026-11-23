@@ -73,6 +73,21 @@ export class FileTimeoutError extends Error {
   }
 }
 
+/** The piano's file task answers Busy (Result 0x4000 - FUN_4014A8A4: a job still runs, e.g. the NOR write after a
+ *  save or an import, or another controller's list) at once, before doing anything: the same request a moment later
+ *  goes through (field 2026-11-24: a MID read right after a save, a play right after an import). */
+export const BUSY_RETRY = { tries: 6, ms: 700 };
+export async function busyRetry<T>(op: () => Promise<T>): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await op();
+    } catch (e) {
+      if (!(e instanceof FileAccessError) || e.code !== 0x4000 || i >= BUSY_RETRY.tries) throw e;
+      await new Promise((r) => setTimeout(r, BUSY_RETRY.ms));
+    }
+  }
+}
+
 export class FileAccessError extends Error {
   readonly code: number;
   constructor(code: number) {
@@ -321,7 +336,9 @@ export class FileAccessClient {
       this.s.sendRaw(frame);
       const { f } = await reply;
       const rc = resultCode(f);
-      if (rc !== null) throw new FileAccessError(rc || 1);
+      // an OK here is the late Result of the job before (field 2026-11-24: right after a save) - this request was not
+      // taken: retried like Busy (busyRetry)
+      if (rc !== null) throw new FileAccessError(rc || 0x4000);
       if (f.body[0] === FA.Ack) return;
       if (f.body[0] === FA.Cancel) throw new Error("cancelled by the piano");
     }
@@ -411,14 +428,14 @@ export class FileAccessClient {
 
   /** Read a whole file (24 04 + name -> 01 / 02… / 7B, each packet acknowledged, TopOfData and 7B too). */
   read(name: string): Promise<Uint8Array> {
-    return this.readOp(name).then((r) => r.data);
+    return busyRetry(() => this.readOp(name)).then((r) => r.data);
   }
 
   /** The first `maxBytes` (rounded up to whole packets) and the full length, then Cancel (24 7D): a large file's
    *  header without reading all of it at ~350 B/s (field 2026-11-16). Cancel + Ack: the stock and every ota_main end
    *  the job on the next packet boundary with Result 0xF0. */
   head(name: string, maxBytes: number): Promise<{ length: number; data: Uint8Array }> {
-    return this.readOp(name, maxBytes);
+    return busyRetry(() => this.readOp(name, maxBytes));
   }
 
   private readOp(name: string, maxBytes = Infinity): Promise<{ length: number; data: Uint8Array }> {
@@ -490,12 +507,12 @@ export class FileAccessClient {
    */
   write(name: string, data: Uint8Array): Promise<number> {
     if (data.length >= FILE_MAX) return Promise.reject(new FileAccessError(0xe8)); // past the 1 MB buffer
-    return this.serial(async () => {
+    return busyRetry(() => this.serial(async () => {
       await this.sendAcked(this.fa(FA.Write, 1, 0));
       await this.sendName(name);
       await sleep(WRITE_SETTLE_MS);
       return this.upload(data);
-    });
+    }));
   }
 
   /** Send an SMF without a name: the piano loads it into its USB slot to play it (§9.5, OpenGrand only;
@@ -515,6 +532,10 @@ export class FileAccessClient {
   }
 
   private nameOp(v1: number | number[], ...names: string[]): Promise<number> {
+    return busyRetry(() => this.nameOnce(v1, ...names));
+  }
+  /** Once, Busy included: for 24 08 Busy means "that player plays" - ui/usbplay.ts acts on it. */
+  private nameOnce(v1: number | number[], ...names: string[]): Promise<number> {
     return this.serial(async () => {
       const res = this.result();
       res.catch(() => undefined);
@@ -537,7 +558,7 @@ export class FileAccessClient {
    * MusicMode 3 (USB memory) + Music Play; MID goes to the SMF player, MP3/WAV to the audio player.
    */
   select(name: string): Promise<number> {
-    return this.nameOp(FA.Select, name);
+    return this.nameOnce(FA.Select, name);
   }
   /**
    * Import a file into internal song `song` (0-9): 24 09 <song> <type>. The stock loads only KSO

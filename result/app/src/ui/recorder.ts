@@ -42,6 +42,7 @@
 // Delete is offered only where the piano's core deletes (5E 00 byte 31 bit 0, firmware recdel.c): the stock's own
 // InternalSongDelete re-writes the song from the last take - nothing deleted, and another song overwritten.
 import { t } from "../i18n.ts";
+import { BUSY_RETRY } from "../protocol/fileaccess.ts";
 import { findParam, progress } from "../protocol/codecs.ts";
 import {
   NgClient, ngHas, NgRecorder, parseRecorderNotice, RecorderCmd, RecorderEvent, RecorderRc, type RecorderSong,
@@ -226,8 +227,14 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     await store.command(modeP, 0x7f, [MUSIC_MODE.Recorder]);
   };
   /** One op 0x1E command; the piano's refusal (rc) is shown under the transport. */
+  // Busy (rc 3): the core's song-table write window is open (an import, a save, the end of a recording - REMOTE_PROTOCOL
+  // R3) and closes when the NOR write ends: asked again a few times (field 2026-11-24: Play right after a KSO import)
   const op = async (opCmd: number, arg = 0): Promise<boolean> => {
-    const rc = await rec!.command(opCmd, arg);
+    let rc = await rec!.command(opCmd, arg);
+    for (let i = 0; rc === RecorderRc.Busy && i < BUSY_RETRY.tries; i++) {
+      await new Promise((r) => setTimeout(r, BUSY_RETRY.ms));
+      rc = await rec!.command(opCmd, arg);
+    }
     note.textContent = rc === null ? t("No answer from the piano.")
       : rc <= RecorderRc.Nop ? "" : t(PIANO_RC[rc] ?? "The piano rejected this value.");
     return rc !== null && rc <= RecorderRc.Nop;
