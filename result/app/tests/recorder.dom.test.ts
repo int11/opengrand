@@ -116,8 +116,10 @@ test("recorder tab layout: the player bar on top, then [Piano songs | USB memory
   // Rec records into the piano: no target or format to choose first (owner 2026-11-23), and no part on the bar
   assert.equal(el.querySelector("#rec-target"), null);
   assert.equal(panelBtn(el, "part").hidden, true);
-  // rows of one style: a piano song carries the badge a USB file's row has
-  assert.equal(songRow(el, 1).querySelector(".file-ext")!.textContent, "Piano");
+  // owner 2026-11-24: no 「피아노」 badge, no 「곡 N」 next to the number - number + what the song holds
+  assert.equal(songRow(el, 1).querySelector(".file-ext"), null);
+  assert.equal(songRow(el, 1).querySelector(".song-name"), null);
+  assert.match(songRow(el, 1).querySelector(".song-pick")!.getAttribute("aria-label")!, /^Song 1 · /);
   // part / tempo / transpose / seek / A-B are a sheet behind the options button
   const more = el.querySelector("#rec-panel-options") as HTMLDialogElement;
   assert.equal(more.open, false);

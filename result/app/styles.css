@@ -643,3 +643,6 @@ p.muted.row-note { margin: 0 12px 10px; font-size: .8em; }
 .save-sheet .chip:disabled { opacity: .45; }
 .save-sheet .save-hint { font-size: 13px; margin: 2px 0 6px; }
 .save-sheet [data-act="save-cancel"] { width: 100%; margin-top: 8px; }
+/* a piano song's row: number + what it holds (owner 2026-11-24) - the holding is the row's main text; empty is muted */
+.song-row .song-info { color: var(--text); font-size: 1em; }
+.song-row[data-state="empty"] .song-info, .song-row[data-state="unknown"] .song-info { color: var(--muted); }

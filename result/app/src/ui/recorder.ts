@@ -584,11 +584,11 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       "div",
       { class: "song-row", "data-song": String(n + 1), "data-state": i === null ? "unknown" : i.hasData ? "data" : "empty", "data-on": on ? "1" : undefined, "data-open": isOpen ? "1" : undefined, "data-playing": playsNow(n) ? "1" : undefined },
       h("div", { class: "file-main" },
-        h("button", { class: "song-pick", "data-act": "song-pick", "aria-pressed": String(on), onclick: () => void tapSong(n) },
+        // owner 2026-11-24: the list's own heading says these are the piano's songs (no 「피아노」 badge), and the number
+        // is the song's name (no 「곡 N」 next to the same number) - the row reads number + what it holds
+        h("button", { class: "song-pick", "data-act": "song-pick", "aria-pressed": String(on), "aria-label": `${t("Song {n}", { n: n + 1 })} · ${songText(i)}`, onclick: () => void tapSong(n) },
           h("span", { class: "song-num" }, n + 1),
-          // the same badge a USB file's row has (rule 1)
-          h("span", { class: "file-ext song-kind" }, t(KINDS.piano.badge)),
-          h("span", { class: "song-txt" }, h("span", { class: "song-name" }, t("Song {n}", { n: n + 1 })), h("span", { class: "song-info" }, songText(i))),
+          h("span", { class: "song-txt" }, h("span", { class: "song-info" }, songText(i))),
           playsNow(n) ? playingMark() : null),
         empty ? null : iconButton("more", t("More"), { class: "row-more", "data-act": "song-more", "aria-expanded": String(isOpen), onclick: () => { openSong = isOpen ? -1 : n; renderSongs(); } })),
       acts.length ? h("div", { class: "row-acts", hidden: !isOpen }, ...acts) : null,
