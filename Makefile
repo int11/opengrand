@@ -59,6 +59,7 @@ STOCK_FAST := \
 	roundtrip_xgate.py:ota_main:-q \
 	roundtrip_gpio.py:ota_main:-q \
 	roundtrip_sysex.py:-q \
+	stock_kso.py:-q \
 	roundtrip_midich.py:ota_main \
 	roundtrip_usbplay.py:ota_main \
 	roundtrip_fread.py:ota_main \
