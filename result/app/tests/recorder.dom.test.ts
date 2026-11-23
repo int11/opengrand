@@ -54,7 +54,7 @@ const OTA_MAIN_ID = [0x04, 0x02, 0x13, 0x3b, 0x77, 0x7f, 0x3f];
 
 /** A session stand-in: Identify (feat2, or a whole identify), op 0x1E 00 / 01 / 02 like recctl_cave.c - with id's
  *  feat3 0x01 also the record commands 8 / 11 (R2). store: the song table check (status byte 19). */
-function fakeSession(feat2: number, o: { id?: number[]; store?: number; full?: boolean } = {}) {
+function fakeSession(feat2: number, o: { id?: number[]; store?: number; full?: boolean; dropStatus?: number } = {}) {
   const listeners: ((m: Uint8Array) => void)[] = [];
   const asked: number[][] = [];
   const push = (m: Uint8Array) => queueMicrotask(() => listeners.forEach((l) => l(m)));
@@ -89,6 +89,7 @@ function fakeSession(feat2: number, o: { id?: number[]; store?: number; full?: b
       if (op === 0x01) reply(0x01, o.id ?? [1, 2, 19, 0x3b, 0x77, feat2]);
       if (op !== 0x1e) return;
       const sub = m[7]!;
+      if (sub === 0 && o.dropStatus && o.dropStatus-- > 0) return; // the answer is lost
       if (sub === 0) reply(0x1e, [0, 0, ...ng.pack7(statusRaw(state, song, bar, store))]);
       if (sub === 1) reply(0x1e, [1, 0, ...ng.pack7(listRaw({ full: o.full, bad: store !== 0 }))]);
       if (sub === 2) {
@@ -373,6 +374,7 @@ test("recording panel on the stock: Rec needs a song, asks before recording over
   notify([0x52, 0x08, 0x7f, 2]);
   await tick(5);
   assert.equal(stateText(el), "Stopped");
+  assert.ok(!sent.includes(music(4)), "never Music 4 (32 52 08 7F 04)");
   // an empty song records at once
   (songRow(el, 6).querySelector('[data-act="song-pick"]') as HTMLElement).click();
   await tick(20);
@@ -608,7 +610,9 @@ test("field incident 2026-11-24: a song table that failed its check - a warning 
   }
   assert.ok(!el.querySelector("#songs-list")!.textContent!.includes("Empty"));
   const note = () => el.querySelector("#rec-note")!.textContent;
-  const sent = () => [s.asked.length, params.length, s.params.length, calls.length];
+  // a refusal may ask the status again (1E 00, a read); no command, no Kawai byte, no file call
+  const cmds = () => s.asked.filter((x) => !(x[0] === 0x01 || (x[0] === 0x1e && x[1] <= 1))).length;
+  const sent = () => [cmds(), params.length, s.params.length, calls.length];
   const before = sent();
   // ● : refused with the reason, no song chosen for it, no standby
   panelBtn(el, "rec").click();
@@ -654,11 +658,35 @@ test("song table not read yet (status byte 19 = 0xFF): rows unknown, Rec refused
   await wait();
   const UNREAD = "The piano has not checked its song list yet.";
   assert.equal(el.querySelector("#songs-table-warn")!.textContent, UNREAD);
-  const n = s.asked.length;
+  const cmds = () => s.asked.filter((x) => x[0] === 0x1e && x[1] === 0x02).length;
+  const n = cmds();
   panelBtn(el, "rec").click();
   await wait();
   assert.equal(el.querySelector("#rec-note")!.textContent, UNREAD);
-  assert.equal(s.asked.length, n);
+  assert.equal(cmds(), n);
   assert.deepEqual(params, []);
+  el.remove();
+});
+
+test("the first status answer is lost: nothing is taken as empty until a status says the table is good, then the list is read again", async () => {
+  const store = new ParamStore();
+  const params = tapStore(store);
+  const s = fakeSession(0, { id: OTA_MAIN_ID, dropStatus: 1 });
+  const ctx = createContext(store, { session: () => s as never });
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  for (let i = 0; i < 30; i++) await tick(30); // the status times out (700 ms)
+  assert.equal(el.querySelector("#songs-table-warn")!.textContent, "The piano has not checked its song list yet.");
+  assert.equal(songRow(el, 3).getAttribute("data-state"), "unknown");
+  const n = s.asked.filter((a) => a[0] === 0x1e && a[1] === 0x02).length;
+  // Rec: refused, and the status is asked again - it answers now (table good): the list is read again
+  panelBtn(el, "rec").click();
+  await wait(40);
+  assert.equal(el.querySelector("#rec-note")!.textContent, "The piano has not checked its song list yet.");
+  assert.equal(s.asked.filter((a) => a[0] === 0x1e && a[1] === 0x02).length, n, "no command with the refusal");
+  assert.deepEqual(params, []);
+  assert.equal((el.querySelector("#songs-table-warn") as HTMLElement).hidden, true);
+  assert.equal(songRow(el, 3).querySelector(".song-info")!.textContent, "Empty");
+  assert.equal(el.querySelector("#songs-status")!.textContent, "2 of 10 songs recorded");
   el.remove();
 });

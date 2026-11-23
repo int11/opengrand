@@ -32,8 +32,9 @@
 //            op cmd 2 / 3 (the core ends the recording once)
 //   without it (the stock, an older payload)  ● = Music 3, ■ = Music 2, pause = Music 0. ▶ in standby sends nothing
 //            and says to play a key: the stock's Music 1 in state 3 plays the song instead (stock FUN_4016A050)
-//            and the only remote start, Music 4, is never sent in MusicMode 2 by this
-//            app (it starts a recording with no standby check - the incident).
+//            and the stock's remote start, Music 4, is never sent in MusicMode 2 by this app (the stock takes it
+//            in any state, also without a standby; the incident's take was opened with it by hand). With the record
+//            control the core judges a Kawai Music 4 like cmd 11 - the app sends the op itself.
 // A broken song table (op status byte 19 not 0; the song list then reads all zero) leaves every song's state unknown:
 // the list says so, and Rec, the automatic empty-song choice, putting a file into the piano, delete and save are
 // refused with that reason.
@@ -256,8 +257,8 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     if (why) {
       hideOver();
       note.textContent = why;
-      // no status yet (its answer was lost): ask again - its notice lifts the refusal when the table is good
-      if (tableStore === null) void rec?.status().then((st) => st && onStatusRef?.(st));
+      // ask again (a lost answer, a check not run yet, a recovery): a good status lifts the refusal
+      void rec?.status().then((st) => st && onStatusRef?.(st));
     }
     return !!why;
   };
@@ -483,6 +484,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   const fillFromNg = (list: RecorderSong[]) => {
     // a zero-length entry is not known (songInfoOf -> null); with a bad table nothing is
     const bad = !!tableReason();
+    listStale = bad;
     list.slice(0, SONGS).forEach((g, n) => (songs[n] = bad ? null : songInfoOf(g, n)));
     songsStatus.textContent = recordedText();
     renderSongs();
@@ -490,6 +492,8 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     if (!bad && list.some((g) => g.unknown)) void rec?.status().then((st) => st && onStatusRef?.(st));
   };
   let onStatusRef: ((st: RecorderStatus) => void) | null = null;
+  // the list was taken while the table was not known to be good (rows blank): read it again once it is
+  let listStale = false;
   const readNg = async (): Promise<boolean> => {
     const list = await rec?.songs();
     if (!list) return false;
@@ -792,10 +796,14 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       canDelete = st.deletes;
       // the song table check: anything but 0 = no song's state is known (the list reads zero then); back to 0 = read
       // the list again
-      const was = tableStore;
       tableStore = st.store;
-      if (st.store !== 0) songs.fill(null);
-      else if (was !== 0 && was !== null) void readNg();
+      if (st.store !== 0) {
+        songs.fill(null);
+        listStale = true;
+      } else if (listStale) {
+        listStale = false;
+        void readNg();
+      }
       songsStatus.textContent = songs.some((i) => i) || tableReason() ? recordedText() : songsStatus.textContent;
       // in MusicMode 3, and while a USB stop runs, the state and the position are a USB player's (or the audio
       // recorder's), not the piano song's (field 2026-11-23, see the Kawai path above): the song is at rest
