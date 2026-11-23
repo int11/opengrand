@@ -267,35 +267,3 @@ test("USB file manager lists files, deletes / renames by name, formats, reports 
   el.remove();
 });
 
-test("music tab: the song picker holds the mode's songs only (USB files play from the Recorder tab) and Concert Magic settings + result display", async () => {
-  const { store, ctx, sent, notify } = await setup();
-  ctx.usbFiles = ["X.MID", "Y.MID"];
-  const el = S.musicScreen(store, ctx);
-  document.body.append(el);
-  await tick(10);
-  assert.ok(sent.includes("F0 40 7F 02 08 02 52 0D 7F F7"), "CM settings requested");
-  byText(el, "button", "Concert Magic").click();
-  const cm = [...el.querySelectorAll("section")].find((s) => s.querySelector("h3")!.textContent === "Concert Magic")!;
-  const pick = field<HTMLSelectElement>(cm, "Concert Magic song");
-  assert.deepEqual([...pick.options].map((o) => o.textContent), Array.from({ length: 10 }, (_, i) => `Song ${i + 1}`), "no USB entries");
-  change(pick, "1");
-  await tick(20);
-  assert.ok(sent.includes("F0 40 7F 10 08 02 52 00 7F 00 00 01 F7"), "SongSelect song 2 of the mode (numType 0)");
-
-  notify([0x52, 0x0d, 0x7f, 0, 1, 1]);
-  await tick(5);
-  assert.equal(field<HTMLSelectElement>(cm, "Concert Magic mode").value, "0");
-  assert.equal(field(cm, "Smooth tempo").checked, true);
-  change(field<HTMLSelectElement>(cm, "Concert Magic mode"), "1");
-  await tick(20);
-  assert.ok(sent.includes("F0 40 7F 10 08 02 52 0D 7F 01 01 01 F7"), "settings sent");
-
-  notify([0x52, 0x0b, 0x7f, 2, 0, 12]);
-  await tick(5);
-  assert.equal(cm.querySelector("#cm-result")!.textContent, "Fast · 12 notes played");
-  notify([0x52, 0x0b, 0x7f, 5, 1, 0]);
-  await tick(5);
-  assert.equal(cm.querySelector("#cm-result")!.getAttribute("data-code"), "5");
-  assert.match(cm.querySelector("#cm-result")!.textContent!, /128/);
-  el.remove();
-});

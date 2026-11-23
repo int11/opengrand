@@ -75,6 +75,9 @@ export async function buildApp(version: string, ui: UiConfig | null = null): Pro
     format: "iife",
     target: ["es2017", "chrome60"],
     minify: true,
+    // UTF-8 as is, not \u escapes: every page that runs it says <meta charset="utf-8"> (panelui/ng.html, chooser.html),
+    // the inline copy rides in that page and the UI loader decodes packages as UTF-8 (uiloader.js utf8dec)
+    charset: "utf8",
     write: false,
     outdir: "out",
     entryNames: "app-[hash]",

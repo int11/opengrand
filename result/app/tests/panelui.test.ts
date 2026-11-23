@@ -892,6 +892,11 @@ test("BLE transfer estimate for the real app bundle (MTU 23, paced writer)", asy
   // capability table (ui/songkinds.ts), KSO / MID into a piano song with the MID -> KSO converter (protocol/kso.ts,
   // ui/midikso.ts - about 4.5 KB of the growth), their en/ja/ko lines; the import-target select and the two export
   // buttons went: HEAD was 191 771 B, this 200 615 B)
-  assert.ok(file.length < 201_500, `package ${file.length} B`);
+  // 201 500 -> 218 000 (2026-11-24, the Music tab's built-in songs: protocol/builtinsongs.ts - 1 105 pieces of the CA79
+  // EU + US lists keyed by a hash of the panel app's own path (about 7 KB of keys, which do not compress), their titles
+  // (Alfred books, US Concert Magic / Piano Music, hymns included) and book names in ja/ko, the panel-shell player in
+  // ui/screens/music.ts; esbuild charset "utf8" in scripts/bundlecore.ts took about 3 KB off the whole bundle: main was
+  // 200 615 B, this 216 120 B - about 1.9 KB of margin)
+  assert.ok(file.length < 218_000, `package ${file.length} B`);
   console.log(`# real bundle: package ${file.length} B, ${e.frames} frames, ${e.blePackets} BLE packets; window ≈ ${e.windowedS.toFixed(0)} s, stop-and-wait ≈ ${e.stopAndWaitS.toFixed(0)} s`);
 });
