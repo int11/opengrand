@@ -175,3 +175,48 @@ uint8_t rd_build(const uint8_t *song, uint32_t len, uint8_t part, const uint8_t 
     *out_len = len - cut + pad;
     return RD_OK;
 }
+
+uint8_t rd_repair(const uint8_t *song, uint32_t len, const uint8_t *empty, uint8_t *out, uint32_t cap, uint32_t *out_len)
+{
+    uint32_t data_end, bars = 0, kept = 0, dropped = 0;
+    uint16_t keep = 0;
+    *out_len = 0;
+    if (len < RD_HDR || (len & 3u))
+        return RD_E_SONG;
+    data_end = get32(song + H_END);
+    if (!off_ok(get32(song + H_PARTSET), len) || !off_ok(get32(song + H_SETUP), len) ||
+        (data_end != 0 && (data_end < RD_HDR || data_end > len)))
+        return RD_E_SONG;
+    for (uint32_t t = 0; t < RV_TRACKS; t++) {
+        uint32_t o = get32(song + H_TRACKS + 4u * t);
+        if (!o)
+            continue;
+        if (o >= RD_HDR && o < len && song[o] == 0xFA)
+            keep |= (uint16_t)(1u << t), kept++;
+        else
+            dropped++;
+    }
+    if (!dropped)
+        return RD_NOTHING;
+    if (!kept)
+        return empty_song(empty, out, cap, out_len);
+    if (len > cap)
+        return RD_E_ROOM;
+    for (uint32_t i = 0; i < len; i++)
+        out[i] = song[i];
+    for (uint32_t t = 0; t < RV_TRACKS; t++) {
+        uint32_t o = get32(song + H_TRACKS + 4u * t), b;
+        if (!(keep & (1u << t))) {
+            put32(out + H_TRACKS + 4u * t, 0);
+            continue;
+        }
+        b = rd_track_bars(out + o, len - o);
+        if (b == 0)
+            return RD_E_SONG;
+        if (b > bars)
+            bars = b;
+    }
+    put32(out + H_BARS, bars);
+    *out_len = len;
+    return RD_OK;
+}

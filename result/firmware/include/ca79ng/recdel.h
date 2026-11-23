@@ -51,6 +51,16 @@ uint8_t rd_judge(const rv_view_t *v, uint8_t fmt, uint16_t song, uint8_t part);
 uint8_t rd_build(const uint8_t *song, uint32_t len, uint8_t part, const uint8_t *empty, uint8_t *out, uint32_t cap,
                  uint32_t *out_len);
 
+/* the R3 repair of a song the stock commit just wrote broken (recsave.h RS_R_FIXED): the stock serialiser FUN_4016804C
+ * sets track slot 0 to the write cursor unconditionally (0x401682A0) and clears it only when slot 0's take holds data,
+ * so a take of part 2 with no events on a song without part 1 leaves slot 0 = the song length - pointing at the next
+ * song, which fails the boot check FUN_4016E174 (the next power-on formats all ten songs).  Every track slot that does
+ * not point inside the song at an FA is dropped; no track left -> the empty song of the boot template (as rd_build's
+ * last-track delete); otherwise the same length with the dropped slots 0 and +0x70 counted again.
+ * RD_OK = out holds the repaired song, RD_NOTHING = every slot is fine, RD_E_SONG = a block offset / a kept track is
+ * malformed (nothing is written), RD_E_ROOM = does not fit cap. */
+uint8_t rd_repair(const uint8_t *song, uint32_t len, const uint8_t *empty, uint8_t *out, uint32_t cap, uint32_t *out_len);
+
 /* bars (FA events) of the track at t[0..n): 0 when it does not start with FA or runs past n without FC */
 uint32_t rd_track_bars(const uint8_t *t, uint32_t n);
 

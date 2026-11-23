@@ -54,6 +54,12 @@ TEST(recsave_commit_window)
     CHECK_EQ(rs.kind, RS_K_COMMIT);
     CHECK_EQ(rs.target, 2);
     CHECK_EQ(rs.jobs, 1);
+    /* a commit window looks at its table once while the job is pending (a broken song is best mended before the
+     * worker starts); the table is fine, so it stops looking until the job is done */
+    CHECK_EQ(rs_wants_table(&rs, &v), 1);
+    CHECK_EQ(rs_fix_wanted(&rs, &v), 0xFF);
+    CHECK_EQ(rs_poll(&rs, &v), 0);
+    CHECK_EQ(rs.fix, RS_F_LOOKED);
     CHECK_EQ(rs_wants_table(&rs, &v), 0);
     v.busy = RV_BUSY_WORKER;
     CHECK_EQ(rs_poll(&rs, &v), 0);
@@ -262,6 +268,145 @@ TEST(recsave_stuck_and_encode)
     CHECK_EQ(e[14] | e[15] << 8, 1);
 }
 
+
+/* R3 repair (2026-11-24 incident): a commit that breaks only its own song is mended - before the worker runs when it
+ * can, else right after the job; anything else stays a report */
+static void commit_seen(rs_t *rs, rv_view_t *v, uint8_t song)
+{
+    v->song = song;
+    v->state = RV_ST_RECORDING, v->busy = RV_BUSY_REC;
+    rs_poll(rs, v);
+    v->state = RV_ST_STOP, v->busy = RV_BUSY_JOB;
+    v->store = RV_STORE_TRACK_FA, v->store_bad = (uint8_t)(song * 16);   /* slot 0 of the target */
+    for (int i = 0; i < RV_SONGS; i++)
+        v->songs[i] = (rv_song_t){0, 0, 0};   /* rv_read_store lists nothing when the table fails */
+    CHECK_EQ(rs_poll(rs, v), 0);   /* window opens (job already up) */
+}
+
+static void offsets(const rv_view_t *base, uint32_t off[RV_SONGS + 2])
+{
+    off[0] = RV_STORE_DATA;
+    for (int i = 0; i < RV_SONGS; i++)
+        off[i + 1] = off[i] + base->songs[i].len;
+    off[RV_SONGS + 1] = RV_STORE_LIMIT;
+}
+
+TEST(recsave_fix_before_the_worker)
+{
+    rs_t rs;
+    rv_view_t v = view(), base = view();
+    uint32_t off[RV_SONGS + 2];
+    on(&rs, &v);
+    commit_seen(&rs, &v, 5);
+    CHECK_EQ(rs_wants_table(&rs, &v), 1);
+    CHECK_EQ(rs_fix_wanted(&rs, &v), 5);   /* job pending, worker idle: mend now */
+    offsets(&base, off);
+    CHECK_EQ(rs_fix_table(&rs, off), 1);
+    off[3] += 4, off[4] += 4;              /* song 3 grew: the commit moved more than its own song */
+    CHECK_EQ(rs_fix_table(&rs, off), 0);
+    off[3] -= 4, off[4] -= 4;
+    off[RV_SONGS + 1] = 0;
+    CHECK_EQ(rs_fix_table(&rs, off), 0);   /* area-end word wrong */
+    /* the port wrote the mended song (the stock writer re-posts the job, still the same pending job) */
+    v = view(), v.song = 5, v.busy = RV_BUSY_JOB;
+    rs_fixed(&rs, &v, 1);
+    CHECK_EQ(rs.fix, RS_F_DONE);
+    CHECK_EQ(rs_fix_wanted(&rs, &v), 0xFF);
+    CHECK_EQ(rs_poll(&rs, &v), 0);
+    CHECK_EQ(rs_busy(&rs), 1);
+    v.busy = RV_BUSY_WORKER;
+    CHECK_EQ(rs_poll(&rs, &v), 0);
+    v.busy = 0;
+    CHECK_EQ(rs_poll(&rs, &v), 1);
+    CHECK_EQ(rs.last, RS_R_FIXED);
+    CHECK_EQ(rs.last_jobs, 1);
+    CHECK_EQ(rs.n_ok, 1);
+    CHECK_EQ(rs.n_bad, 0);
+}
+
+TEST(recsave_fix_after_the_job)
+{
+    rs_t rs;
+    rv_view_t v = view();
+    on(&rs, &v);
+    commit_seen(&rs, &v, 5);
+    v.busy = RV_BUSY_JOB | RV_BUSY_WORKER;   /* the worker started before the core's pass: never mend under it */
+    CHECK_EQ(rs_fix_wanted(&rs, &v), 0xFF);
+    CHECK_EQ(rs_poll(&rs, &v), 0);
+    CHECK_EQ(rs.fix, RS_F_NONE);
+    v.busy = 0;                              /* job done: the window waits for the mend instead of closing */
+    CHECK_EQ(rs_poll(&rs, &v), 0);
+    CHECK_EQ(rs.phase, RS_P_FIX);
+    CHECK_EQ(rs_busy(&rs), 1);
+    CHECK_EQ(rs_fix_wanted(&rs, &v), 5);
+    v = view(), v.song = 5, v.busy = RV_BUSY_JOB;   /* mended: a second job */
+    rs_fixed(&rs, &v, 1);
+    CHECK_EQ(rs_poll(&rs, &v), 0);
+    CHECK_EQ(rs.jobs, 2);
+    v.busy = 0;
+    CHECK_EQ(rs_poll(&rs, &v), 1);
+    CHECK_EQ(rs.last, RS_R_FIXED);
+    CHECK_EQ(rs.last_jobs, 2);
+    /* the mend failed after the job: RS_R_TABLE at once */
+    v = view();
+    on(&rs, &v);
+    commit_seen(&rs, &v, 5);
+    v.busy = RV_BUSY_WORKER;
+    rs_poll(&rs, &v);
+    v.busy = 0;
+    rs_poll(&rs, &v);
+    CHECK_EQ(rs.phase, RS_P_FIX);
+    rs_fixed(&rs, &v, 0);
+    CHECK_EQ(rs.phase, RS_P_IDLE);
+    CHECK_EQ(rs.last, RS_R_TABLE);
+    /* the port never mends: RS_FIX_POLLS later RS_R_TABLE */
+    v = view();
+    on(&rs, &v);
+    commit_seen(&rs, &v, 5);
+    v.busy = RV_BUSY_WORKER;
+    rs_poll(&rs, &v);
+    v.busy = 0;
+    unsigned n = 0;
+    while (!rs_poll(&rs, &v) && n < 2 * RS_FIX_POLLS)
+        n++;
+    CHECK_EQ(rs.last, RS_R_TABLE);
+    CHECK_EQ(n + 1 >= RS_FIX_POLLS, 1);
+}
+
+TEST(recsave_fix_only_its_own_song)
+{
+    rs_t rs;
+    rv_view_t v = view();
+    on(&rs, &v);
+    commit_seen(&rs, &v, 5);
+    v.store_bad = 4 * 16;          /* the table fails at another song */
+    CHECK_EQ(rs_fix_wanted(&rs, &v), 0xFF);
+    CHECK_EQ(rs_poll(&rs, &v), 0);
+    CHECK_EQ(rs.fix, RS_F_LOOKED);
+    v.busy = 0;
+    CHECK_EQ(rs_poll(&rs, &v), 1);
+    CHECK_EQ(rs.last, RS_R_TABLE);
+    v = view();
+    on(&rs, &v);
+    commit_seen(&rs, &v, 5);
+    v.store = RV_STORE_SONG_ALIGN, v.store_bad = 5;   /* not a track failure */
+    CHECK_EQ(rs_fix_wanted(&rs, &v), 0xFF);
+    v = view();
+    on(&rs, &v);
+    commit_seen(&rs, &v, 5);
+    v.state = RV_ST_PLAY;          /* something plays already: not at rest */
+    CHECK_EQ(rs_fix_wanted(&rs, &v), 0xFF);
+    v.state = RV_ST_STOP, v.busy = RV_BUSY_JOB | RV_BUSY_FILEOP;
+    CHECK_EQ(rs_fix_wanted(&rs, &v), 0xFF);
+    /* a delete window is never mended */
+    v = view();
+    on(&rs, &v);
+    CHECK_EQ(rs_delete(&rs, &v, 0x04, 1, 1), RS_V_PASS);
+    v.store = RV_STORE_TRACK_FA, v.store_bad = 1 * 16, v.busy = RV_BUSY_JOB;
+    rs_poll(&rs, &v);
+    CHECK_EQ(rs_fix_wanted(&rs, &v), 0xFF);
+}
+
 void suite_recsave(void)
 {
     printf("recsave (Phase 3-6 R3)\n");
@@ -273,4 +418,7 @@ void suite_recsave(void)
     RUN(recsave_delete_nowrite);
     RUN(recsave_file_rules);
     RUN(recsave_stuck_and_encode);
+    RUN(recsave_fix_before_the_worker);
+    RUN(recsave_fix_after_the_job);
+    RUN(recsave_fix_only_its_own_song);
 }

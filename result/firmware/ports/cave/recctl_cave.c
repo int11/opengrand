@@ -351,6 +351,29 @@ __attribute__((noinline)) static void own_delete(uint8_t port, uint8_t song, uin
         stk_rec_edit_ok(0);
 }
 
+/* R3 repair (recsave.h head comment, recdel.h rd_repair): the song a commit just wrote broken is rebuilt and written
+ * with the same stock writer and after-write sequence as own_delete - only while rs_fix_wanted() names it (state 0 / 2,
+ * the NOR worker not erasing / programming, no file operation; this pass runs in task 19, above the worker).
+ * noinline: none of this in rcc_pump's frame */
+__attribute__((noinline)) static void own_fix(uint8_t song)
+{
+    uint32_t off[RV_SONGS + 2], len = 0;
+    uint8_t r = RD_E_SONG, ok = 0;
+    for (unsigned i = 0; i < RV_SONGS + 2; i++)
+        off[i] = rd32(RV_A_STORE + 4u * i);
+    if (rs_fix_table(&rw.rs, off))
+        r = rd_repair(PTR(RV_A_STORE + off[song]), off[song + 1] - off[song], PTR(RD_A_TEMPLATE + RD_HDR * song),
+                      PTR(RD_A_BUF), off[song + 1] - off[song], &len);   /* never longer than what is there */
+    if (r == RD_OK && (stk_rec_store_write(song, RD_A_BUF, len) & 0xFFFFu) == 0) {
+        stk_rec_store_changed();
+        stk_rec_load(song);
+        stk_rec_load_done();
+        ok = 1;
+    }
+    rv_read_store(&MEM, &rw.cur);
+    rs_fixed(&rw.rs, &rw.cur, ok);
+}
+
 int rcc_kawai(uint8_t port, const uint8_t *m, uint32_t n)
 {
     uint16_t arg = 0;
@@ -484,6 +507,15 @@ void rcc_pump(uint32_t now_ms)
     }
     if (rs_poll(&rw.rs, &rw.cur))
         rw.save_dirty = 1;
+    {
+        uint8_t fix = rs_fix_wanted(&rw.rs, &rw.cur);
+        if (fix < RV_SONGS) {   /* R3: a commit wrote its own song broken - mend it now (its job is not running) */
+            own_fix(fix);
+            d |= rv_diff(&rw.prev, &rw.cur);
+            if (rw.rs.phase == RS_P_IDLE)
+                rw.save_dirty = 1;   /* the mend failed after the job: the window closed as RS_R_TABLE */
+        }
+    }
     ev = rc_poll(&rw.rc, &rw.cur);
     if (ev && rw.cmd_port) {
         send_short((uint8_t)(rw.cmd_port - 1), 0x03, (uint8_t)(ev >> 8), (uint8_t)ev);

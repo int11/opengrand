@@ -25,7 +25,19 @@
  *   - delete and import are refused (Busy) in the states where the stock would reload the player under a take or a
  *     playing song (1, 3-6), while a job / file operation / window runs, and (single song) when the table fails the
  *     check; a song number >= 10 is refused instead of deleting song 1.  Everything else is the stock's own path.
- * Nothing here writes stock RAM or calls a stock routine. */
+ * Nothing here writes stock RAM or calls a stock routine.
+ *
+ * Repair of a broken commit (2026-11-24 field incident: a take of part 2 with no events on an empty song; the stock
+ * serialiser FUN_4016804C leaves track slot 0 at the song end, recdel.h rd_repair): a COMMIT window whose table fails
+ * the boot-check rules only at a track of its own target song, while the other nine songs keep their settled lengths,
+ * is mended by the core instead of only reported - the port rebuilds the target song (rd_repair, empty template when no
+ * track is left) and writes it with the same stock writer FUN_40168408 as the core's delete, which queues the NOR job
+ * again.  When: as soon as the commit is seen and the NOR worker 0x4139DAC4 is NOT erasing / programming - the port
+ * runs in task 19, above the worker (task 29), so a job still pending then programs the mended RAM (FUN_401340B0 reads
+ * RAM while programming and clears the pending byte only afterwards: a re-post DURING a run would be lost, hence never
+ * then).  If the worker already runs, the window waits for it (RS_P_FIX after the job) and mends right after, which
+ * queues a second job: NOR holds the broken table only for that job's time instead of until the next boot.  One try
+ * per window; RS_R_FIXED when the table passes afterwards. */
 #ifndef CA79NG_RECSAVE_H
 #define CA79NG_RECSAVE_H
 
@@ -36,11 +48,14 @@
 #define RS_WAIT_POLLS 1500u   /* 3 s of 2 ms polls for the job after a delete / commit (it is queued synchronously) */
 #define RS_MAX_POLLS 30000u   /* 60 s: a window still busy after this closes as RS_R_STUCK */
 #define RS_FILE_PEND_POLLS 5000u /* 10 s: an allowed 24 09 names the song of the next file operation */
+#define RS_FIX_POLLS 500u     /* 1 s: a window waiting to mend its song after the job closes as RS_R_TABLE after this */
 
 /* window kinds */
 enum { RS_K_NONE = 0, RS_K_COMMIT = 1, RS_K_DELETE = 2, RS_K_FORMAT = 3, RS_K_FILE = 4 };
 /* window phase */
-enum { RS_P_IDLE = 0, RS_P_WAIT = 1, RS_P_JOB = 2 };
+enum { RS_P_IDLE = 0, RS_P_WAIT = 1, RS_P_JOB = 2, RS_P_FIX = 3 /* job done, the target song is to be mended */ };
+/* rs_t.fix */
+enum { RS_F_NONE = 0, RS_F_LOOKED = 1 /* nothing to mend, or it could not be */, RS_F_DONE = 2 /* mended */ };
 /* targets beyond 0-9 */
 #define RS_T_ALL 0xFFu   /* format: every song may change */
 #define RS_T_ANY 0xFEu   /* a file operation with no known song: at most one song may change */
@@ -53,7 +68,8 @@ enum {
     RS_R_TABLE = 4,   /* the table fails the boot-check rules after the write: report, keep the power on */
     RS_R_OTHER = 5,   /* a song other than the target changed */
     RS_R_STUCK = 6,   /* still busy after RS_MAX_POLLS */
-    RS_R_DOUBLE = 7   /* more than one NOR job in one window (P5) */
+    RS_R_DOUBLE = 7,  /* more than one NOR job in one window (P5) */
+    RS_R_FIXED = 8    /* the commit broke its own song (boot-check rules); the core mended it and the table passes */
 };
 /* rs_delete() / rs_file() verdicts */
 enum {
@@ -68,6 +84,7 @@ typedef struct {
     uint8_t on;
     uint8_t phase, kind, target, jobs;
     uint8_t prev_state, prev_job, have_base;
+    uint8_t fix;            /* RS_F_*: the repair of this window */
     uint16_t left;          /* polls left in this phase */
     uint16_t file_left;     /* polls the import song stays valid */
     uint8_t file_song;      /* song of the last allowed 24 09 (0xFF none) */
@@ -98,6 +115,14 @@ uint8_t rs_delete(rs_t *rs, const rv_view_t *v, uint8_t fmt, uint16_t song, uint
 void rs_nowrite(rs_t *rs);
 /* fn 0x24 request d0 (04..12) with its first data byte d1 (24 09: the song) */
 uint8_t rs_file(rs_t *rs, const rv_view_t *v, uint8_t d0, uint8_t d1);
+
+/* repair (see the head comment).  rs_fix_wanted: the song (0-9) the port should mend now, else 0xFF - a COMMIT window
+ * not tried yet, the fresh table fails only at a track of the target song, state 0 / 2, the NOR worker idle, no file
+ * operation.  The port then reads the raw offset table, rs_fix_table() must accept it (sane, the other nine songs keep
+ * their settled lengths), builds the song (rd_repair), writes it with the stock writer and reports rs_fixed(ok). */
+uint8_t rs_fix_wanted(const rs_t *rs, const rv_view_t *v);
+uint8_t rs_fix_table(const rs_t *rs, const uint32_t off[RV_SONGS + 2]);
+void rs_fixed(rs_t *rs, const rv_view_t *v, uint8_t ok);
 
 #define RS_ENC_LEN 24
 /* the op 1E 04 record (REMOTE_PROTOCOL §10.9) */

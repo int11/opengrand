@@ -224,6 +224,59 @@ TEST(recdel_judge)
     CHECK_EQ(rd_judge(&v, 0x7F, RD_ALL_SONGS, 0x7F), RD_V_STOCK);   /* a broken table can still be formatted */
 }
 
+
+/* R3 repair: the song the stock commit writes for a take of part 2 with no events on an empty song (field 2026-11-24,
+ * emulator tools/roundtrip_recfix.py): name "- SoundMode", +0x24 0, slot 0 = 0x74 = the song length, +0x6C 0x74 */
+TEST(recdel_repair_broken_empty_take)
+{
+    static uint8_t s[0x100], out[0x100];
+    uint32_t len = 0;
+    memset(s, 0, sizeof s);
+    memcpy(s, "SONG 06 - SoundMode             ", 32);
+    put32(s + 0x28, 16), put32(s + 0x2C, RD_HDR), put32(s + 0x6C, RD_HDR);
+    CHECK_EQ(rd_repair(s, RD_HDR, empty_hdr, out, sizeof out, &len), RD_OK);
+    CHECK_EQ(len, RD_HDR);
+    CHECK(memcmp(out, empty_hdr, RD_HDR) == 0);   /* the boot template: what the core's delete writes for an empty song */
+    /* part 2 only, the same take: slot 0 = the length again (124 B in the emulator) */
+    put32(s + 0x24, RD_HDR), memcpy(s + RD_HDR, "\x00\x00\x00\x78\xFC\0\0\0", 8), put32(s + 0x2C, RD_HDR + 8);
+    put32(s + 0x6C, RD_HDR + 8);
+    CHECK_EQ(rd_repair(s, RD_HDR + 8, empty_hdr, out, sizeof out, &len), RD_OK);
+    CHECK_EQ(len, RD_HDR);
+}
+
+TEST(recdel_repair_keeps_good_tracks)
+{
+    static uint8_t s[0x2000], out[0x2000];
+    uint32_t bars[16] = {3, 0}, len = 0, n = song_make(s, bars);
+    /* fine as it is: nothing to mend */
+    CHECK_EQ(rd_repair(s, n, empty_hdr, out, sizeof out, &len), RD_NOTHING);
+    /* slot 1 points at the end (outside), slot 2 at a non-FA byte: both dropped, part 1 kept, same length */
+    put32(s + 0x30, n), put32(s + 0x34, get32(s + 0x2C) + 2);
+    put32(s + 0x70, 9);
+    CHECK_EQ(rd_repair(s, n, empty_hdr, out, sizeof out, &len), RD_OK);
+    CHECK_EQ(len, n);
+    CHECK_EQ(get32(out + 0x2C), get32(s + 0x2C));
+    CHECK_EQ(get32(out + 0x30), 0);
+    CHECK_EQ(get32(out + 0x34), 0);
+    CHECK_EQ(get32(out + 0x70), 3);   /* bars counted again over what is left */
+    CHECK(memcmp(out + RD_HDR, s + RD_HDR, n - RD_HDR) == 0);
+}
+
+TEST(recdel_repair_refuses_what_it_cannot_read)
+{
+    static uint8_t s[0x2000], out[0x2000];
+    uint32_t bars[16] = {3, 0}, len = 0, n = song_make(s, bars);
+    put32(s + 0x30, n);                 /* one slot to drop */
+    CHECK_EQ(rd_repair(s, n - 1, empty_hdr, out, sizeof out, &len), RD_E_SONG);   /* length not 4-aligned */
+    put32(s + 0x24, n + 4);
+    CHECK_EQ(rd_repair(s, n, empty_hdr, out, sizeof out, &len), RD_E_SONG);       /* settings block outside */
+    put32(s + 0x24, RD_HDR);
+    s[get32(s + 0x2C) + n - get32(s + 0x2C) - 4] = 0;   /* keep the FA, break the FC: the kept track cannot be walked */
+    memset(s + get32(s + 0x2C) + 2, 0xF8, n - get32(s + 0x2C) - 2);
+    CHECK_EQ(rd_repair(s, n, empty_hdr, out, sizeof out, &len), RD_E_SONG);
+    CHECK_EQ(rd_repair(s, n, empty_hdr, out, 0x10, &len) != RD_OK, 1);
+}
+
 void suite_recdel(void)
 {
     printf("internal song delete (recdel)\n");
@@ -236,4 +289,7 @@ void suite_recdel(void)
     RUN(recdel_kso_slots_stay_with_a_part_delete);
     RUN(recdel_refuses_what_it_cannot_read);
     RUN(recdel_judge);
+    RUN(recdel_repair_broken_empty_take);
+    RUN(recdel_repair_keeps_good_tracks);
+    RUN(recdel_repair_refuses_what_it_cannot_read);
 }

@@ -125,14 +125,41 @@ uint32_t rca_state(void)
     return (uint32_t)RC.fc_out | (uint32_t)RC.defer << 1 | (uint32_t)RC.n_finish << 8;
 }
 
+/* R3 repair: as recctl_cave.c own_fix */
+static void own_fix(uint8_t song)
+{
+    uint32_t off[RV_SONGS + 2], len = 0;
+    uint8_t r = RD_E_SONG, ok = 0;
+    for (unsigned i = 0; i < RV_SONGS + 2; i++)
+        off[i] = *(volatile uint32_t *)(uintptr_t)(RV_A_STORE + 4u * i);
+    if (rs_fix_table(&SAVE, off))
+        r = rd_repair((const uint8_t *)(uintptr_t)(RV_A_STORE + off[song]), off[song + 1] - off[song],
+                      (const uint8_t *)(uintptr_t)(RD_A_TEMPLATE + RD_HDR * song), (uint8_t *)(uintptr_t)RD_A_BUF,
+                      off[song + 1] - off[song], &len);
+    if (r == RD_OK && (STOCK_STORE_WRITE(song, RD_A_BUF, len) & 0xFFFFu) == 0) {
+        STOCK_STORE_CHG();
+        STOCK_LOAD(song);
+        STOCK_LOAD_DONE();
+        ok = 1;
+    }
+    rv_read_store(&MEM, &VIEW);
+    rs_fixed(&SAVE, &VIEW, ok);
+    if (SAVE.phase == RS_P_IDLE)
+        SAVE_CLOSED = 1;
+}
+
 uint32_t rca_poll(void)
 {
     if (!INITED)
         rc_init(&RC, &OPS), INITED = 1;
+    uint8_t was = VIEW.state;
     rv_read_live(&MEM, &VIEW);
-    if (rs_wants_table(&SAVE, &VIEW))   /* R3: as rcc_pump */
-        rv_read_store(&MEM, &VIEW);
+    if ((was == RV_ST_RECORDING && VIEW.state != RV_ST_RECORDING) || rs_wants_table(&SAVE, &VIEW))
+        rv_read_store(&MEM, &VIEW);   /* R3: as rcc_pump (RV_CH_COMMIT / a window that looks at its table) */
     SAVE_CLOSED |= rs_poll(&SAVE, &VIEW);
+    uint8_t fix = rs_fix_wanted(&SAVE, &VIEW);
+    if (fix < RV_SONGS)
+        own_fix(fix);
     return rc_poll(&RC, &VIEW);
 }
 

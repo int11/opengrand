@@ -56,6 +56,7 @@ STOCK_FAST := \
 	roundtrip_recrec.py:-q \
 	roundtrip_recsave.py:-q \
 	roundtrip_recdel.py:ota_main \
+	roundtrip_recfix.py:ota_main:-q \
 	roundtrip_xgate.py:ota_main:-q \
 	roundtrip_gpio.py:ota_main:-q \
 	roundtrip_sysex.py:-q \
