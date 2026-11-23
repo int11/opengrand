@@ -8,6 +8,7 @@
 #   D. playback: the stock player, stepped tick by tick, starts every note the file holds at its tick with its
 #      velocity and length, sets the tempo of every tempo entry and applies the pedals
 #   E. save as KSO: the same bytes back, except the 32-byte name (the stock writes the file name there)
+#   G. size limit: a song of 0xFFBB8 bytes fits an otherwise empty store, 4 bytes more is refused (0xEA)
 #   F. save as SMF: recorded in result/app/tests/fixtures/kso_stock.json - the app test compares its own
 #      ksoToSmf() with it byte for byte
 #
@@ -61,6 +62,7 @@ NOTE_ON = 0x4016D3C0         # (track, key, velocity, release velocity, gate)
 SET_TEMPO = 0x40165F34       # (bpm)
 PEDAL = 0x401661EC           # (track, controller, value)
 EMPTY = [(0, 0)] * 10
+MAX_SONG = 0xFFBB8            # kso.ts KSO_MAX_SONG = 0xFFFFE - 0x30 - 9 x 0x74, down to a multiple of 4
 
 
 def cases():
@@ -107,7 +109,7 @@ class Piano:
         self.usb[name] = data
         self.e.write_bytes(NAME_BUF, name.encode() + b"\0")
         self.jobs = []
-        return self.call(IMPORT, song, 3)
+        return self.call(IMPORT, song, 3, n=400_000_000)
 
     def export(self, song, name, kind):
         self.e.write_bytes(NAME_BUF, name.encode() + b"\0")
@@ -186,6 +188,7 @@ def decode(kso):
 
 def main():
     quiet = "-q" in sys.argv
+    p3.se.stock_bytes()   # no stock image: SKIP, exit 0
     fails, fixture = [], []
 
     def check(cond, what):
@@ -228,6 +231,28 @@ def main():
         rc, mid = pn.export(song, "\\OUT.MID", 4)
         check(rc == 0 and mid is not None and mid[:4] == b"MThd", f"F. save as SMF: {len(mid) if mid else 0} B")
         fixture.append({"name": name, "kso": kso.hex(" "), "stockSmf": mid.hex(" ") if mid else ""})
+
+    # G. size limit: with the other nine songs empty the store takes a song of MAX_SONG bytes, 4 more is 0xEA
+    for size, want_rc in ((MAX_SONG, 0), (MAX_SONG + 4, 0xEA)):
+        nbars = (size - 0x74 - 5 - 1) // 5
+        body = b"\x00\x00\x00\x78\xFC" + b"\xFA\x23\xF8\xF8\xF8" * nbars + b"\xFC"
+        head = bytearray(0x84)
+        head[0:16] = b"hKSO\xff CA99V2.19\0"
+        head[16:48] = b"BIG     - SoundMode".ljust(32)
+        struct.pack_into(">III", head, 0x30, 0, 0x84, 16)
+        struct.pack_into(">I", head, 0x3C, 0x84 + 5)
+        struct.pack_into(">II", head, 0x7C, 0x84 + len(body), nbars)
+        kso = bytes(head) + body + b"\0" * (size - 0x74 - len(body))
+        pn = Piano()
+        before = pn.songs()
+        rc = pn.import_(4, "\\BIG.KSO", kso)
+        ok = rc == want_rc and pn.call(BOOT_CHECK) == 0
+        if want_rc:
+            ok = ok and pn.songs() == before and not pn.jobs
+        else:
+            ok = ok and pn.songs()[4] != before[4] and len(pn.jobs) == 1
+        check(ok, f"G. a song of {size:#x} B (file {len(kso):#x} B) into an empty store -> {rc:#x}"
+                  + (" (Memory over, store unchanged)" if want_rc else ", boot check passes"))
 
     text = json.dumps(fixture, indent=1) + "\n"
     if "--write" in sys.argv:

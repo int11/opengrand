@@ -107,7 +107,8 @@ function readSmf(smf: Uint8Array): { format: number; ppq: number; events: RawEve
           if (meta === 0x2f) break;
         } else if (st === 0xf0 || st === 0xf7) {
           q += 1;
-          q += vlq();
+          const n = vlq();
+          q += n;
         } else {
           if (st & 0x80) {
             running = st;
@@ -159,7 +160,7 @@ export function smfToKso(smf: Uint8Array, opts: SmfToKsoOptions = {}): KsoResult
   const sigs: Sig[] = [];
   const open = new Map<number, Note>(); // (part, key) -> sounding note
   let endTick = 0;
-  let dropped = { drums: 0, ctl: 0, other: 0, sig: 0, tempo: 0, long: 0 };
+  const dropped = { drums: 0, ctl: 0, other: 0, sig: 0, tempo: 0, long: 0, round: 0 };
   const close = (id: number, tick: number, rel: number) => {
     const n = open.get(id);
     if (!n) return;
@@ -175,6 +176,7 @@ export function smfToKso(smf: Uint8Array, opts: SmfToKsoOptions = {}): KsoResult
       if (e.meta === 0x51 && e.data!.length >= 3) {
         const us = (e.data![0] << 16) | (e.data![1] << 8) | e.data![2];
         let bpm = us ? Math.round(60_000_000 / us) : 120;
+        if (us && Math.abs(60_000_000 / bpm - us) > us / 1000) dropped.round += 1;
         if (bpm < 10 || bpm > 400) {
           dropped.tempo += 1;
           bpm = Math.min(400, Math.max(10, bpm));
@@ -223,6 +225,7 @@ export function smfToKso(smf: Uint8Array, opts: SmfToKsoOptions = {}): KsoResult
   if (dropped.other) warnings.push(`${dropped.other} program change / pitch bend / aftertouch events were left out`);
   if (dropped.sig) warnings.push("an unsupported time signature was ignored (4/4 or the previous one is used)");
   if (dropped.tempo) warnings.push("a tempo outside 10-400 bpm was limited");
+  if (dropped.round) warnings.push("tempo is rounded to whole beats per minute");
   if (dropped.long) warnings.push(`${dropped.long} notes longer than ${MAX_GATE} ticks were shortened`);
 
   // bars: the time signature in force at each bar start, up to the end of the last event
@@ -231,12 +234,16 @@ export function smfToKso(smf: Uint8Array, opts: SmfToKsoOptions = {}): KsoResult
     let sig = sigByte(4, 4);
     let si = 0;
     let start = 0;
+    let late = false;
     do {
-      while (si < sigs.length && sigs[si].tick <= start) sig = sigByte(sigs[si].num, sigs[si++].den);
+      for (; si < sigs.length && sigs[si].tick <= start; si++) {
+        if (sigs[si].tick < start && (bars.length === 0 || sigs[si].tick > bars[bars.length - 1].start)) late = true;
+        sig = sigByte(sigs[si].num, sigs[si].den);
+      }
       bars.push({ start, sig });
       start += barTicks(sig);
     } while (start < endTick);
-    if (si < sigs.length && sigs.slice(si).some((s) => s.tick < start)) warnings.push("a time signature change inside a bar starts at the next bar");
+    if (late || sigs.slice(si).some((s) => s.tick < start)) warnings.push("a time signature change inside a bar starts at the next bar");
   }
 
   // tempo list: one entry per change, the first at tick 0

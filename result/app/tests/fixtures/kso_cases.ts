@@ -44,6 +44,20 @@ export interface KsoCase {
 }
 
 const Q = 480;
+/** Hand-written bytes: SysEx before the first note, running status, note-on with velocity 0 as note-off. */
+const RAW_TRACK = [
+  0x00, 0xf0, 0x05, 0x7e, 0x7f, 0x09, 0x01, 0xf7, // GM reset
+  0x00, 0xff, 0x51, 0x03, 0x06, 0x1a, 0x80, // 150 bpm
+  0x60, 0x90, 60, 70, 0x30, 64, 71, // running status
+  0x30, 60, 0, 0x00, 64, 0, // velocity 0 = off
+  0x00, 0xf7, 0x02, 0x01, 0x02, // escape
+  0x60, 0x91, 48, 50, 0x81, 0x40, 0x81, 48, 0x40,
+  0x00, 0xff, 0x2f, 0x00,
+];
+export const RAW_SMF = Uint8Array.from([
+  0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0, 96, 0x4d, 0x54, 0x72, 0x6b, 0, 0, 0, RAW_TRACK.length, ...RAW_TRACK,
+]);
+
 export const KSO_CASES: KsoCase[] = [
   {
     name: "one part, three quarter notes",
@@ -74,4 +88,5 @@ export const KSO_CASES: KsoCase[] = [
     opts: { split: "single", name: "long title here" },
     smf: buildSmf(1, 100, [[...note(0, 0, 33, 60), ...note(0, 33, 67, 62)], [...note(1, 150, 1000, 50)]]),
   },
+  { name: "SysEx, running status, velocity-0 note off", smf: RAW_SMF },
 ];

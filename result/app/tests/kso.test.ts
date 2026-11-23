@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { checkKso, KsoError, ksoToSmf, parseKso, smfToKso } from "../src/protocol/kso.ts";
-import { buildSmf, KSO_CASES, note, sig, tempo } from "./fixtures/kso_cases.ts";
+import { buildSmf, KSO_CASES, note, RAW_SMF, sig, tempo } from "./fixtures/kso_cases.ts";
 
 const hex = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join(" ");
 const stock: { name: string; kso: string; stockSmf: string }[] = JSON.parse(
@@ -86,6 +86,22 @@ test("round trip: notes, pedals and tempo changes come back at the same ticks", 
   ]);
   // the piano's own SMF export puts one empty bar in front
   assert.equal(smfLines(ksoToSmf(r.kso))[2], "384 90 60 1");
+});
+
+test("SysEx, running status and velocity-0 note offs in the MIDI file are read correctly", () => {
+  const r = smfToKso(RAW_SMF);
+  assert.deepEqual(r.warnings, []);
+  assert.deepEqual(r.notes, [2, 1]);
+  assert.deepEqual(smfLines(ksoToSmf(r.kso, { leadBar: false })), [
+    "0 tempo 150", "0 tempo 150", "96 90 60 70", "144 90 64 71", "192 80 60", "192 80 64", "288 92 48 50", "480 82 48", "768 end",
+  ]);
+});
+
+test("tempo rounding and a time signature change inside a bar are reported", () => {
+  const smf = buildSmf(0, 96, [[tempo(0, 120), sig(0, 4, 4), sig(100, 3, 4), [0, 0xff, 0x51, 3, 0x07, 0x00, 0x00], ...note(0, 0, 1000, 60)]]);
+  const r = smfToKso(smf);
+  assert.deepEqual(r.warnings, ["tempo is rounded to whole beats per minute", "a time signature change inside a bar starts at the next bar"]);
+  assert.equal(r.bars, 4); // 384 + 3 x 288 >= 1000
 });
 
 test("what the piano cannot hold is left out with a warning", () => {
