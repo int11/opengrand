@@ -273,8 +273,10 @@ test("'no stick' cached while the piano says attached is stale", async () => {
 
 function listRaw(): number[] {
   const raw = new Array(70).fill(0);
+  // an empty song is the 0x74-byte frame (a zero-length entry is not known - the table failed its check)
+  for (let i = 0; i < 10; i++) raw[7 * i] = 0x74;
   const put = (i: number, bars: number, flags: number) => {
-    raw[7 * i] = 0x10; raw[7 * i + 4] = bars; raw[7 * i + 6] = flags;
+    raw[7 * i] = 0x10; raw[7 * i + 1] = 0x02; raw[7 * i + 4] = bars; raw[7 * i + 6] = flags;
   };
   put(0, 3, 1);
   put(1, 5, 3);
@@ -310,7 +312,7 @@ function fakeSession(feat2: number | null, deletes = false) {
         const [, hi, lo, part] = m.data;
         const i = (hi! << 7) | lo!;
         list[7 * i + 6] = part === 0x7f ? 0 : list[7 * i + 6]! & ~(1 << part!);
-        if (!(list[7 * i + 6]! & 3)) list[7 * i + 4] = 0;
+        if (!(list[7 * i + 6]! & 3)) { list[7 * i + 4] = 0; list[7 * i] = 0x74; list[7 * i + 1] = 0; }
         queueMicrotask(() => frames.forEach((l) => l({ fn: 0x32, body: [0x51, 0x7e, 0x7f, 0x00, 0x00] })));
       }
       return true;

@@ -52,7 +52,9 @@ export function songCache(ctx: AppContext): SongCache {
 export { MUSIC } from "./usbplay.ts";
 
 /** op 1E 01 entry -> the row model the stock scan fills (n 0-based). */
-export function songInfoOf(g: RecorderSong, n: number): SongInfo {
+/** null = not known (a zero-length entry: the piano's song table did not pass its check) - never taken as empty. */
+export function songInfoOf(g: RecorderSong, n: number): SongInfo | null {
+  if (g.unknown) return null;
   return { n, hasData: !g.empty, bars: g.bars, parts: g.empty ? null : [g.part1, g.part2] };
 }
 

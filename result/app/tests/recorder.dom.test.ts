@@ -12,20 +12,23 @@ const { createContext } = await import("../src/ui/context.ts");
 const { bindStore } = await import("../src/ui/controls.ts");
 const { recorderScreen } = await import("../src/ui/recorder.ts");
 
-function statusRaw(state: number, song: number, bar = 0): number[] {
+function statusRaw(state: number, song: number, bar = 0, store = 0): number[] {
   const raw = new Array(48).fill(0);
   raw[0] = 1; raw[1] = state; raw[3] = song; raw[6] = 2; raw[8] = 120; raw[10] = 120; raw[16] = 3; raw[29] = bar;
+  raw[19] = store; // the song table check: 0 OK, 0xFF not read yet, else broken (recview.h RV_STORE_*)
   return raw;
 }
 
-function listRaw(): number[] {
+/** full: every song holds a recording; bad: the table failed its check - the core sends 70 zero bytes */
+function listRaw(o: { full?: boolean; bad?: boolean } = {}): number[] {
   const raw = new Array(70).fill(0);
+  if (o.bad) return raw;
   const put = (i: number, len: number, bars: number, flags: number) => {
     raw[7 * i] = len & 0xff; raw[7 * i + 1] = len >> 8; raw[7 * i + 4] = bars; raw[7 * i + 6] = flags;
   };
   put(0, 0x200, 3, 1);
   put(1, 0x300, 5, 3);
-  for (let i = 2; i < 10; i++) put(i, 0x74, 0, 0);
+  for (let i = 2; i < 10; i++) put(i, o.full ? 0x180 : 0x74, o.full ? 2 : 0, o.full ? 1 : 0);
   return raw;
 }
 
@@ -45,17 +48,30 @@ test("op 0x1E records decode (status 48 B, song list 70 B, event)", () => {
   assert.equal(ng.NG_FEAT2_RECORDER, 0x10);
 });
 
-/** A session stand-in: Identify (feat2), op 0x1E 00 / 01 / 02 like recctl_cave.c. */
-function fakeSession(feat2: number) {
+/** The Identify of the field piano on 2026-11-24 (ota_main): ngver 4, V2.19, feat 3B 77 7F 3F - feat3 0x01 = the core's
+ *  record control (op 0x1E cmd 8-11). */
+const OTA_MAIN_ID = [0x04, 0x02, 0x13, 0x3b, 0x77, 0x7f, 0x3f];
+
+/** A session stand-in: Identify (feat2, or a whole identify), op 0x1E 00 / 01 / 02 like recctl_cave.c - with id's
+ *  feat3 0x01 also the record commands 8 / 11 (R2). store: the song table check (status byte 19). */
+function fakeSession(feat2: number, o: { id?: number[]; store?: number; full?: boolean } = {}) {
   const listeners: ((m: Uint8Array) => void)[] = [];
   const asked: number[][] = [];
   const push = (m: Uint8Array) => queueMicrotask(() => listeners.forEach((l) => l(m)));
   const reply = (op: number, data: number[]) => push(Uint8Array.from([0xf0, 0x7d, 0x43, 0x41, 0x37, 0x39, op | 0x40, ...data, 0xf7]));
   let state = 2, song = 0, bar = 0;
+  const rec2 = !!o.id && ((o.id[6] ?? 0) & 1) === 1;
+  let store = o.store ?? 0;
   return {
+    /** the piano's table check changes (a recovery) */
+    setStore(v: number) {
+      store = v;
+    },
     state: "ready",
     asked,
     push,
+    /** the Kawai frames the app sent through the session (none expected from the recorder tab with a stand-in store) */
+    params: [] as unknown[],
     onMidi(fn: (m: Uint8Array) => void) {
       listeners.push(fn);
       return () => listeners.splice(listeners.indexOf(fn), 1);
@@ -63,25 +79,36 @@ function fakeSession(feat2: number) {
     // the file client the USB list makes (no Kawai frames here)
     onFrame: () => () => {},
     onState: () => () => {},
-    sendParam: async () => true,
+    async sendParam(...a: unknown[]) {
+      this.params.push(a);
+      return true;
+    },
     sendRaw(m: Uint8Array) {
       const op = m[6]!;
       asked.push([...m.slice(6, m.length - 1)]);
-      if (op === 0x01) reply(0x01, [1, 2, 19, 0x3b, 0x77, feat2]);
+      if (op === 0x01) reply(0x01, o.id ?? [1, 2, 19, 0x3b, 0x77, feat2]);
       if (op !== 0x1e) return;
       const sub = m[7]!;
-      if (sub === 0) reply(0x1e, [0, 0, ...ng.pack7(statusRaw(state, song))]);
-      if (sub === 1) reply(0x1e, [1, 0, ...ng.pack7(listRaw())]);
+      if (sub === 0) reply(0x1e, [0, 0, ...ng.pack7(statusRaw(state, song, bar, store))]);
+      if (sub === 1) reply(0x1e, [1, 0, ...ng.pack7(listRaw({ full: o.full, bad: store !== 0 }))]);
       if (sub === 2) {
         const cmd = m[8]!, arg = (m[9]! << 7) | m[10]!;
+        const recState = state >= 3 && state <= 6;
+        if (cmd >= 8 && !rec2) return reply(0x1e, [2, 2, cmd]); // unknown cmd without feat3 0x01
+        if (store !== 0 && cmd !== 2 && cmd !== 3) return reply(0x1e, [2, 3, cmd]); // table check failed: busy
+        if (recState && [1, 4, 5, 6, 7].includes(cmd)) return reply(0x1e, [2, 4, cmd]);
         if (cmd === 1 && song >= 2) return reply(0x1e, [2, 6, cmd]); // nothing recorded
+        if (cmd === 8 && song < 2 && !(arg & 0x100)) return reply(0x1e, [2, 11, cmd]); // the part holds a recording
+        if (cmd === 11 && state !== 3 && state !== 5 && state !== 6) return reply(0x1e, [2, 10, cmd]);
         reply(0x1e, [2, 0, cmd]);
         if (cmd === 1) { state = 1; bar = bar || 2; }
         if (cmd === 2) { state = 2; bar = 0; }
-        if (cmd === 3) state = 0;
+        if (cmd === 3) state = state === 4 ? 2 : recState ? state : 0;
         if (cmd === 4) { song = arg; bar = 0; }
         if (cmd === 7) bar = arg;
-        reply(0x1e, [0, 0, ...ng.pack7(statusRaw(state, song, bar))]);
+        if (cmd === 8) state = 3;
+        if (cmd === 11) { state = 4; bar = 1; }
+        reply(0x1e, [0, 0, ...ng.pack7(statusRaw(state, song, bar, store))]);
         reply(0x1e, [3, 1, cmd]);
       }
     },
@@ -328,9 +355,14 @@ test("recording panel on the stock: Rec needs a song, asks before recording over
   notify([0x52, 0x08, 0x7f, 3]);
   await tick(5);
   assert.equal(stateText(el), "Ready to record");
-  panelBtn(el, "play").click(); // starts the recording that waits
+  // ▶ in standby on the stock: nothing is sent - Music 1 would play the song (FUN_4016A050 state 3) and Music 4 is never
+  // sent in MusicMode 2 (field incident 2026-11-24); the first key starts the recording
+  assert.equal(el.querySelector("#rec-hint")!.textContent, "Play a key to start recording.");
+  const n0 = sent.length;
+  panelBtn(el, "play").click();
   await tick(10);
-  assert.ok(sent.includes(music(1)));
+  assert.equal(sent.length, n0, "nothing sent");
+  assert.equal(el.querySelector("#rec-note")!.textContent, "Play a key to start recording.");
   notify([0x52, 0x08, 0x7f, 4]);
   await tick(5);
   assert.equal(stateText(el), "Recording");
@@ -455,5 +487,178 @@ test("「피아노에 넣기」 on a MID: read, convert to KSO (checked), write 
   await wait();
   assert.deepEqual(calls.map((c) => c[0]), ["read", "write", "read", "delete"]);
   assert.match(el.querySelector("#usb-result")!.textContent!, /did not pass the safety check/);
+  el.remove();
+});
+
+/** Every Kawai byte the recorder tab sends through the store, as [fn, v1, v2, ...data]. */
+function tapStore(store: InstanceType<typeof ParamStore>) {
+  const params: number[][] = [];
+  store.command = async (p, _part, data) => (params.push([p.fn, p.v1, p.v2, ...data]), true);
+  store.set = async (p, _part, data) => (params.push([p.fn, p.v1, p.v2, ...data]), true);
+  store.send = async (m) => (params.push([m.fn ?? 0x10, m.v1, m.v2, ...m.data]), true);
+  return params;
+}
+/** a Music command (fn 0x10 / 0x31 / 0x32, 52 08) - the recorder tab must not send any on a piano with the record op */
+const isMusic = (p: number[]) => p[1] === 0x52 && p[2] === 0x08;
+
+test("decode: a zero-length song entry is not known (never empty); empty = 0x74 bytes and no track; status byte 19 / 28", () => {
+  const raw = listRaw();
+  for (let i = 7 * 4; i < 7 * 5; i++) raw[i] = 0; // song 5: all zero
+  raw[7 * 5] = 0x74; raw[7 * 5 + 6] = 4; // song 6: an empty-sized frame with an extra track
+  const songs = ng.decodeSongList(Uint8Array.from(raw))!;
+  assert.deepEqual([songs[2], songs[4], songs[5]].map((g) => [g.empty, g.unknown]), [[true, false], [false, true], [false, false]]);
+  assert.ok(ng.decodeSongList(new Uint8Array(70))!.every((g) => g.unknown && !g.empty), "70 zero bytes: nothing known");
+  const st = statusRaw(2, 0, 0, 7);
+  st[28] = 3;
+  const d = ng.decodeRecorderStatus(Uint8Array.from(st))!;
+  assert.deepEqual([d.store, d.storeAt, ng.recorderTableOk(d)], [7, 3, false]);
+  assert.equal(ng.recorderTableOk(ng.decodeRecorderStatus(Uint8Array.from(statusRaw(2, 0, 0, 0xff)))), false, "0xFF: not read yet");
+  assert.equal(ng.recorderTableOk(ng.decodeRecorderStatus(Uint8Array.from(statusRaw(2, 0)))), true);
+});
+
+test("field incident 2026-11-24, ota_main (feat3 0x01): ● = op cmd 8, ▶ in standby = op cmd 11, ■ = op cmd 2 - no Music byte, never Music 4", async () => {
+  const store = new ParamStore();
+  const params = tapStore(store);
+  const s = fakeSession(0, { id: OTA_MAIN_ID });
+  const ctx = createContext(store, { session: () => s as never });
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  // ● : song 3 is the first empty one - op select, then op record standby (part = the piano's, no overwrite)
+  panelBtn(el, "rec").click();
+  await wait();
+  assert.deepEqual(s.asked.slice(-2), [[0x1e, 0x02, 4, 0, 2], [0x1e, 0x02, 8, 0, 0x7f]]);
+  assert.equal(stateText(el), "Ready to record");
+  assert.equal((el.querySelector("#rec-hint") as HTMLElement).hidden, false);
+  assert.equal(el.querySelector("#rec-hint")!.textContent, "Play a key or press Play to start recording.");
+  // ▶ in standby: op 1E 02 0B - the core starts the recording (what Music 1 did not do on the field piano)
+  panelBtn(el, "play").click();
+  await wait();
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 11, 0, 0]);
+  assert.equal(stateText(el), "Recording");
+  assert.equal(el.querySelector("#rec-note")!.textContent, "");
+  // while recording the one play / pause button pauses (= ends the recording through the op, like ■)
+  assert.equal(mainAct(el), "pause");
+  // ■ ends it through the op (the core commits once)
+  panelBtn(el, "stop").click();
+  await wait();
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 2, 0, 0]);
+  assert.equal(stateText(el), "Stopped");
+  assert.equal((el.querySelector("#save-sheet") as HTMLElement).hasAttribute("open"), true, "「Saved: piano song 3」");
+  // no Kawai Music byte at all - above all no 32 52 08 7F 04
+  assert.deepEqual(params.filter(isMusic), []);
+  assert.equal(s.params.length, 0);
+  assert.deepEqual(s.asked.filter((a) => a[0] === 0x1e && a[1] === 0x02).map((a) => a[2]), [4, 8, 11, 2], "select, standby, start, stop - no play");
+  el.remove();
+});
+
+test("ota_main (feat3 0x01): recording over a song only after the question, then op cmd 8 with the overwrite bit; ▶ outside standby is not a start", async () => {
+  const store = new ParamStore();
+  const params = tapStore(store);
+  const s = fakeSession(0, { id: OTA_MAIN_ID, full: true });
+  const ctx = createContext(store, { session: () => s as never });
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  const over = el.querySelector("#rec-overwrite") as HTMLElement;
+  const n = s.asked.length;
+  panelBtn(el, "rec").click();
+  await wait();
+  assert.equal(over.hidden, false, "every song is recorded: asked first");
+  assert.equal(s.asked.length, n, "nothing sent before the answer");
+  (over.querySelector('[data-act="rec-confirm"]') as HTMLElement).click();
+  await wait();
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 8, 2, 0x7f], "0x7F | 0x100: the part may hold a recording");
+  assert.equal(stateText(el), "Ready to record");
+  panelBtn(el, "stop").click(); // stop in standby: no take
+  await wait();
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 2, 0, 0]);
+  panelBtn(el, "play").click(); // stopped: ▶ plays the song (op cmd 1), never cmd 11
+  await wait();
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 1, 0, 0]);
+  assert.ok(!s.asked.some((a) => a[0] === 0x1e && a[1] === 0x02 && a[2] === 11));
+  assert.deepEqual(params.filter(isMusic), []);
+  el.remove();
+});
+
+test("field incident 2026-11-24: a song table that failed its check - a warning instead of 「Empty」 rows; Rec, import, KSO tap, save refused, nothing sent", async () => {
+  const store = new ParamStore();
+  const params = tapStore(store);
+  const s = fakeSession(0, { id: OTA_MAIN_ID, store: 3 });
+  const calls: unknown[][] = [];
+  const files = {
+    list: async () => ctx.usbFiles,
+    read: async (n: string) => (calls.push(["read", n]), new Uint8Array(0)),
+    write: async (n: string) => (calls.push(["write", n]), 0),
+    delete: async (n: string) => (calls.push(["delete", n]), 0),
+    load: async (n: string, song: number) => (calls.push(["load", n, song]), 0),
+  };
+  const ctx = createContext(store, { session: () => s as never, files: () => files as never });
+  ctx.usbFiles = ["B.KSO", "S.MID"];
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  const BAD = "The piano's song list is not valid. Check it before switching the piano off.";
+  const warn = el.querySelector("#songs-table-warn") as HTMLElement;
+  assert.deepEqual([warn.hidden, warn.textContent, warn.getAttribute("role")], [false, BAD, "alert"]);
+  assert.equal(el.querySelector("#songs-status")!.textContent, BAD);
+  for (let n = 1; n <= 10; n++) {
+    assert.equal(songRow(el, n).getAttribute("data-state"), "unknown", `song ${n}`);
+    assert.equal(songRow(el, n).querySelector(".song-info")!.textContent, "Unknown");
+  }
+  assert.ok(!el.querySelector("#songs-list")!.textContent!.includes("Empty"));
+  const note = () => el.querySelector("#rec-note")!.textContent;
+  const sent = () => [s.asked.length, params.length, s.params.length, calls.length];
+  const before = sent();
+  // ● : refused with the reason, no song chosen for it, no standby
+  panelBtn(el, "rec").click();
+  await wait();
+  assert.equal(note(), BAD);
+  assert.equal((el.querySelector("#rec-overwrite") as HTMLElement).hidden, true);
+  // the USB list: a KSO tap (plays through a piano song), 「Into the piano」 on a KSO and on a MID
+  (el.querySelector("#rec-lists [data-list=usb]") as HTMLElement).click();
+  (el.querySelector('[data-file="B.KSO"] [data-act="file-pick"]') as HTMLElement).click();
+  await wait();
+  assert.equal(note(), BAD);
+  for (const f of ["B.KSO", "S.MID"]) {
+    (el.querySelector(`[data-file="${f}"] [data-act="file-more"]`) as HTMLElement).click();
+    (el.querySelector(`[data-file="${f}"] [data-act="import"]`) as HTMLElement).click();
+    await wait();
+    assert.equal(note(), BAD, f);
+  }
+  // 「USB로 저장」 from a row's ⋯
+  (el.querySelector("#rec-lists [data-list=internal]") as HTMLElement).click();
+  (songRow(el, 1).querySelector('[data-act="song-more"]') as HTMLElement).click();
+  (songRow(el, 1).querySelector('[data-act="song-save"]') as HTMLElement).click();
+  await wait();
+  assert.equal((el.querySelector("#save-sheet") as HTMLElement).hasAttribute("open"), false);
+  assert.equal(note(), BAD);
+  assert.deepEqual(sent(), before, "nothing went to the piano or the USB memory");
+  // the piano's check passes again (after the recovery): the list is read again and the warning goes
+  s.setStore(0);
+  s.push(frame([0x00, 0x00, ...ng.pack7(statusRaw(2, 0))]));
+  s.push(frame([0x01, 0x00, ...ng.pack7(listRaw())]));
+  await wait();
+  assert.equal(warn.hidden, true);
+  assert.equal(songRow(el, 3).querySelector(".song-info")!.textContent, "Empty");
+  el.remove();
+});
+
+test("song table not read yet (status byte 19 = 0xFF): rows unknown, Rec refused with that reason", async () => {
+  const store = new ParamStore();
+  const params = tapStore(store);
+  const s = fakeSession(0, { id: OTA_MAIN_ID, store: 0xff });
+  const ctx = createContext(store, { session: () => s as never });
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  const UNREAD = "The piano has not checked its song list yet.";
+  assert.equal(el.querySelector("#songs-table-warn")!.textContent, UNREAD);
+  const n = s.asked.length;
+  panelBtn(el, "rec").click();
+  await wait();
+  assert.equal(el.querySelector("#rec-note")!.textContent, UNREAD);
+  assert.equal(s.asked.length, n);
+  assert.deepEqual(params, []);
   el.remove();
 });

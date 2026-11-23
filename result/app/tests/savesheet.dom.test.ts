@@ -27,8 +27,8 @@ const OK_STOCK = fromHex("F0 40 7F 32 04 1E 51 7E 7F 00 00 F7");
 const note = (v2: number, ...d: number[]) => Uint8Array.from([0xf0, 0x40, 0x7f, 0x32, 0x04, 0x1e, 0x52, v2, 0x7f, ...d, 0xf7]);
 
 /** The stock's audio recorder as far as the remote sees it. */
-function audioPiano(piano: { send(m: Uint8Array): void; onMessage(h: (m: Uint8Array) => void): void }, sent: string[], usb = true) {
-  const st = { mode: 0, fmt: -1, recMode: -1, state: 2, ops: [] as [number, ...string[]][], op: 0, need: 0, names: [] as string[], cur: [] as number[] };
+function audioPiano(piano: { send(m: Uint8Array): void; onMessage(h: (m: Uint8Array) => void): void }, sent: string[], usb = true, internalStandby = false) {
+  const st = { internalRec: false, mode: 0, fmt: -1, recMode: -1, state: 2, ops: [] as [number, ...string[]][], op: 0, need: 0, names: [] as string[], cur: [] as number[] };
   piano.onMessage((m) => {
     sent.push(toHex(m));
     if (m[1] !== 0x40 || m[4] !== 0x08) return;
@@ -42,6 +42,9 @@ function audioPiano(piano: { send(m: Uint8Array): void; onMessage(h: (m: Uint8Ar
         // FUN_4015DCC4: no media -> the mode stays, 52 1D says the old one, Result 0x21
         piano.send(note(0x1d, st.mode));
         piano.send(fromHex("F0 40 7F 7E 04 1E 03 00 00 21 F7"));
+        // FUN_4015DCC4: the frame's Music 3 then runs in the old mode - in mode 2 the internal
+        // recorder goes to record standby and reports it
+        if (internalStandby && st.mode === 2) { st.state = 3; piano.send(note(0x08, 3)); }
         return;
       }
       st.mode = m[9]; st.fmt = m[10]; st.recMode = m[11]; st.state = 3;
@@ -53,6 +56,8 @@ function audioPiano(piano: { send(m: Uint8Array): void; onMessage(h: (m: Uint8Ar
       piano.send(note(0x1d, m[9]));
     }
     if (fn === 0x32 && v1 === 0x52 && v2 === 0x08) {
+      if (st.mode === 2 && m[9] === 4) st.internalRec = true; // a recording in a piano song - must never happen here
+      if (st.mode === 2 && m[9] === 2 && st.state === 3) { st.state = 2; piano.send(note(0x08, 2)); }
       if (st.mode !== 3) return;
       if (m[9] === 4) { st.state = 4; piano.send(note(0x08, 4)); }
       if (m[9] === 2) { st.state = 2; piano.send(note(0x08, 2)); }
@@ -76,13 +81,13 @@ function audioPiano(piano: { send(m: Uint8Array): void; onMessage(h: (m: Uint8Ar
   return st;
 }
 
-async function setup(usb = true) {
+async function setup(usb = true, internalStandby = false) {
   const p = await pianoPair();
   const store = new ParamStore();
   bindStore(store);
   store.attach(p.session);
   const ctx = createContext(store, { session: () => p.session });
-  const st = audioPiano(p.piano, p.sent, usb);
+  const st = audioPiano(p.piano, p.sent, usb, internalStandby);
   let refreshed = 0, quiet = 0;
   const out = document.createElement("p");
   const sheet = saveSheet(ctx, "save-sheet", { lock: { busy: false }, formats: KINDS.piano.saveTo, quiet: async () => void quiet++, refresh: async () => void refreshed++, out });
@@ -209,4 +214,16 @@ test("the piano has no USB memory after all (mode not changed, Result 0x21): no 
   assert.equal(status(), "MP3 failed: No USB memory");
   assert.ok(!sent.includes(REC));
   order(sent, "F0 40 7F 10 08 02 52 23 7F 03 01 02 7F 7F 7F 03 F7", RECMODE0, MODE2);
+});
+
+test("field incident 2026-11-24: no USB memory and the internal recorder went to standby (mode 2) - never Music 4, the standby is stopped", async () => {
+  const { sheet, chip, status, sent, st } = await setup(false, true);
+  sheet.open(0);
+  chip("MP3").click();
+  await tick(600);
+  assert.equal(status(), "MP3 failed: No USB memory");
+  assert.ok(!sent.includes(REC), "no Music 4");
+  assert.equal(st.internalRec, false);
+  order(sent, "F0 40 7F 10 08 02 52 23 7F 03 01 02 7F 7F 7F 03 F7", STOP);
+  assert.equal(st.state, 2, "the internal standby ended without a take");
 });

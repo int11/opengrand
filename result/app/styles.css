@@ -352,6 +352,7 @@ svg.curve { width: 100%; max-width: 320px; height: auto; display: block; margin:
 .upd-warn { margin: 0 0 16px; padding: 12px; border-radius: 10px; background: #5c1c1c; color: #fff; font-size: 20px; font-weight: 600; }
 .upd-warn.ok { background: #10515a; }
 .upd-warn.bad { background: #6b3a0c; }
+.songs-warn { margin: 8px 0; padding: 10px 12px; border-radius: 10px; background: #6b3a0c; color: #fff; font-weight: 600; }
 .upd-bar { height: 16px; border-radius: 8px; background: #2d2c2c; overflow: hidden; }
 .upd-bar[hidden] { display: none; }
 .upd-fill { height: 100%; width: 0; background: #10818e; }

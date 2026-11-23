@@ -144,6 +144,10 @@ export function convertToAudio(ctx: AppContext, o: { song: number; format: Audio
       if (!ready) throw new AudioRecError(noMedia || (mode !== undefined && mode !== MUSIC_MODE.UsbMemory) ? "no-usb" : "no-standby");
       armed = true;
       wasArmed = true;
+      // Music 4 starts whatever recorder waits. Without a USB memory the mode stays 2 and the frame's Music 3 put the
+      // piano's internal recorder in standby (FUN_4015DCC4): never Music 4 then - the
+      // catch below stops that standby with Music 2 (no take, nothing committed). Field incident 2026-11-24.
+      if (noMedia || (mode !== undefined && mode !== MUSIC_MODE.UsbMemory)) throw new AudioRecError("no-usb");
       if (cancelled) return await stopAndDrop().then(() => "cancelled" as const);
       // 3. record: the piano starts the song itself
       const started = wait(0x08, (d) => d[0] === 4, AUDIOREC.stepMs);
