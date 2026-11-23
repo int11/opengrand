@@ -126,10 +126,10 @@ test("scan: 10 rows from the stock's answers, then the piano's song and part are
   await tick(400);
   assert.equal(st.ruled, 0, "every answer was replayed from the emulator capture");
   assert.ok(st.replayed > 10);
-  assert.equal(info(el, 1), "3 bars · Part 1");
+  assert.equal(info(el, 1), "3 bars");
   assert.equal(info(el, 2), "5 bars · Part 1 + Part 2");
   assert.equal(info(el, 3), "4 bars · Part 2");
-  assert.equal(info(el, 4), "200 bars · Part 1");
+  assert.equal(info(el, 4), "200 bars");
   for (let n = 5; n <= 10; n++) {
     assert.equal(info(el, n), "Empty");
     assert.equal(row(el, n).getAttribute("data-state"), "empty");

@@ -146,9 +146,9 @@ test("recording panel on OpenGrand (feat2 0x10): state line, selected song, op 0
   document.body.append(el);
   await wait();
   assert.equal(stateText(el), "Stopped");
-  assert.equal(selected(el), "Song 13 bars · Part 1", "the piano's selected song, with what it holds");
+  assert.equal(selected(el), "Song 13 bars", "the piano's selected song, with what it holds");
   assert.equal(songRow(el, 1).getAttribute("data-on"), "1");
-  assert.deepEqual([1, 2, 3].map((n) => songRow(el, n).querySelector(".song-info")!.textContent), ["3 bars · Part 1", "5 bars · Part 1 + Part 2", "Empty"]);
+  assert.deepEqual([1, 2, 3].map((n) => songRow(el, n).querySelector(".song-info")!.textContent), ["3 bars", "5 bars · Part 1 + Part 2", "Empty"]);
   panelBtn(el, "play").click();
   await wait();
   assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 1, 0, 0]);
@@ -195,7 +195,7 @@ test("recording panel on OpenGrand (feat2 0x10): state line, selected song, op 0
   assert.equal(selected(el), "A.MIDUSB");
   s.push(frame([0x00, 0x00, ...ng.pack7(statusRaw(1, 0, 2))]));
   await wait(5);
-  assert.equal(selected(el), "Song 13 bars · Part 1");
+  assert.equal(selected(el), "Song 13 bars");
   panelBtn(el, "stop").click();
   await wait();
   assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 2, 0, 0]);
@@ -223,6 +223,54 @@ test("recording panel on OpenGrand (feat2 0x10): state line, selected song, op 0
   assert.equal(s.asked.length, before, "no op 0x1E in a record state");
   assert.equal(el.querySelector("#rec-note")!.textContent, "Stop the recording before choosing another song.");
   assert.equal(selected(el), "Song 25 bars · Part 1 + Part 2");
+  el.remove();
+});
+
+test("owner 2026-11-23: a tap on a song row plays a recorded song (an empty one is only chosen); the part shows only where it means something", async () => {
+  const store = new ParamStore();
+  const s = fakeSession(0x1f);
+  const ctx = createContext(store, { session: () => s as never });
+  ctx.usbFiles = ["A.MP3", "B.KSO"];
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  // song 2 holds a recording: one tap selects it and plays it (op 0x1E select, then play)
+  (songRow(el, 2).querySelector('[data-act="song-pick"]') as HTMLElement).click();
+  await wait();
+  assert.deepEqual(s.asked.slice(-2), [[0x1e, 0x02, 4, 0, 1], [0x1e, 0x02, 1, 0, 0]]);
+  assert.equal(stateText(el), "Playing");
+  // the playing song's row again: nothing is sent
+  const n = s.asked.length;
+  (songRow(el, 2).querySelector('[data-act="song-pick"]') as HTMLElement).click();
+  await wait();
+  assert.equal(s.asked.length, n);
+  panelBtn(el, "stop").click();
+  await wait();
+  // song 3 is empty: chosen (it is where Rec records), not played
+  (songRow(el, 3).querySelector('[data-act="song-pick"]') as HTMLElement).click();
+  await wait();
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 4, 0, 2]);
+  // the part: both parts (the usual case) puts nothing on the bar; one part alone does
+  const pill = panelBtn(el, "part");
+  const partRow = el.querySelector("#rec-panel-options .pl-part-row") as HTMLElement;
+  store.fromWire({ fn: 0x10, v1: 0x52, v2: 0x01, part: 0x7f, data: [0x7f] });
+  await wait(2);
+  assert.equal(pill.hidden, true, "both parts: no pill");
+  store.fromWire({ fn: 0x10, v1: 0x52, v2: 0x01, part: 0x7f, data: [0] });
+  await wait(2);
+  assert.deepEqual([pill.hidden, pill.textContent], [false, "Part1"]);
+  assert.equal(partRow.hidden, false);
+  assert.match(partRow.textContent!, /each hand can be recorded on its own/);
+  // a USB file in the bar has no parts: no pill, no part row in the options
+  (el.querySelector("#rec-lists [data-list=usb]") as HTMLElement).click();
+  (el.querySelector('[data-file="A.MP3"] [data-act="file-pick"]') as HTMLElement).click();
+  await wait(5);
+  assert.equal(selected(el), "A.MP3USB");
+  assert.deepEqual([pill.hidden, partRow.hidden], [true, true]);
+  // into a piano song: only a KSO (the piano refuses MID / MP3 / WAV)
+  for (const f of ["A.MP3", "B.KSO"]) (el.querySelector(`[data-file="${f}"] [data-act="file-more"]`) as HTMLElement).click();
+  assert.equal(el.querySelector('[data-file="A.MP3"] [data-act="import"]'), null);
+  assert.equal(el.querySelector('[data-file="B.KSO"] [data-act="import"]')!.textContent, "Into piano song 3");
   el.remove();
 });
 

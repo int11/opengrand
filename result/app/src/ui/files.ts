@@ -15,9 +15,8 @@
 // the type the last 24 08 selected, so a stop selects a file of each type and resets it; ▶ never starts a USB file
 // while another USB playback runs (it stops that first). The playing row is marked from the app's own ▶ and the
 // piano's word (32 52 1D, 32 52 08, MusicProgress 52 03); the pane's ■ always stops both players.
-// Rows (owner 2026-11-23, the player bar): a tap on a row chooses the file - it is what the Recorder tab's player bar
-// shows and its ▶ plays (nothing is sent by the choice itself; while a USB file plays, the tapped one plays instead);
-// ⋯ opens that file's other buttons (import, rename, delete) under it. The rarely used things - where an import goes,
+// Rows (owner 2026-11-23, the player bar): a tap on a row plays the file - it is then what the Recorder tab's player
+// bar shows; ⋯ opens that file's other buttons (into a piano song - KSO only -, rename, delete) under it. The rarely used things - where an import goes,
 // sending a file from this device, format - are in the folded 「USB 관리」.
 // The play / stop line says only what went wrong: that a file plays is the player bar's to show (field 2026-11-23:
 // 「재생: 완료」 stayed under the list while the file was still playing).
@@ -68,8 +67,8 @@ export interface UsbPane {
   setImportTarget(n: number): void;
   /** The file chosen in the list (what the player bar's ▶ plays); null = none. */
   selected(): string | null;
-  /** Choose a file as a tap on its row does. */
-  pick(name: string): void;
+  /** Choose a file and play it, as a tap on its row does; start false: only choose it (unless a USB file plays). */
+  pick(name: string, start?: boolean): void;
   /** Play a file (ui/usbplay.ts usbPlay: whatever USB playback runs is stopped first). */
   play(name: string): Promise<void>;
 }
@@ -130,6 +129,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
   // the file whose other buttons are shown (one at a time), and the file chosen for the player bar
   let open: string | null = null;
   let chosen: string | null = chosenFile.get(ctx) ?? null;
+  const importable = (name: string) => /\.kso$/i.test(name);
   const importFile = (name: string, btn: EventTarget | null) => {
     const n = target();
     const go = () => void run(t("Import"), () => ctx.files()!.load(name, n), false);
@@ -161,7 +161,9 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
               h("span", { class: "file-name" }, ext ? name.slice(0, name.length - ext.length - 1) : name)),
             iconButton("more", t("More"), { class: "row-more", "data-act": "file-more", "aria-expanded": String(isOpen), onclick: () => { open = isOpen ? null : name; render(); } })),
           h("div", { class: "row-acts", hidden: !isOpen },
-            h("button", { "data-act": "import", onclick: (e: Event) => importFile(name, e.currentTarget) }, `${t("Import")} → ${t("Song {n}", { n: target() + 1 })}`),
+            // the piano takes only its own KSO into a recorder song (24 09: the stock and the OpenGrand cave answer
+            // 0xF0 for MID / MP3 / WAV) - no button that can only fail (owner 2026-11-23: 「가져오기 → 곡 1」 on an mp3)
+            importable(name) ? h("button", { "data-act": "import", onclick: (e: Event) => importFile(name, e.currentTarget) }, t("Into piano song {n}", { n: target() + 1 })) : null,
             h("button", { "data-act": "rename", onclick: () => void rename(name) }, t("Rename")),
             h("button", { class: "danger", "data-act": "delete", onclick: (e: Event) => del(name, e.currentTarget) }, t("Delete"))),
         );
@@ -225,13 +227,14 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
     else if (ok) result.textContent = "";
     render();
   };
-  // a tap on a row: the file the player bar shows; while a USB file plays, the tapped one plays instead
-  const pick = (name: string) => {
+  // a tap on a row plays that file, as in any media player (owner 2026-11-23: a tap that only chose the file read as
+  // 「재생이 안 된다」); the playing file's row does nothing. pick(name, false) only chooses (⏮ ⏭ while stopped).
+  const pick = (name: string, start = true) => {
     chosen = name;
     chosenFile.set(ctx, name);
     render();
     opts.onPick?.(name);
-    if (usbAnyRunning(playing) && !usbPlayingName(playing, name)) void play(name);
+    if ((start || usbAnyRunning(playing)) && !usbPlayingName(playing, name)) void play(name);
   };
   // stop: both USB players (the selected type's, the audio one, the SMF one), then the piano must stay quiet
   const stop = async () => {

@@ -192,7 +192,7 @@ async function setup(opt: { stuck?: boolean; syncMode?: number; lateAudio?: bool
 }
 
 // A row has no ▶ / ■ of its own since the player bar (2026-11-23). "play" = what a user does to play the file: choose
-// its row, then the bar's ▶ (while another USB file plays, the choice itself plays it); "stop" = the bar's ■. As a
+// a tap on its row (it plays the file - owner 2026-11-23); "stop" = the bar's ■. As a
 // query: "stop" is there while the row is marked playing, "play" while it is not.
 const row = (el: HTMLElement, f: string, act: "play" | "stop"): { click(): void } | null => {
   const r = el.querySelector(`[data-file="${f}"]`) as HTMLElement | null;
@@ -200,7 +200,7 @@ const row = (el: HTMLElement, f: string, act: "play" | "stop"): { click(): void 
   const playing = r.hasAttribute("data-playing");
   const bar = (a: string) => el.querySelector(`#rec-panel [data-act="${a}"]`) as HTMLElement | null;
   if (act === "stop") return playing ? { click: () => bar("stop")!.click() } : null;
-  return playing ? null : { click: () => { (r.querySelector('[data-act="file-pick"]') as HTMLElement).click(); bar("play")?.click(); } };
+  return playing ? null : { click: () => (r.querySelector('[data-act="file-pick"]') as HTMLElement).click() };
 };
 const resultText = (el: HTMLElement) => el.querySelector("#usb-result")!.textContent ?? "";
 const STOP_MS = USB_STOP.grace + USB_STOP.watch + 150;

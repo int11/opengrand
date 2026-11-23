@@ -97,6 +97,8 @@ export interface PlayerView {
   main: "play" | "pause" | "stop";
   prev: boolean;
   next: boolean;
+  /** the part means something for what is loaded (a piano song; not a USB file) - default true */
+  part?: boolean;
 }
 
 export interface PlayerActions {
@@ -157,7 +159,10 @@ export function playerBar(store: ParamStore, id: string, acts: PlayerActions): P
   options.append(
     h("h3", {}, t("Playback options")),
     h("div", { class: "pl-opts" },
-      h("div", { class: "row seg-row" }, h("span", {}, t("Part")), parts.el),
+      h("div", { class: "pl-part-row" },
+        h("div", { class: "row seg-row" }, h("span", {}, t("Part")), parts.el),
+        // owner 2026-11-23: 「파트 기능이 뭔지 모르겠다」 - say what it is where it is chosen
+        h("p", { class: "muted pl-part-hint" }, t("A song has two parts, so each hand can be recorded on its own. Recording and playback use the part chosen here."))),
       control(store, "MusicTempo", { label: t("Song tempo"), part: 0x7f, min: 10, max: 400, toRaw: bpm.encode, fromRaw: bpm.decode, format: (v) => `♩=${v}` }),
       // Song transpose: the original table has PartTransposeValue on the same
       // wire id (53 02) with the System part; the key transpose uses part 0x0F.
@@ -184,6 +189,8 @@ export function playerBar(store: ParamStore, id: string, acts: PlayerActions): P
     if (typeof options.showModal === "function") options.showModal();
     else options.setAttribute("open", "");
   };
+
+  const partRow = options.querySelector(".pl-part-row") as HTMLElement;
 
   // ---- the bar ----
   const status = h("span", { class: "sr-only", id: `${id}-state`, role: "status" }, t("Stopped"));
@@ -252,10 +259,14 @@ export function playerBar(store: ParamStore, id: string, acts: PlayerActions): P
   const attr = (e: HTMLElement, k: string, v: string) => {
     if (e.getAttribute(k) !== v) e.setAttribute(k, v);
   };
+  // the pill is there only while one part alone is chosen (and the loaded thing has parts): both parts - the usual
+  // case - needs no word on the bar (owner 2026-11-23: 「파트 1+2」 meant nothing to a first look)
+  let partMeant = true;
   const syncPart = () => {
     parts.sync();
     const v = store.get(partP, 0x7f)?.[0];
-    text(partVal, v === 0 ? "1" : v === 1 ? "2" : v === 0x7f ? "1+2" : "–");
+    text(partVal, v === 0 ? "1" : v === 1 ? "2" : "1+2");
+    partBtn.hidden = !partMeant || (v !== 0 && v !== 1);
   };
   syncPart();
 
@@ -278,6 +289,11 @@ export function playerBar(store: ParamStore, id: string, acts: PlayerActions): P
       }
       prev.disabled = !v.prev;
       next.disabled = !v.next;
+      if (partMeant !== (v.part ?? true)) {
+        partMeant = v.part ?? true;
+        partRow.hidden = !partMeant;
+        syncPart();
+      }
       const seekable = v.seekable && !!acts.seek && v.unit === "bar" && !!v.total && v.total > 1;
       if (range.hidden === seekable) range.hidden = !seekable;
       attr(seek, "data-seek", seekable ? "1" : "");

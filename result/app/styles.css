@@ -554,7 +554,8 @@ body.panel .pl-pill { font-size: 14px; }
 }
 @media (min-width: 900px) {
   /* one column: the bar over its lists (no card columns on these two tabs) */
-  .screen.recorder, .screen.music { max-width: 860px; -webkit-column-width: auto; column-width: auto; -webkit-columns: auto; columns: auto; }
+  /* owner 2026-11-23: the 860 px cap left the right of a wide window empty - the bar spans the main area */
+  .screen.recorder, .screen.music { -webkit-column-width: auto; column-width: auto; -webkit-columns: auto; columns: auto; }
   .pl-btn:hover, .pl-part:hover { background: rgba(255, 255, 255, .1); }
   .pl-main:hover { background: var(--accent-dark); }
   .pl-rec:hover { background: #2a1414; }
@@ -626,3 +627,12 @@ body.panel .pl-pill { font-size: 14px; }
 .row-acts > .danger { border-color: #5a2626; }
 p.muted.row-note { margin: 0 12px 10px; font-size: .8em; }
 .song-row > .confirm-ask, .file-row > .confirm-ask { margin: 0 8px 8px 12px; }
+/* Recorder tab, wide windows: the two lists side by side instead of one at a time behind [Piano songs | USB memory]
+   (ui/recorder.ts still sets [hidden] on the one not chosen - it is what a narrow window shows) */
+@media (min-width: 1180px) {
+  #rec-files { display: -ms-grid; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-column-gap: 24px; align-items: start; }
+  #rec-files > #rec-lists { display: none !important; }
+  #rec-files > #songs-pane[hidden], #rec-files > #usb-pane[hidden] { display: block !important; }
+  #rec-files > .pane::before { display: block; margin: 2px 0 8px; color: var(--muted); font-size: 13px; font-weight: 600; letter-spacing: .06em; content: attr(data-title); }
+}
+.pl-part-hint { margin: 0 0 6px; font-size: 13px; }

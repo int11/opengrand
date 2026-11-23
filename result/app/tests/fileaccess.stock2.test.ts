@@ -197,7 +197,7 @@ test("field log: ▶ in MusicMode 6 got 32 52 08 7F 02 and no sound; the app now
 // (32 52 08 7F 02), which FUN_4015DBD4 in MusicMode 3 hands to the player the 24 08 file started.
 const STOP = "F0 40 7F 32 08 02 52 08 7F 02 F7";
 // A row has no ▶ / ■ of its own since the player bar (2026-11-23). "play" = what a user does to play the file: choose
-// its row, then the bar's ▶ (while another USB file plays, the choice itself plays it); "stop" = the bar's ■. As a
+// a tap on its row (it plays the file - owner 2026-11-23); "stop" = the bar's ■. As a
 // query: "stop" is there while the row is marked playing, "play" while it is not.
 const row = (el: HTMLElement, f: string, act: "play" | "stop"): { click(): void } | null => {
   const r = el.querySelector(`[data-file="${f}"]`) as HTMLElement | null;
@@ -205,7 +205,7 @@ const row = (el: HTMLElement, f: string, act: "play" | "stop"): { click(): void 
   const playing = r.hasAttribute("data-playing");
   const bar = (a: string) => el.querySelector(`#rec-panel [data-act="${a}"]`) as HTMLElement | null;
   if (act === "stop") return playing ? { click: () => bar("stop")!.click() } : null;
-  return playing ? null : { click: () => { (r.querySelector('[data-act="file-pick"]') as HTMLElement).click(); bar("play")?.click(); } };
+  return playing ? null : { click: () => (r.querySelector('[data-act="file-pick"]') as HTMLElement).click() };
 };
 
 test("USB playback: the playing row shows ■ and stops the SMF player with Music Reset; ▶ comes back", async () => {
@@ -274,10 +274,8 @@ test("USB playback: the piano's notices drive the row — Reset from the panel g
 
 test("field log: import 24 09 without arguments -> 7E 03 00 01 70; now 24 09 <song> <type>, KSO only on the stock", async () => {
   const { el, sent } = await setup();
-  (el.querySelector('[data-file="TEST01.MID"] [data-act="import"]') as HTMLElement).click();
-  await tick(60);
-  assert.ok(sent.includes("F0 40 7F 24 08 02 09 00 02 F7"), "song 1 (0), type index 2 = MID");
-  assert.equal(el.querySelector("#usb-result")!.textContent, "Import failed: Not accepted", "the stock imports only KSO");
+  // the stock (and the OpenGrand cave, whose file executor is the stock's) answers 0xF0 for a MID: no button for it
+  assert.equal(el.querySelector('[data-file="TEST01.MID"] [data-act="import"]'), null, "the stock imports only KSO");
   (el.querySelector('[data-file="SONG.KSO"] [data-act="import"]') as HTMLElement).click();
   await tick(60);
   assert.ok(sent.includes("F0 40 7F 24 08 02 09 00 03 F7"), "type index 3 = KSO");

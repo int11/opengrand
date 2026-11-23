@@ -344,7 +344,7 @@ test("OpenGrand (feat2 0x10): the internal songs are there when the tab opens, r
   const el = recorderScreen(ctx);
   document.body.replaceChildren(el);
   for (let i = 0; i < 20; i++) await tick(2);
-  assert.equal(info(el, 1), "3 bars · Part 1");
+  assert.equal(info(el, 1), "3 bars");
   assert.equal(info(el, 2), "5 bars · Part 1 + Part 2");
   assert.equal(info(el, 3), "Empty");
   assert.equal(el.querySelector("#songs-status")!.textContent, "2 of 10 songs recorded");
@@ -419,7 +419,7 @@ test("songs delete: the core deletes (byte 31 bit 0): part 2, then the song; the
   del(el, 2, "song-delete-p2").click();
   for (let i = 0; i < 10; i++) await tick(2);
   assert.ok(s.sent.some((m) => m.join(" ") === [0x32, 0x52, 0x21, 0x04, 0x00, 0x01, 0x01].join(" ")), "04 00 01 01");
-  assert.equal(info(el, 2), "5 bars · Part 1");
+  assert.equal(info(el, 2), "5 bars");
   tapTwice(del(el, 2, "song-delete"));
   for (let i = 0; i < 10; i++) await tick(2);
   assert.ok(s.sent.some((m) => m.join(" ") === [0x32, 0x52, 0x21, 0x04, 0x00, 0x01, 0x7f].join(" ")), "04 00 01 7F");

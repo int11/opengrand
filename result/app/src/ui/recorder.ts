@@ -26,6 +26,8 @@
 //   ⏮ ⏭       the previous / next song number (SongSelect / op select), or the previous / next USB file
 //   USB        ▶ plays the chosen file and ■ stops it (ui/usbplay.ts; there is no USB pause in this app); the time is
 //              the piano's MusicProgress, the length only if the piano says one (MaxTime in MusicMode 3)
+// Rows play on a tap (owner 2026-11-23): a USB file, or a piano song that holds a recording (an empty one is only
+// chosen - it is where Rec records).
 // The internal songs come from OpenGrand's read-only song table (op 1E 01) and its 5E 01 notices; on a piano without
 // that op they need 「읽기」: the stock way selects each song on the piano (protocol/songs.ts).
 // Delete is offered only where the piano's core deletes (5E 00 byte 31 bit 0, firmware recdel.c): the stock's own
@@ -138,7 +140,8 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     clearTimeout(overTimer);
     over.hidden = true;
   };
-  const partsText = (i: SongInfo) => (i.parts ? [i.parts[0] ? t("Part 1") : "", i.parts[1] ? t("Part 2") : ""].filter(Boolean).join(" + ") : "");
+  // a song in part 1 alone - the usual recording - says nothing of parts (owner 2026-11-23: 「파트」 meant nothing)
+  const partsText = (i: SongInfo) => (i.parts && i.parts[1] ? [i.parts[0] ? t("Part 1") : "", t("Part 2")].filter(Boolean).join(" + ") : "");
   const songText = (i: SongInfo | null): string => {
     if (!i) return t("not scanned");
     if (!i.hasData) return t("Empty");
@@ -163,6 +166,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
         pos: now ? now.pos : null, total: now ? now.total : null,
         seekable: false, main: on ? "stop" : "play",
         prev: k > 0, next: files.length > 0 && k < files.length - 1,
+        part: false, // a USB file has no parts
       };
     }
     const i = sel < 0 ? null : songs[sel];
@@ -203,11 +207,12 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   };
   // Play / pause / stop: op 0x1E where the piano has it (it answers why not); while a recording runs or waits, and on
   // the stock, the Kawai Music bytes (the op does not record). A USB playback is stopped first.
-  const play = async () => {
+  // piano: the piano song whatever the bar showed (a song row's tap - also while a USB stop is still being confirmed)
+  const play = async (piano = false) => {
     hideOver();
     note.textContent = "";
     if (isRecState(state)) return kawai(MUSIC_CMD.Play); // starts the recording that waits
-    if (usbView()) {
+    if (!piano && usbView()) {
       // the USB file chosen in the list (MusicMode 3, 24 08, Play - ui/usbplay.ts)
       const name = usb.selected();
       if (name === null) note.textContent = t("Choose a song first.");
@@ -249,7 +254,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       const name = usbItem() ?? usb.selected();
       const files = ctx.usbFiles;
       const to = files[(name === null ? (d > 0 ? -1 : files.length) : files.indexOf(name)) + d];
-      if (to !== undefined) usb.pick(to);
+      if (to !== undefined) usb.pick(to, false); // plays only if a USB file plays now
       return;
     }
     const n = sel < 0 ? 0 : sel + d;
@@ -395,6 +400,18 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       void store.set(songP, 0x7f, songSelectData(n));
     }
   };
+  // a tap on a song row: choose it and - when it holds a recording - play it, as a media player does (owner 2026-11-23:
+  // a tap that only chose read as 「재생이 안 된다」). An empty song is only chosen: it is where Rec records. The
+  // playing song's row does nothing; during a recording the choice is refused (pick says why).
+  const tapSong = async (n: number) => {
+    if (n === sel && (state === 1 || isRecState(state)) && !usbAnyRunning(pb)) return;
+    const before = sel;
+    await pick(n);
+    if (sel !== n || isRecState(state)) return; // refused
+    if (!songs[n]?.hasData) return;
+    if (n === before && state === 1 && !usbAnyRunning(pb)) return;
+    await play(true);
+  };
   // the song whose other buttons (export, delete) are shown: one at a time
   let openSong = -1;
   // rows are replaced only when what they show changes: a notice while a finger is on a row must not replace it
@@ -419,7 +436,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       "div",
       { class: "song-row", "data-song": String(n + 1), "data-state": i === null ? "unknown" : i.hasData ? "data" : "empty", "data-on": on ? "1" : undefined, "data-open": isOpen ? "1" : undefined, "data-playing": playsNow(n) ? "1" : undefined },
       h("div", { class: "file-main" },
-        h("button", { class: "song-pick", "data-act": "song-pick", "aria-pressed": String(on), onclick: () => void pick(n) },
+        h("button", { class: "song-pick", "data-act": "song-pick", "aria-pressed": String(on), onclick: () => void tapSong(n) },
           h("span", { class: "song-num" }, n + 1),
           h("span", { class: "song-txt" }, h("span", { class: "song-name" }, t("Song {n}", { n: n + 1 })), h("span", { class: "song-info" }, songText(i))),
           playsNow(n) ? playingMark() : null),
@@ -458,7 +475,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     });
     if (ok) songsStatus.textContent = recordedText();
   };
-  const songsPane = h("div", { class: "pane", id: "songs-pane" },
+  const songsPane = h("div", { class: "pane", id: "songs-pane", "data-title": t("Piano songs") },
     h("div", { class: "pane-head" },
       songsStatus,
       h("div", { class: "pane-btns" }, h("button", { "data-act": "songs-scan", onclick: () => void scanSongs() }, `↻ ${t("Scan")}`))),
@@ -475,6 +492,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     songsPane.hidden = shown !== "internal";
     usb.el.hidden = shown !== "usb";
   };
+  usb.el.setAttribute("data-title", t("USB memory")); // the list's heading where both lists show (styles.css)
   const el = h("div", { class: "screen recorder" }, panel,
     h("section", { class: "card", id: "rec-files" }, listBar, songsPane, usb.el));
 
