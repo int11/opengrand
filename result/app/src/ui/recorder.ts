@@ -705,6 +705,10 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   if (s && s.state === "ready") { // main.ts draws the tab again when the session becomes ready
     const onStatus = (st: RecorderStatus) => {
       ngMode = st.musicMode;
+      // the op status says the piano's MusicMode: the USB players' tracker (ui/usbplay.ts) takes it too - field
+      // 2026-11-24: right after the app started the mode was not known, a piano song played by op 0x1E sends no
+      // MusicMode, its bars were taken for the SMF player and the bar said 「USB 재생 중」 (■ only tried USB stops)
+      if (st.musicMode !== undefined && pb.mode !== st.musicMode) pb.mode = st.musicMode;
       canDelete = st.deletes;
       // in MusicMode 3, and while a USB stop runs, the state and the position are a USB player's (or the audio
       // recorder's), not the piano song's (field 2026-11-23, see the Kawai path above): the song is at rest
