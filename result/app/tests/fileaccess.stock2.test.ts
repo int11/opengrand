@@ -170,7 +170,7 @@ test("field log: ▶ in MusicMode 6 got 32 52 08 7F 02 and no sound; the app now
   // what the field log shows the old app doing: 31 52 1D 7F 06 + 24 08 + Play -> 52 08 = 02
   st.mode = 6;
   st.selected = 4;
-  (el.querySelector('[data-file="TEST01.MID"] [data-act="play"]') as HTMLElement).click();
+  row(el, "TEST01.MID", "play")!.click();
   await tick(60);
   assert.ok(sent.includes("F0 40 7F 31 08 02 52 1D 7F 03 F7"), "MusicMode 3 (USB memory), not 6 (Piano Music)");
   assert.ok(!sent.includes("F0 40 7F 31 08 02 52 1D 7F 06 F7"));
@@ -179,10 +179,15 @@ test("field log: ▶ in MusicMode 6 got 32 52 08 7F 02 and no sound; the app now
   const k = sent.indexOf("F0 40 7F 32 08 02 52 08 7F 01 F7");
   assert.ok(i >= 0 && i < j && j < k, "mode, then select, then Play");
   assert.equal(st.player, "smf", "the SMF player starts (FUN_401737A4(1))");
-  assert.equal(el.querySelector("#usb-result")!.textContent, "Play: done");
+  assert.equal(el.querySelector("#usb-result")!.textContent, "", "no \"done\" line that would outlast the playback: the player bar shows it");
+  // field 2026-11-23: 「USB 재생 중」 stood over the piano song - the bar is the USB file's while it plays
+  assert.equal(el.querySelector("#rec-panel-info")!.textContent, "TEST01.MIDUSB");
+  assert.equal(el.querySelector("#rec-panel-state")!.textContent, "USB playing");
+  assert.equal(el.querySelector("#rec-panel .pl-main")!.getAttribute("data-act"), "stop", "no USB pause in this app: the one button stops");
+  assert.equal((el.querySelector("#rec-panel .pl-range") as HTMLElement).hidden, true, "a USB file has no jump: not a slider");
 
   // the MID plays: the app stops it first (ui/usbplay.ts), then the same sequence for the MP3
-  (el.querySelector('[data-file="1.mp3"] [data-act="play"]') as HTMLElement).click();
+  row(el, "1.mp3", "play")!.click();
   await tick(STOP_WAIT + 60);
   assert.equal(st.player, "audio", "MP3: same sequence, the audio player starts (FUN_40123848(1))");
   el.remove();
@@ -191,7 +196,17 @@ test("field log: ▶ in MusicMode 6 got 32 52 08 7F 02 and no sound; the app now
 // field 2026-11-09: a USB file had only ▶ — once it played the app could not stop it. Stop = Music Reset
 // (32 52 08 7F 02), which FUN_4015DBD4 in MusicMode 3 hands to the player the 24 08 file started.
 const STOP = "F0 40 7F 32 08 02 52 08 7F 02 F7";
-const row = (el: HTMLElement, f: string, act: string) => el.querySelector(`[data-file="${f}"] [data-act="${act}"]`) as HTMLElement | null;
+// A row has no ▶ / ■ of its own since the player bar (2026-11-23). "play" = what a user does to play the file: choose
+// its row, then the bar's ▶ (while another USB file plays, the choice itself plays it); "stop" = the bar's ■. As a
+// query: "stop" is there while the row is marked playing, "play" while it is not.
+const row = (el: HTMLElement, f: string, act: "play" | "stop"): { click(): void } | null => {
+  const r = el.querySelector(`[data-file="${f}"]`) as HTMLElement | null;
+  if (!r) return null;
+  const playing = r.hasAttribute("data-playing");
+  const bar = (a: string) => el.querySelector(`#rec-panel [data-act="${a}"]`) as HTMLElement | null;
+  if (act === "stop") return playing ? { click: () => bar("stop")!.click() } : null;
+  return playing ? null : { click: () => { (r.querySelector('[data-act="file-pick"]') as HTMLElement).click(); bar("play")?.click(); } };
+};
 
 test("USB playback: the playing row shows ■ and stops the SMF player with Music Reset; ▶ comes back", async () => {
   const { st, el, sent } = await setup();
@@ -207,7 +222,7 @@ test("USB playback: the playing row shows ■ and stops the SMF player with Musi
   assert.ok(sent.includes(STOP), "Music Reset");
   assert.equal(st.mode, 3, "no mode change: the stop goes to the USB player");
   assert.equal(st.player, "", "FUN_401737A4(2) stopped it");
-  assert.equal(el.querySelector("#usb-result")!.textContent, "Stop: done");
+  assert.equal(el.querySelector("#usb-result")!.textContent, "");
   assert.ok(row(el, "TEST01.MID", "play"), "▶ again");
   el.remove();
 });

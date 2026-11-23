@@ -40,7 +40,7 @@ test("ko: sound, technician, metronome, music and settings show no English table
     sound: S.soundScreen(store, ctx),
     technician: S.vtScreen(store, ctx),
     metronome: S.metronomeScreen(store, new EventTarget()),
-    music: S.musicScreen(store, () => "", ctx),
+    music: S.musicScreen(store, ctx),
     settings: S.settingsScreen(store, ctx),
   };
   for (const [name, el] of Object.entries(screens)) assert.deepEqual(english(el), [], name);

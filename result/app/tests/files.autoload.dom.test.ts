@@ -73,7 +73,7 @@ async function setup(attach?: 0 | 1) {
   return { ...p, store, ctx, usb, open, swap: (s: typeof session) => (session = s) };
 }
 
-const names = (el: HTMLElement) => [...el.querySelectorAll(".file-name")].map((n) => n.textContent);
+const names = (el: HTMLElement) => [...el.querySelectorAll(".file-row")].map((n) => n.getAttribute("data-file"));
 
 test("the tab opens with the USB list (no ↻); opening it again soon does not ask again", async () => {
   const { open, usb } = await setup(1);
@@ -378,9 +378,11 @@ test("without the op (stock / old payload): no automatic scan - the piano's song
 // last take - Delete is offered only when the piano's core deletes (5E 00 byte 31 bit 0)
 const del = (el: HTMLElement, n: number, act: string) => el.querySelector(`[data-song="${n}"] [data-act="${act}"]`) as HTMLButtonElement;
 
+// choose the song (a tap on its row), then open its other buttons (⋯)
 const pickSong = async (el: HTMLElement, n: number) => {
   (el.querySelector(`[data-song="${n}"] [data-act="song-pick"]`) as HTMLElement).click();
   for (let i = 0; i < 10; i++) await tick(2);
+  (el.querySelector(`[data-song="${n}"] [data-act="song-more"]`) as HTMLElement).click();
 };
 
 test("songs delete: a payload whose core does not delete (byte 31 = 0) offers no Delete and sends no 52 21", async () => {
@@ -392,7 +394,7 @@ test("songs delete: a payload whose core does not delete (byte 31 = 0) offers no
   assert.equal(info(el, 2), "5 bars · Part 1 + Part 2");
   await pickSong(el, 2);
   assert.equal(el.querySelector('[data-song="2"]')!.getAttribute("data-on"), "1");
-  assert.ok(del(el, 2, "song-save"), "the selected song's export buttons are there");
+  assert.ok(del(el, 2, "song-save"), "the song's export buttons are there");
   for (const act of ["song-delete", "song-delete-p1", "song-delete-p2"]) assert.equal(del(el, 2, act), null, `no ${act}`);
   assert.match(el.querySelector('[data-song="2"] .row-note')!.textContent!, /OpenGrand song delete/);
   await tick(20);
@@ -405,7 +407,7 @@ test("songs delete: the core deletes (byte 31 bit 0): part 2, then the song; the
   const el = recorderScreen(ctx);
   document.body.replaceChildren(el);
   for (let i = 0; i < 20; i++) await tick(2);
-  assert.equal(el.querySelectorAll('[data-song]:not([data-on]) [data-act^="song-delete"]').length, 0, "Delete is among the selected song's buttons only");
+  assert.equal(el.querySelectorAll('.song-row .row-acts:not([hidden])').length, 0, "Delete is behind a row's ⋯: no row shows its buttons until then");
   await pickSong(el, 2);
   assert.ok(s.sent.some((m) => m[6] === 0x1e && m[7] === 2 && m[8] === 4 && m[10] === 1), "choosing the row selects song 2 on the piano (op 1E 02 04)");
   assert.ok(del(el, 2, "song-delete-p1") && del(el, 2, "song-delete-p2") && del(el, 2, "song-delete"), "both parts recorded: per-part delete too");

@@ -457,63 +457,130 @@ input[type=range]::-webkit-slider-thumb { margin-top: -9.5px; border: 0; backgro
 .transport button { background: transparent; border-color: #353434; }
 .transport button:active { background: var(--raised); }
 
-/* ---- recorder tab and music tab (owner 2026-11-22: readable - what is selected, what the piano is doing) ----
-   same palette and patterns as the detail pass: outline controls, segmented groups, hairline rows. Grids carry the gaps
-   (Chrome 66); no flex gap. ui/recorder.ts · ui/files.ts · ui/screens/music.ts · ui/screens/songctl.ts */
-/* state line: dot, the state in large type, bar / time at the right - drawn like a small display */
-.now { display: flex; align-items: center; min-height: 56px; padding: 8px 14px; border: 1px solid #353434; border-radius: 12px; background: var(--bg); }
-.now-dot { flex: none; width: 12px; height: 12px; margin-right: 12px; border-radius: 50%; background: #5a5959; }
-.now-text { flex: none; font-size: 20px; font-weight: 600; line-height: 1.2; white-space: nowrap; }
-.now-sub { flex: 1; min-width: 0; margin-left: 12px; text-align: right; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.now[data-state="0"] .now-dot { background: #e0a33a; }
-.now[data-state="1"] .now-dot { background: #2fbf71; }
-.now[data-state="3"] .now-dot, .now[data-state="5"] .now-dot, .now[data-state="6"] .now-dot { background: transparent; border: 3px solid var(--danger); }
-.now[data-state="4"] .now-dot { background: var(--danger); }
-.now[data-state="4"] .now-text { color: #ff6b74; }
-.music .card > .segmented.modes { margin-bottom: 10px; }
-.segmented.modes button { padding-left: 8px; padding-right: 8px; }
-/* the recorder's display: the state line over the selected song */
-.deck { border: 1px solid #353434; border-radius: 12px; background: var(--bg); overflow: hidden; }
-.deck .now { border: 0; border-radius: 0; background: none; }
-.rec-song { display: flex; flex-wrap: wrap; align-items: baseline; padding: 9px 14px 10px; border-top: 1px solid var(--line); }
-.rec-song-name { margin-right: 10px; font-size: 17px; font-weight: 600; }
-.rec-song-info { color: var(--muted); font-size: .9em; }
-.rec-panel[data-play="4"] .deck { border-color: #7a2a2a; }
-.rec-panel > .segmented { margin-bottom: 10px; }
-/* a label with a segmented control at the right (part, seek, A-B) */
-.row > .segmented { flex: none; flex-wrap: nowrap; }
-.rec-panel .deck + .row { border-top: 0; margin-top: 4px; }
-.music-shared { margin-top: 10px; }
-.music-shared > .row:first-child { border-top: 1px solid var(--line); }
-.fold-body > .row:first-child { border-top: 0; }
-@media (max-width: 599px) {
-  /* seek and A-B: the buttons on their own line under the label */
-  .fold-body > .row.seg-row { flex-wrap: wrap; padding: 8px 0; }
-  .fold-body > .row.seg-row > span { flex: 1 0 100%; margin-bottom: 6px; }
-  .fold-body > .row.seg-row > .segmented { flex: 1 1 100%; margin-left: 0; }
+/* ---- recorder tab and music tab: a media player (owner 2026-11-23: 「보통 곡 재생은 이런 바를 쓴다」) ----
+   the player bar (ui/screens/songctl.ts playerBar): a dark translucent card with a thin progress line and one row of
+   round buttons; below it the lists as plain rows. Same palette as the rest. Grids carry the gaps (Chrome 66), flex
+   rows use margins; nothing newer than Chrome 71 (tests/css71.test.ts).
+   ui/recorder.ts · ui/files.ts · ui/screens/music.ts · ui/screens/songctl.ts */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* narrow: [what is loaded ........ position] / progress / [play ⏮⏭ stop ........ rec part options] */
+.card.player { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "head head" "seek seek" "left right" "foot foot"; align-items: center; padding: 10px 8px 6px; border-color: #353434; border-radius: 18px; background: rgba(17, 17, 17, .98); box-shadow: 0 10px 28px rgba(0, 0, 0, .5); }
+.pl-head { grid-area: head; display: flex; align-items: center; min-width: 0; padding: 0 4px; }
+.pl-pill { display: flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 15px; background: rgba(255, 255, 255, .08); font-size: 13px; line-height: 30px; white-space: nowrap; }
+.pl-info { -webkit-box-ordinal-group: 2; order: 1; flex: 0 1 auto; min-width: 0; margin-right: 8px; }
+/* the name gives way last: what it holds (the muted part) is cut first */
+.pl-title { flex: 0 1 auto; min-width: 0; overflow: hidden; font-weight: 600; text-overflow: ellipsis; }
+.pl-sub { flex: 0 1000 auto; min-width: 0; margin-left: 8px; overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
+.pl-sub:empty { display: none; }
+.pl-time { -webkit-box-ordinal-group: 3; order: 2; flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }
+/* the progress line: 4 px in a 28 px band (the band is what a finger drags - html.touch-ui, ui/tapguard.ts) */
+.pl-seek { grid-area: seek; position: relative; height: 28px; margin: 2px 8px 0; }
+/* where it is a slider, the band a finger takes hold of reaches 8 px further up and down (44 px; the buttons lie over its lower edge) */
+.pl-seek[data-seek="1"]::before { content: ""; position: absolute; top: -8px; right: -8px; bottom: -8px; left: -8px; }
+.pl-track { position: absolute; top: 12px; right: 0; left: 0; height: 4px; overflow: hidden; border-radius: 2px; background: rgba(255, 255, 255, .16); }
+.pl-fill { width: 0; height: 100%; border-radius: 2px; background: var(--accent); }
+.pl-dot { position: absolute; top: 9px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: #5fc3cf; }
+.pl-seek[data-known=""] .pl-fill { width: 0 !important; }
+/* a slider only where the piano can jump: a larger white dot, and the (invisible) native range over the band */
+.pl-seek[data-seek="1"] .pl-dot { top: 6px; width: 16px; height: 16px; margin-left: -8px; background: #fff; box-shadow: 0 0 0 3px var(--accent), 0 2px 6px rgba(0, 0, 0, .5); }
+.pl-seek .pl-range { position: absolute; top: 50%; left: -8px; z-index: 1; width: calc(100% + 16px); height: 44px; margin: -22px 0 0; opacity: 0; cursor: pointer; }
+.pl-left, .pl-right { position: relative; z-index: 2; display: flex; align-items: center; }
+.pl-left { grid-area: left; }
+.pl-right { grid-area: right; justify-content: flex-end; }
+.pl-btn { display: flex; flex: none; align-items: center; justify-content: center; width: 44px; min-width: 44px; height: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text); }
+.pl-btn:active { background: rgba(255, 255, 255, .14); }
+.pl-btn:disabled { opacity: .32; }
+.pl-ico { display: block; flex: none; width: 22px; height: 22px; }
+.pl-ico svg { display: block; width: 100%; height: 100%; fill: currentColor; }
+.pl-ico svg .s { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.pl-main { background: var(--accent); color: var(--accent-ink); }
+.pl-main:active { background: var(--accent-dark); }
+.pl-main .pl-ico { width: 24px; height: 24px; }
+/* ⏮ ⏭ share one pill */
+.pl-skip { display: flex; flex: none; margin: 0 4px 0 6px; border-radius: 22px; background: rgba(255, 255, 255, .08); }
+/* Rec: red, and lit while the piano waits to record (3, 5, 6) or records (4) */
+.pl-rec { display: flex; flex: none; align-items: center; justify-content: center; min-width: 44px; height: 44px; min-height: 44px; padding: 0 14px 0 9px; border: 1px solid #7a2a2a; border-radius: 22px; background: transparent; color: #ff6b74; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.pl-rec:active { background: #2a1414; }
+.pl-rec .pl-ico { width: 20px; height: 20px; margin-right: 4px; color: var(--danger); }
+.player[data-play="3"] .pl-rec, .player[data-play="5"] .pl-rec, .player[data-play="6"] .pl-rec { border-color: var(--danger); background: #2a1414; }
+.player[data-play="4"] .pl-rec { border-color: transparent; background: var(--danger); color: #fff; }
+.player[data-play="4"] .pl-rec .pl-ico { color: #fff; -webkit-animation: pl-blink 1s ease-in-out infinite alternate; animation: pl-blink 1s ease-in-out infinite alternate; }
+/* the part as a small two-line pill: the word over 1 / 2 / 1+2 (opens the options) */
+.pl-part { display: flex; flex: none; flex-direction: column; align-items: center; justify-content: center; min-width: 48px; height: 44px; min-height: 44px; margin-left: 4px; padding: 0 6px; border: 0; border-radius: 12px; background: transparent; line-height: 1.15; }
+.pl-part:active { background: rgba(255, 255, 255, .14); }
+.pl-part span { color: var(--muted); font-size: 10.5px; }
+.pl-part b { font-size: 14px; font-variant-numeric: tabular-nums; }
+/* recording: the position pill and the line turn red */
+.player[data-play="4"] { border-color: #7a2a2a; }
+.player[data-play="3"] .pl-time, .player[data-play="5"] .pl-time, .player[data-play="6"] .pl-time { background: #2a1414; color: #ff6b74; box-shadow: inset 0 0 0 1px #7a2a2a; }
+.player[data-play="4"] .pl-time { background: var(--danger); color: #fff; font-weight: 600; }
+.player[data-play="4"] .pl-time::before { content: ""; flex: none; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: #fff; -webkit-animation: pl-blink 1s ease-in-out infinite alternate; animation: pl-blink 1s ease-in-out infinite alternate; }
+.player[data-play="4"] .pl-track { background: var(--danger); -webkit-animation: pl-blink 1s ease-in-out infinite alternate; animation: pl-blink 1s ease-in-out infinite alternate; }
+.player[data-play="3"] .pl-track, .player[data-play="5"] .pl-track, .player[data-play="6"] .pl-track { background: #7a2a2a; }
+@-webkit-keyframes pl-blink { from { opacity: 1; } to { opacity: .35; } }
+@keyframes pl-blink { from { opacity: 1; } to { opacity: .35; } }
+/* a screen's own lines under the buttons: the overwrite question, the hint, the piano's refusal */
+.pl-foot { grid-area: foot; min-width: 0; padding: 0 6px; }
+.pl-foot > .segmented { margin: 6px 0; }
+#rec-overwrite { margin: 6px 0 4px; }
+#rec-overwrite p { margin: 0; }
+#rec-overwrite .danger { border-color: #7a2a2a; }
+#rec-hint, #rec-note { margin: 4px 2px 6px; }
+#rec-note:empty, .pane-result:empty { display: none; }
+/* phones narrower than 420 px: Rec is its round sign only and the part is in the options sheet */
+@media (max-width: 419px) {
+  .pl-rec { width: 44px; padding: 0; }
+  .pl-rec .pl-ico { margin-right: 0; }
+  .pl-rec-txt, .pl-part { display: none; }
 }
-/* transport: the sign (data-ico) over the word; Rec is red; the button of the piano's state is lit */
-.tp { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-gap: 8px; gap: 8px; margin-top: 10px; }
-.tp.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.tp-btn { min-width: 0; min-height: 64px; padding: 6px 2px; font-size: 13px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: transparent; border-color: #353434; border-radius: 12px; }
-.tp-btn::before { content: attr(data-ico); display: block; height: 24px; margin-bottom: 2px; font-size: 18px; line-height: 24px; }
-.tp-btn:active { background: var(--raised); }
-.tp-rec, .tp-row .rec { color: #ff6b74; }
-.tp-rec { border-color: #7a2a2a; }
-[data-play="1"] .tp-play, [data-play="0"] .tp-pause { background: var(--accent); border-color: transparent; color: var(--accent-ink); font-weight: 600; }
-[data-play="3"] .tp-rec, [data-play="5"] .tp-rec, [data-play="6"] .tp-rec { background: #2a1414; border-color: var(--danger); font-weight: 600; }
-[data-play="4"] .tp-rec { background: var(--danger); border-color: transparent; color: #fff; font-weight: 600; }
+/* from 600 px: one row under the line - buttons, position, what is loaded, and the small buttons at the right */
+@media (min-width: 600px) {
+  .card.player { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "seek seek seek" "left head right" "foot foot foot"; padding: 4px 10px 8px; }
+  .pl-head { padding: 0 12px; }
+  .pl-time { -webkit-box-ordinal-group: 2; order: 1; margin-left: 0; }
+  .pl-info { -webkit-box-ordinal-group: 3; order: 2; margin: 0 0 0 8px; }
+}
+/* the built-in panel: its buttons are 48 px (body.panel button) */
+body.panel .pl-btn, body.panel .pl-rec, body.panel .pl-part { height: 48px; }
+body.panel .pl-btn { width: 48px; min-width: 48px; }
+body.panel .pl-skip, body.panel .pl-rec { border-radius: 24px; }
+body.panel .pl-pill { font-size: 14px; }
+/* Recorder tab: the bar stays under the app's header while the lists scroll (--dock = the header's height, measured
+   by ui/recorder.ts); the strip between them is covered so no row shows through. Not on very low screens. */
+.recorder > .player { position: -webkit-sticky; position: sticky; top: calc(var(--dock, 57px) + 8px); z-index: 3; }
+.recorder > .player::before { content: ""; position: absolute; top: -10px; right: -2px; left: -2px; height: 9px; background: var(--bg); }
+@media (max-height: 520px) {
+  .recorder > .player { position: relative; top: auto; }
+}
+@media (min-width: 900px) {
+  /* one column: the bar over its lists (no card columns on these two tabs) */
+  .screen.recorder, .screen.music { max-width: 860px; -webkit-column-width: auto; column-width: auto; -webkit-columns: auto; columns: auto; }
+  .pl-btn:hover, .pl-part:hover { background: rgba(255, 255, 255, .1); }
+  .pl-main:hover { background: var(--accent-dark); }
+  .pl-rec:hover { background: #2a1414; }
+  .player[data-play="4"] .pl-rec:hover { background: var(--danger); }
+}
+/* the options sheet (a dialog.sheet): part, tempo, transpose, repeat, play mode, rewind / fast forward, A-B */
+.pl-opts > .row:first-child { border-top: 0; }
+.card dialog.sheet h3 { font-size: 16px; letter-spacing: 0; text-transform: none; color: var(--text); }
+/* while the main button is the stop (a USB file plays), the stop button next to it would say the same */
+.player[data-main="stop"] .pl-left > [data-act="stop"]:not(.pl-main) { visibility: hidden; }
+.row > .segmented { flex: none; flex-wrap: nowrap; }
+.pl-opts .segmented .pl-ico { display: inline-block; width: 18px; height: 18px; margin: 0 4px; vertical-align: -4px; }
+/* a label and its buttons share a line where they fit; else the buttons go under the label */
+.pl-opts > .row.seg-row { flex-wrap: wrap; padding: 3px 0; }
+.pl-opts > .row.seg-row > span { flex: 1 0 auto; }
+.pl-opts > .row.seg-row > .segmented { flex: 0 1 auto; margin: 3px 0 3px 12px; }
+/* Music tab: the three modes over the bar */
+.music .card > .segmented.modes { margin-bottom: 2px; }
+.segmented.modes button { flex: 1 1 0; min-width: 0; padding-right: 6px; padding-left: 6px; overflow: hidden; text-overflow: ellipsis; }
 /* two quieter buttons side by side (count-in / record practice, the overwrite question) */
 .tp-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-gap: 8px; gap: 8px; margin-top: 8px; }
 .tp-row button { min-width: 0; padding-left: 6px; padding-right: 6px; font-size: .9em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: transparent; border-color: #353434; }
 .tp-row button:active { background: var(--raised); }
-#rec-overwrite { margin: 8px 0 0; }
-#rec-overwrite p { margin: 0; }
-#rec-overwrite .danger { border-color: #7a2a2a; }
-#rec-hint, #rec-note { margin: 8px 2px 0; }
-#rec-note:empty, .pane-result:empty { display: none; }
-.rec-panel > details.fold { margin-top: 12px; }
-/* songs and files: [Piano songs | USB memory], then a status line with its buttons, then hairline rows */
+.tp-row .rec { color: #ff6b74; }
+/* the lists: [Piano songs | USB memory], then a status line with its buttons, then hairline rows */
+#rec-files { padding-top: 12px; }
 #rec-lists button { flex: 1 1 0; min-width: 0; }
 .pane-head { display: flex; flex-wrap: wrap; align-items: center; min-height: 48px; margin-top: 6px; }
 .pane-head > p { flex: 1 1 auto; min-width: 0; margin: 6px 0; }
@@ -524,7 +591,7 @@ input[type=range]::-webkit-slider-thumb { margin-top: -9.5px; border: 0; backgro
 .pane > details.fold { margin-top: 0; }
 .song-row, .file-row { border-top: 1px solid var(--line); }
 .file-main { display: flex; align-items: center; min-height: 56px; }
-/* the row itself is a button: it selects the song / opens the file's buttons */
+/* the row itself is a button: it chooses the song / the file (= what the player bar holds) */
 .song-pick, .file-pick { display: flex; flex: 1; align-items: center; min-width: 0; min-height: 52px; padding: 4px 4px 4px 8px; text-align: left; background: transparent; border: 0; border-radius: 8px; }
 .song-pick:active, .file-pick:active { background: var(--raised); }
 .song-num { display: flex; flex: none; align-items: center; justify-content: center; width: 32px; height: 32px; margin-right: 12px; border: 1px solid #454444; border-radius: 50%; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -533,23 +600,29 @@ input[type=range]::-webkit-slider-thumb { margin-top: -9.5px; border: 0; backgro
 .song-info { display: block; overflow: hidden; color: var(--muted); font-size: .82em; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .song-row[data-state="empty"] .song-num { border-style: dashed; color: var(--muted); font-weight: 400; }
 .song-row[data-state="empty"] .song-name { color: var(--muted); }
-.song-row[data-on], .file-row[data-open] { background: rgba(16, 129, 142, .13); box-shadow: inset 3px 0 0 var(--accent); }
+.song-row[data-on], .file-row[data-on] { background: rgba(16, 129, 142, .13); box-shadow: inset 3px 0 0 var(--accent); }
 .song-row[data-on] .song-num { border-color: transparent; background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.song-row[data-on] .song-name { color: var(--text); font-weight: 600; }
+.song-row[data-on] .song-name, .file-row[data-on] .file-name { color: var(--text); font-weight: 600; }
+.song-row[data-playing] .song-name, .file-row[data-playing] .file-name { color: #5fc3cf; }
+/* a file's type as a small badge (the playing mark takes its place while the file plays) */
+.file-ext { display: flex; flex: none; align-items: center; justify-content: center; width: 40px; height: 24px; margin-right: 12px; border: 1px solid #454444; border-radius: 6px; color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: .04em; }
+.file-row[data-on] .file-ext { border-color: var(--accent); color: #5fc3cf; }
 .file-name { flex: 1; min-width: 0; overflow: hidden; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
 .file-row[data-open] .file-name { overflow-wrap: break-word; word-wrap: break-word; word-break: break-all; white-space: normal; }
-.file-pick::after { content: ""; flex: none; width: 7px; height: 7px; margin: 0 8px 3px 10px; border: solid var(--muted); border-width: 0 2px 2px 0; -webkit-transform: rotate(45deg); transform: rotate(45deg); }
-.file-row[data-open] .file-pick::after { margin-bottom: -3px; -webkit-transform: rotate(-135deg); transform: rotate(-135deg); }
-.icon-btn { flex: none; width: 44px; min-width: 44px; height: 44px; min-height: 44px; margin: 0 6px; padding: 0; border-color: #353434; border-radius: 50%; background: transparent; font-size: 15px; line-height: 1; }
-.icon-btn:active { background: var(--raised); }
-.icon-btn.on { border-color: transparent; background: var(--accent); color: var(--accent-ink); }
-/* the selected song's / the opened file's other buttons, wrapping as a group */
+/* the playing mark: three bars that move */
+.eq { display: flex; flex: none; align-items: flex-end; width: 14px; height: 14px; }
+.eq i { display: block; width: 3px; height: 100%; margin-right: 2px; border-radius: 1px; background: #5fc3cf; -webkit-transform-origin: 50% 100%; transform-origin: 50% 100%; -webkit-animation: eq .7s ease-in-out infinite alternate; animation: eq .7s ease-in-out infinite alternate; }
+.eq i:nth-child(2) { -webkit-animation-delay: -.45s; animation-delay: -.45s; }
+.eq i:nth-child(3) { margin-right: 0; -webkit-animation-delay: -.2s; animation-delay: -.2s; }
+@-webkit-keyframes eq { from { -webkit-transform: scaleY(.25); } to { -webkit-transform: scaleY(1); } }
+@keyframes eq { from { transform: scaleY(.25); } to { transform: scaleY(1); } }
+.song-pick > .eq { margin: 0 6px 0 10px; }
+/* ⋯: the row's other buttons (export / delete, import / rename / delete), wrapping as a group under it */
+.row-more { margin: 0 4px; color: var(--muted); }
+.song-row[data-open] .row-more, .file-row[data-open] .row-more { background: rgba(255, 255, 255, .1); color: var(--text); }
 .row-acts { display: flex; flex-wrap: wrap; padding: 0 5px 8px 9px; }
 .row-acts > button { flex: 0 1 auto; margin: 3px; padding: 4px 12px; font-size: .9em; white-space: nowrap; background: transparent; border-color: #353434; }
 .row-acts > button:active { background: var(--raised); }
 .row-acts > .danger { border-color: #5a2626; }
 p.muted.row-note { margin: 0 12px 10px; font-size: .8em; }
 .song-row > .confirm-ask, .file-row > .confirm-ask { margin: 0 8px 8px 12px; }
-body.panel .tp-btn { min-height: 68px; font-size: 14px; }
-body.panel .now-text { font-size: 21px; }
-

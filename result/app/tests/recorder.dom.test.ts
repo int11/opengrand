@@ -2,7 +2,7 @@
 // result/firmware/ports/cave/recctl_cave.c): the decoders, the
 // NgRecorder op calls and the Recorder tab's recording panel (ui/recorder.ts): with Identify feat2 0x10 it follows the
 // piano's notices and sends op 0x1E; without it (stock) the Kawai Music bytes.
-import { pianoPair, tick } from "./_dom.ts";
+import { change, pianoPair, tick } from "./_dom.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -51,7 +51,7 @@ function fakeSession(feat2: number) {
   const asked: number[][] = [];
   const push = (m: Uint8Array) => queueMicrotask(() => listeners.forEach((l) => l(m)));
   const reply = (op: number, data: number[]) => push(Uint8Array.from([0xf0, 0x7d, 0x43, 0x41, 0x37, 0x39, op | 0x40, ...data, 0xf7]));
-  let state = 2, song = 0;
+  let state = 2, song = 0, bar = 0;
   return {
     state: "ready",
     asked,
@@ -76,10 +76,12 @@ function fakeSession(feat2: number) {
         const cmd = m[8]!, arg = (m[9]! << 7) | m[10]!;
         if (cmd === 1 && song >= 2) return reply(0x1e, [2, 6, cmd]); // nothing recorded
         reply(0x1e, [2, 0, cmd]);
-        if (cmd === 1) state = 1;
-        if (cmd === 2) state = 2;
-        if (cmd === 4) song = arg;
-        reply(0x1e, [0, 0, ...ng.pack7(statusRaw(state, song, state === 1 ? 4 : 0))]);
+        if (cmd === 1) { state = 1; bar = bar || 2; }
+        if (cmd === 2) { state = 2; bar = 0; }
+        if (cmd === 3) state = 0;
+        if (cmd === 4) { song = arg; bar = 0; }
+        if (cmd === 7) bar = arg;
+        reply(0x1e, [0, 0, ...ng.pack7(statusRaw(state, song, bar))]);
         reply(0x1e, [3, 1, cmd]);
       }
     },
@@ -88,26 +90,41 @@ function fakeSession(feat2: number) {
 
 const wait = async (n = 20) => { for (let i = 0; i < n; i++) await tick(2); };
 const panelBtn = (el: HTMLElement, act: string) => el.querySelector(`#rec-panel [data-act="${act}"]`) as HTMLButtonElement;
-const stateText = (el: HTMLElement) => el.querySelector("#rec-state .now-text")!.textContent;
-const stateSub = (el: HTMLElement) => el.querySelector("#rec-state .now-sub")!.textContent;
-const selected = (el: HTMLElement) => el.querySelector("#rec-selected")!.textContent;
+// the player bar (ui/screens/songctl.ts): the state a screen reader hears, the position pill, what is loaded
+const stateText = (el: HTMLElement) => el.querySelector("#rec-panel-state")!.textContent;
+const position = (el: HTMLElement) => el.querySelector("#rec-panel-pos")!.textContent;
+const selected = (el: HTMLElement) => el.querySelector("#rec-panel-info")!.textContent;
+const mainAct = (el: HTMLElement) => el.querySelector("#rec-panel .pl-main")!.getAttribute("data-act");
 const songRow = (el: HTMLElement, n: number) => el.querySelector(`#songs-list [data-song="${n}"]`) as HTMLElement;
 
-test("recorder tab layout: the recording panel on top, then [Piano songs | USB memory]; no USB audio target shown", () => {
+test("recorder tab layout: the player bar on top, then [Piano songs | USB memory]; no USB audio target shown", () => {
   const ctx = createContext(new ParamStore());
   const el = recorderScreen(ctx);
   document.body.append(el);
-  assert.deepEqual([...el.querySelectorAll("section.card > h3")].map((h) => h.textContent), ["Record and play", "Songs and files"]);
-  assert.deepEqual([...el.querySelectorAll("#rec-panel .tp button")].map((b) => b.textContent), ["Rec", "Play", "Pause", "Stop"]);
+  assert.deepEqual([...el.children].map((c) => c.id), ["rec-panel", "rec-files"]);
+  // one row of buttons: play / pause (one button), previous / next, stop - and Rec, the part, the options
+  assert.deepEqual([...el.querySelectorAll("#rec-panel .pl-left button, #rec-panel .pl-right button")].map((b) => b.getAttribute("data-act")),
+    ["play", "prev", "next", "stop", "rec", "part", "options"]);
+  assert.deepEqual([...el.querySelectorAll("#rec-panel .pl-left button, #rec-panel .pl-right button")].map((b) => b.getAttribute("aria-label") ?? b.getAttribute("title")),
+    ["Play", "Previous song", "Next song", "Stop", "Rec", "Part", "Playback options"]);
+  // nothing chosen, nothing known: no position, no slider, no previous
+  assert.equal(selected(el), "Choose a song below.");
+  assert.equal(position(el), "–");
+  assert.equal((el.querySelector("#rec-panel .pl-range") as HTMLElement).hidden, true, "the line is a slider only where the piano can jump");
+  assert.deepEqual([panelBtn(el, "prev").disabled, panelBtn(el, "next").disabled], [true, false]);
   assert.deepEqual([...el.querySelectorAll("#rec-panel [data-part-select] button")].map((b) => b.textContent), ["Part 1", "Part 2", "Both"]);
   // the recording target: one today (the piano's own songs), so its buttons are not drawn
   const target = el.querySelector("#rec-target") as HTMLElement;
   assert.equal(target.hidden, true);
   assert.deepEqual([...target.querySelectorAll("button")].map((b) => b.getAttribute("data-target")), ["internal"]);
-  // tempo / transpose / seek / A-B are folded
-  const more = el.querySelector("#rec-more") as HTMLDetailsElement;
+  // part / tempo / transpose / seek / A-B are a sheet behind the options button
+  const more = el.querySelector("#rec-panel-options") as HTMLDialogElement;
   assert.equal(more.open, false);
-  assert.deepEqual([...more.querySelectorAll(".row > span:first-child")].map((s) => s.textContent), ["Song tempo", "Song transpose", "Repeat", "Play mode", "Seek", "A-B repeat"]);
+  assert.deepEqual([...more.querySelectorAll(".row > span:first-child")].map((s) => s.textContent), ["Part", "Song tempo", "Song transpose", "Repeat", "Play mode", "Seek", "A-B repeat"]);
+  panelBtn(el, "options").click();
+  assert.equal(more.open, true);
+  (more.querySelector('[data-act="options-close"]') as HTMLElement).click();
+  assert.equal(more.open, false);
   // the two lists: the piano's songs first, the USB memory behind the switch (remembered while the app runs)
   const lists = [...el.querySelectorAll<HTMLElement>("#rec-lists button")];
   assert.deepEqual(lists.map((b) => [b.textContent, b.classList.contains("on")]), [["Piano songs", true], ["USB memory", false]]);
@@ -124,6 +141,7 @@ test("recording panel on OpenGrand (feat2 0x10): state line, selected song, op 0
   const store = new ParamStore();
   const s = fakeSession(0x1f);
   const ctx = createContext(store, { session: () => s as never });
+  ctx.usbFiles = ["A.MID"];
   const el = recorderScreen(ctx);
   document.body.append(el);
   await wait();
@@ -135,19 +153,58 @@ test("recording panel on OpenGrand (feat2 0x10): state line, selected song, op 0
   await wait();
   assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 1, 0, 0]);
   assert.equal(stateText(el), "Playing");
-  assert.equal(stateSub(el), "Bar 4");
-  assert.equal(el.querySelector("#rec-panel")!.getAttribute("data-play"), "1", "lights the Play button");
-  assert.ok(songRow(el, 1).querySelector('[data-act="song-stop"]'), "the playing song's row shows ■");
+  assert.equal(position(el), "2 / 3 bars", "the piano's bar of the song's bars");
+  assert.equal(el.querySelector("#rec-panel")!.getAttribute("data-play"), "1");
+  assert.equal(mainAct(el), "pause", "the one play / pause button now pauses");
+  assert.equal(songRow(el, 1).getAttribute("data-playing"), "1", "the playing song's row is marked");
+  assert.ok(songRow(el, 1).querySelector(".eq"));
+  // the progress line is a slider on this piano: letting go on bar 3 sends the bar seek (op 0x1E cmd 7) once
+  const range = el.querySelector("#rec-panel .pl-range") as HTMLInputElement;
+  assert.deepEqual([range.hidden, range.min, range.max, range.value], [false, "1", "3", "2"]);
+  const n0 = s.asked.length;
+  change(range, "3", "input");
+  assert.equal(position(el), "3 / 3 bars", "the dot follows the finger");
+  assert.equal(s.asked.length, n0, "nothing is sent while it is dragged");
+  change(range, "3");
+  await wait();
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 7, 0, 3]);
+  assert.equal(s.asked.length, n0 + 1);
+  // pause is the same button; then it plays again
+  panelBtn(el, "pause").click();
+  await wait();
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 3, 0, 0]);
+  assert.deepEqual([stateText(el), mainAct(el)], ["Paused", "play"]);
   panelBtn(el, "stop").click();
   await wait();
   assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 2, 0, 0]);
   assert.equal(stateText(el), "Stopped");
+  assert.equal(position(el), "1 / 3 bars", "stopped = at the first bar");
+  // ⏭ / ⏮: the next / previous song number (op select)
+  panelBtn(el, "next").click();
+  await wait();
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 4, 0, 1]);
+  assert.equal(selected(el), "Song 25 bars · Part 1 + Part 2");
+  panelBtn(el, "prev").click();
+  await wait();
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 4, 0, 0]);
+  assert.equal(panelBtn(el, "prev").disabled, true, "song 1 has no previous");
+  // a USB file chosen (nothing plays): the bar holds it - until the piano song plays (started on the panel): then the
+  // bar is the song's again and ■ is the recorder's stop, not the USB players'
+  (el.querySelector('[data-file="A.MID"] [data-act="file-pick"]') as HTMLElement).click();
+  await wait(5);
+  assert.equal(selected(el), "A.MIDUSB");
+  s.push(frame([0x00, 0x00, ...ng.pack7(statusRaw(1, 0, 2))]));
+  await wait(5);
+  assert.equal(selected(el), "Song 13 bars · Part 1");
+  panelBtn(el, "stop").click();
+  await wait();
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 2, 0, 0]);
   // song 3 (empty): chosen in the list, the piano refuses Play with rc 6
   (songRow(el, 3).querySelector('[data-act="song-pick"]') as HTMLElement).click();
   await wait();
   assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 4, 0, 2]);
   assert.equal(selected(el), "Song 3Empty");
-  assert.equal(songRow(el, 3).querySelector('[data-act="song-play"]'), null, "an empty song has no ▶");
+  assert.equal(songRow(el, 3).querySelector('[data-act="song-more"]'), null, "an empty song has nothing to export or delete");
   panelBtn(el, "play").click();
   await wait();
   assert.equal(el.querySelector("#rec-note")!.textContent, "Nothing recorded in this song.");

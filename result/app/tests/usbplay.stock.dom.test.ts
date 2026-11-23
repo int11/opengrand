@@ -191,7 +191,17 @@ async function setup(opt: { stuck?: boolean; syncMode?: number; lateAudio?: bool
   return { ...p, store, ctx, st, el };
 }
 
-const row = (el: HTMLElement, f: string, act: string) => el.querySelector(`[data-file="${f}"] [data-act="${act}"]`) as HTMLElement | null;
+// A row has no ▶ / ■ of its own since the player bar (2026-11-23). "play" = what a user does to play the file: choose
+// its row, then the bar's ▶ (while another USB file plays, the choice itself plays it); "stop" = the bar's ■. As a
+// query: "stop" is there while the row is marked playing, "play" while it is not.
+const row = (el: HTMLElement, f: string, act: "play" | "stop"): { click(): void } | null => {
+  const r = el.querySelector(`[data-file="${f}"]`) as HTMLElement | null;
+  if (!r) return null;
+  const playing = r.hasAttribute("data-playing");
+  const bar = (a: string) => el.querySelector(`#rec-panel [data-act="${a}"]`) as HTMLElement | null;
+  if (act === "stop") return playing ? { click: () => bar("stop")!.click() } : null;
+  return playing ? null : { click: () => { (r.querySelector('[data-act="file-pick"]') as HTMLElement).click(); bar("play")?.click(); } };
+};
 const resultText = (el: HTMLElement) => el.querySelector("#usb-result")!.textContent ?? "";
 const STOP_MS = USB_STOP.grace + USB_STOP.watch + 150;
 const RESET = "F0 40 7F 32 08 02 52 08 7F 02 F7";
@@ -208,7 +218,7 @@ test("field 11-13 ①: the store's MusicMode from the connect sync no longer tur
   await tick(STOP_MS);
   assert.equal(st.smf, 2, "the row's ■ stopped the MID");
   assert.ok(row(el, "SONG_01.MID", "play"));
-  assert.equal(resultText(el), "Stop: done");
+  assert.equal(resultText(el), "", "stopped: nothing left to say (the bar and the rows show it)");
 });
 
 test("field 11-13 ②: ▶ on an MP3 while the MID plays stops the MID first — never both at once", async () => {
@@ -242,7 +252,7 @@ test("field 11-13 ③: with the MID and an MP3 both playing (started elsewhere),
   assert.equal(st.smf, 2, "the SMF player stopped: a MID selected (Busy, type 4 set) and Reset");
   assert.ok(sent.includes(RESET));
   assert.ok(sent.filter((s) => s === "F0 40 7F 31 08 02 52 1D 7F 03 F7").length >= 3, "MusicMode 3 before each Reset");
-  assert.equal(resultText(el), "Stop: done");
+  assert.equal(resultText(el), "", "stopped: nothing left to say (the bar and the rows show it)");
 });
 
 test("field 11-15 F13b: an MP3 playing alone stops from the section ■ — its player gets the last select + Reset", async () => {
@@ -257,7 +267,7 @@ test("field 11-15 F13b: an MP3 playing alone stops from the section ■ — its 
   const tx = sent.slice(n0);
   const lastSel = tx.filter((x) => x.startsWith("F0 40 7F 24 08 02 03")).pop()!;
   assert.match(lastSel, /31 2E 6D 70 33/, "the last file selected before the last Reset is the MP3");
-  assert.equal(resultText(el), "Stop: done");
+  assert.equal(resultText(el), "", "stopped: nothing left to say (the bar and the rows show it)");
 });
 
 test("field 11-13 ④: the old stop (Reset with an MP3 selected) does not reach the MID — the fake is the stock", async () => {

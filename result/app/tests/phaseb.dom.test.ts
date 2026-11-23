@@ -230,7 +230,7 @@ test("USB file manager lists files, deletes / renames by name, formats, reports 
   document.body.append(el);
   await tick(40);
   assert.equal(el.querySelector("#usb-status")!.textContent, "USB memory attached");
-  const names = () => [...el.querySelectorAll(".file-name")].map((n) => n.textContent);
+  const names = () => [...el.querySelectorAll(".file-row")].map((n) => n.getAttribute("data-file"));
   assert.deepEqual(names(), ["A.MID", "LONG_NAME_FOR_TWO_PACKETS.MID", "C.MID"]);
 
   (el.querySelector('[data-file="C.MID"] [data-act="rename"]') as HTMLElement).click(); // prompt() returns the default -> no change
@@ -269,7 +269,7 @@ test("USB file manager lists files, deletes / renames by name, formats, reports 
 test("music tab: the song picker holds the mode's songs only (USB files play from the Recorder tab) and Concert Magic settings + result display", async () => {
   const { store, ctx, sent, notify } = await setup();
   ctx.usbFiles = ["X.MID", "Y.MID"];
-  const el = S.musicScreen(store, () => "", ctx);
+  const el = S.musicScreen(store, ctx);
   document.body.append(el);
   await tick(10);
   assert.ok(sent.includes("F0 40 7F 02 08 02 52 0D 7F F7"), "CM settings requested");

@@ -1,7 +1,6 @@
 // OpenGrand controller app entry point (panel and phone).
 import { installTestHelpers } from "./testhooks.ts";
 import { setLang, t } from "./i18n.ts";
-import { progress } from "./protocol/codecs.ts";
 import { PianoSession } from "./protocol/session.ts";
 import { registerServiceWorker } from "./pwa.ts";
 import { attachPanelCache } from "./state/panelcache.ts";
@@ -47,7 +46,6 @@ const store = new ParamStore();
 bindStore(store);
 const beatEvents = new EventTarget();
 let session: PianoSession | null = null;
-let lastProgress = "–";
 let connectedOnce = false;
 
 // Inside the ORIGINAL panel shell (UI bundle): the
@@ -73,12 +71,12 @@ const status = h("span", { class: "status" });
 const main = h("main", {});
 const screens: Record<TabId, () => HTMLElement> = {
   sound: () => soundScreen(store, ctx),
-  music: () => musicScreen(store, () => lastProgress, ctx),
+  music: () => musicScreen(store, ctx),
   metronome: () => metronomeScreen(store, beatEvents),
   technician: () => vtScreen(store, ctx),
   chords: () => chordScreen(ctx),
   // 「레코더」 (the tab id stays "files": stored start tabs, ?tab=files links and test drivers keep working)
-  files: () => recorderScreen(ctx, () => lastProgress),
+  files: () => recorderScreen(ctx),
   // 「블루투스」: BT audio sources / AUTOCALL / this app's BLE-MIDI link / the piano's BT settings (ui/bluetooth.ts)
   bluetooth: () => bluetoothPage(() => (session ? new BtPort(new NgClient(session)) : null), {
     store, link: () => (session && linkKind ? { kind: linkKind, name: linkName } : null),
@@ -351,10 +349,6 @@ function attachSession(s: PianoSession): void {
   store.attach(s);
   s.onParam((p) => {
     if (p.v1 === 0x56 && p.v2 === 0x0b) beatEvents.dispatchEvent(new CustomEvent("beat", { detail: p.data[0] }));
-    if (p.v1 === 0x52 && p.v2 === 0x03) {
-      const pr = progress.decode(p.data);
-      lastProgress = "bar" in pr ? t("Bar {bar} · Beat {beat}", { bar: pr.bar, beat: pr.beat }) : `${(pr.ms / 1000).toFixed(1)} s`;
-    }
   });
   s.onMidi((m) => ctx.midi.dispatchEvent(new CustomEvent("midi", { detail: m })));
 }

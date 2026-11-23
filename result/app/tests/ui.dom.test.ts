@@ -42,7 +42,7 @@ function setup() {
 test("all screens render without throwing", () => {
   const { store } = setup();
   const ev = new EventTarget();
-  for (const el of [S.soundScreen(store), S.vtScreen(store), S.metronomeScreen(store, ev), S.musicScreen(store, () => ""), S.settingsScreen(store)]) {
+  for (const el of [S.soundScreen(store), S.vtScreen(store), S.metronomeScreen(store, ev), S.musicScreen(store), S.settingsScreen(store)]) {
     assert.ok(el.querySelectorAll("section").length > 0);
     assert.equal(el.querySelectorAll(".muted").length >= 0, true);
   }

@@ -87,7 +87,7 @@ async function connected(opt: { cut?: (i: number) => boolean } = {}) {
     sound: S.soundScreen(store, ctx),
     vt: S.vtScreen(store, ctx),
     metronome: S.metronomeScreen(store, new EventTarget()),
-    music: S.musicScreen(store, () => "", ctx),
+    music: S.musicScreen(store, ctx),
     settings: S.settingsScreen(store, ctx),
   };
   await session.connect(300);
@@ -281,7 +281,7 @@ test("OpenGrand firmware simulator: sync + read-back, the remaining unknowns are
     bindStore(store);
     store.attach(session);
     const ctx = createContext(store, { session: () => session });
-    const screens = [S.soundScreen(store, ctx), S.vtScreen(store, ctx), S.metronomeScreen(store, new EventTarget()), S.musicScreen(store, () => "", ctx), S.settingsScreen(store, ctx)];
+    const screens = [S.soundScreen(store, ctx), S.vtScreen(store, ctx), S.metronomeScreen(store, new EventTarget()), S.musicScreen(store, ctx), S.settingsScreen(store, ctx)];
     await session.connect(2000);
     await tick(5);
     await store.readback(1000);

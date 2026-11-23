@@ -885,6 +885,9 @@ test("BLE transfer estimate for the real app bundle (MTU 23, paced writer)", asy
   // 181 000 -> 186 500 (2026-11-22, the 「레코더」 tab: recording panel with state line, song rows, overwrite / import
   // questions, the USB list's row buttons and 「USB 관리」 fold, their styles and en/ja/ko lines (ui/recorder.ts,
   // ui/screens/songctl.ts): HEAD was 180 144 B, this 185 292 B)
-  assert.ok(file.length < 186_500, `package ${file.length} B`);
+  // 186 500 -> 192 500 (2026-11-23, the player bar: ui/screens/songctl.ts playerBar with its icons, progress line /
+  // bar-seek slider and options sheet, the USB file in the bar (ui/usbplay.ts position), row marks and ⋯, their styles
+  // and en/ja/ko lines; the state line, labelled transport and four unused strings went: HEAD was 185 292 B)
+  assert.ok(file.length < 192_500, `package ${file.length} B`);
   console.log(`# real bundle: package ${file.length} B, ${e.frames} frames, ${e.blePackets} BLE packets; window ≈ ${e.windowedS.toFixed(0)} s, stop-and-wait ≈ ${e.stopAndWaitS.toFixed(0)} s`);
 });

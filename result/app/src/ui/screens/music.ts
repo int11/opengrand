@@ -1,18 +1,23 @@
 // Music tab: Lesson / Concert Magic / Piano Music (the instrument's own song libraries).
 // The recorder and the USB memory player are the Recorder tab (ui/recorder.ts, owner 2026-11-22) - one place each.
-// Layout: a Music card with the three mode buttons and one state line (what the piano is doing), the card of the mode
-// shown (song picker, labelled transport), and in it the part buttons and the folded 「재생 옵션」 (screens/songctl.ts).
+// Layout (owner 2026-11-23: a media player's bar): a Music card with the three mode buttons, the player bar
+// (screens/songctl.ts playerBar: what is loaded, the position, play / pause, previous / next song, stop, and behind
+// its buttons the part and the playback options), then the card of the mode shown (song picker and what only that
+// mode has - count-in and record practice, the Concert Magic settings).
 // The bytes are the stock ones: MusicMode 31 52 1D, SongSelect 10 52 00, Music 32 52 08. A mode button sends its
 // MusicMode; when the piano is in another mode (the Recorder tab's, the panel's) Play / Count-in / Record practice or a
 // song choice sends the shown mode first.
+// The bar's position is the piano's MusicProgress (32 52 03, bar form) and - only if the piano says one in these modes
+// - its MaxTime (10 52 18); the line is never a slider here (no jump is known for these modes; rewind / fast forward
+// are in the options).
 import { t } from "../../i18n.ts";
-import { findParam } from "../../protocol/codecs.ts";
+import { findParam, progress } from "../../protocol/codecs.ts";
 import type { ParamStore } from "../../state/store.ts";
 import type { AppContext } from "../context.ts";
 import { h, section } from "../dom.ts";
 import { usbPlayback } from "../usbplay.ts";
 import { ctxFor, whileShown } from "./common.ts";
-import { MUSIC_CMD, MUSIC_MODE, partSelector, playbackOptions, stateLine, tpBtn } from "./songctl.ts";
+import { MUSIC_CMD, MUSIC_MODE, playerBar } from "./songctl.ts";
 
 export { MUSIC_MODE } from "./songctl.ts";
 
@@ -71,7 +76,10 @@ export function songSelectData(n: number, numType = 0): number[] {
   return [numType & 0x7f, (n >> 7) & 0x7f, n & 0x7f];
 }
 
-export function musicScreen(store: ParamStore, progressText: () => string, ctx?: AppContext): HTMLElement {
+/** How many songs a mode's picker lists (numType 0, 0-based). */
+const PICKER_SONGS = 10;
+
+export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   const c = ctxFor(store, ctx);
   const music = findParam("Music", 0x32)!;
   const songP = findParam("SongSelect")!;
@@ -97,19 +105,58 @@ export function musicScreen(store: ParamStore, progressText: () => string, ctx?:
     void store.command(music, 0x7f, [v]);
   };
 
-  // --- what the piano is doing: one line (the Music report 32 52 08 while the piano is in one of this tab's modes) ---
+  // --- what the piano is doing (the Music report 32 52 08 while the piano is in one of this tab's modes), where the
+  //     song is (MusicProgress, bar form) and - if the piano says it - how long it is (MaxTime) ---
   let state: number | null = null;
-  const now = stateLine("music-state");
+  let bar = 0;
+  let maxBars = 0;
+  // song pickers: the mode's songs (numType 0, 0-based), section 9.3 - one per mode, the bar's ⏮ ⏭ step the shown one
+  const pickers: Record<number, HTMLSelectElement> = {};
+  const chooseSong = (n: number) => {
+    bar = 0;
+    maxBars = 0;
+    ensureMode();
+    void store.set(songP, 0x7f, songSelectData(n));
+    renderNow();
+  };
+  const songNumber = (mode: number, label: string) => {
+    const list = h("select", {}, ...Array.from({ length: PICKER_SONGS }, (_, i) => h("option", { value: String(i) }, t("Song {n}", { n: i + 1 })))) as HTMLSelectElement;
+    list.addEventListener("change", () => chooseSong(Number(list.value)));
+    pickers[mode] = list;
+    return h("label", { class: "row" }, h("span", {}, label), list);
+  };
+  const step = (d: -1 | 1) => {
+    const list = pickers[view];
+    const n = Number(list.value) + d;
+    if (n < 0 || n >= PICKER_SONGS) return;
+    list.value = String(n);
+    chooseSong(n);
+  };
+  const player = playerBar(store, "music-player", {
+    play: () => cmd(MUSIC_CMD.Play), pause: () => cmd(MUSIC_CMD.Pause), stop: () => cmd(MUSIC_CMD.Stop),
+    prev: () => step(-1), next: () => step(1),
+  });
   const renderNow = () => {
     const st = here(pianoMode()) ? state : null;
-    el.setAttribute("data-play", st === null ? "" : String(st)); // lights the transport button of that state (styles.css)
-    const p = progressText();
-    now.set(st, st !== null && st !== 2 && p && p !== "–" ? p : "");
+    const n = Number(pickers[view]?.value ?? 0);
+    const moving = st === 0 || st === 1;
+    const total = maxBars || null;
+    player.set({
+      state: st,
+      title: t(modes.find(([, v]) => v === view)![0]),
+      sub: t("Song {n}", { n: n + 1 }),
+      unit: "bar",
+      pos: st !== null && st >= 3 ? bar || null : moving && bar ? (total ? Math.min(bar, total) : bar) : total ? 1 : null,
+      total: st !== null && st >= 3 ? null : total,
+      seekable: false,
+      main: st === 1 || st === 4 || st === 6 ? "pause" : "play",
+      prev: n > 0, next: n < PICKER_SONGS - 1,
+    });
   };
   let attached = false;
   const timer = setInterval(() => {
     // stop polling once the screen has been replaced
-    if (now.el.isConnected) attached = true;
+    if (player.el.isConnected) attached = true;
     else if (attached) return clearInterval(timer);
     renderNow();
   }, 250);
@@ -119,69 +166,52 @@ export function musicScreen(store: ParamStore, progressText: () => string, ctx?:
   const showMode = () => {
     modeBar.querySelectorAll("button").forEach((b) => b.classList.toggle("on", Number(b.getAttribute("data-mode")) === view));
     for (const [m, sec] of Object.entries(sections)) sec.hidden = Number(m) !== view;
-    // one part selector and one options fold for every mode: they sit in the card of the mode shown
-    if (sections[view] && shared.parentElement !== sections[view]) sections[view].append(shared);
     renderNow();
   };
   for (const [label, v] of modes) {
-    modeBar.append(h("button", { "data-mode": v, onclick: () => { view = v; sendMode(v); showMode(); } }, t(label)));
+    modeBar.append(h("button", { "data-mode": v, onclick: () => { view = v; bar = 0; maxBars = 0; sendMode(v); showMode(); } }, t(label)));
   }
-
-  const transport = () =>
-    h("div", { class: "tp three" },
-      tpBtn("play", "▶", t("Play"), () => cmd(MUSIC_CMD.Play), "tp-play"),
-      tpBtn("pause", "❚❚", t("Pause"), () => cmd(MUSIC_CMD.Pause), "tp-pause"),
-      tpBtn("stop", "■", t("Stop"), () => cmd(MUSIC_CMD.Stop)));
-  // song picker: the mode's songs (numType 0, 0-based), section 9.3
-  const songNumber = (label: string) => {
-    const list = h("select", {}, ...Array.from({ length: 10 }, (_, i) => h("option", { value: String(i) }, t("Song {n}", { n: i + 1 })))) as HTMLSelectElement;
-    list.addEventListener("change", () => {
-      ensureMode();
-      void store.set(songP, 0x7f, songSelectData(Number(list.value)));
-    });
-    return h("label", { class: "row" }, h("span", {}, label), list);
-  };
-
-  const parts = partSelector(store);
-  const shared = h("div", { class: "music-shared" },
-    h("div", { class: "row seg-row" }, h("span", {}, t("Part")), parts.el),
-    playbackOptions(store, "music-more"));
 
   sections[MUSIC_MODE.Lesson] = section(
     t("Lesson"),
-    songNumber(t("Lesson song")),
+    songNumber(MUSIC_MODE.Lesson, t("Lesson song")),
     h("p", { class: "muted" }, t("Practise one hand: choose only the part the piano should play.")),
-    transport(),
     h("div", { class: "tp-row" },
       h("button", { "data-act": "count-in", onclick: () => cmd(MUSIC_CMD.CountIn) }, t("Count-in")),
       h("button", { "data-act": "rec-practice", class: "rec", onclick: () => cmd(MUSIC_CMD.Rec) }, `● ${t("Record practice")}`)),
   );
   sections[MUSIC_MODE.ConcertMagic] = section(
     t("Concert Magic"),
-    songNumber(t("Concert Magic song")),
+    songNumber(MUSIC_MODE.ConcertMagic, t("Concert Magic song")),
     h("p", { class: "muted" }, t("Tap any keys in rhythm; the piano plays the melody and accompaniment.")),
     ...concertMagicControls(store),
-    transport(),
   );
-  sections[MUSIC_MODE.PianoMusic] = section(t("Piano Music"), songNumber(t("Piece")), transport());
+  sections[MUSIC_MODE.PianoMusic] = section(t("Piano Music"), songNumber(MUSIC_MODE.PianoMusic, t("Piece")));
 
-  const el = h("div", { class: "screen music" }, section(t("Music"), modeBar, now.el), ...Object.values(sections));
+  const el = h("div", { class: "screen music" }, h("section", { class: "card", id: "music-modes" }, h("h3", {}, t("Music")), modeBar), player.el, ...Object.values(sections));
 
-  // --- the piano's word: the parameter mirror and the Music state report ---
+  // --- the piano's word: the parameter mirror, the Music state report, the position ---
   whileShown(el, store, (k) => {
     if (k === "MusicMode@127") {
       const m = store.get(modeState, 0x7f)?.[0];
       if (here(m)) view = m;
       showMode();
-    } else if (k === "IntSongPart@127") parts.sync();
+    } else if (k === "IntSongPart@127") player.syncPart();
   });
   let seen = false;
   const offMsg = store.onMessage((m) => {
     if (el.isConnected) seen = true;
     else if (seen) return void offMsg(); // the screen was replaced
-    if (m.v1 === 0x52 && m.v2 === 0x08 && (m.fn === 0x10 || m.fn === 0x32) && m.data[0] !== undefined && m.data[0] <= 6) {
+    if (m.v1 !== 0x52 || (m.fn !== 0x10 && m.fn !== 0x32)) return;
+    if (m.v2 === 0x08 && m.data[0] !== undefined && m.data[0] <= 6) {
       state = m.data[0];
+      if (state === 2) bar = 0;
       renderNow();
+    } else if (m.v2 === 0x03 && m.data.length >= 4 && here(pianoMode())) {
+      const at = progress.decode(m.data);
+      if ("bar" in at) bar = at.bar;
+    } else if (m.v2 === 0x18 && m.fn === 0x10 && m.data.length >= 3 && m.data[0] === 0 && here(pianoMode())) {
+      maxBars = (m.data[1] << 7) | m.data[2];
     }
   });
   showMode();

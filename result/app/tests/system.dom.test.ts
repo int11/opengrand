@@ -142,7 +142,7 @@ test("language: switching to Japanese/Korean persists, re-renders and translates
   const { RESULT } = await import("../src/protocol/fileaccess.ts");
   for (const lang of ["ja", "ko"] as const) {
     i18n.setLang(lang);
-    for (const f of [() => S.soundScreen(store, ctx), () => S.vtScreen(store, ctx), () => S.metronomeScreen(store, new EventTarget()), () => S.musicScreen(store, () => ""), () => S.settingsScreen(store, ctx), () => chordScreen(ctx), () => infoScreen(ctx), () => recorderScreen(ctx), () => touchCurveEditor(store).el, ...PER_NOTE.map((k) => () => perNoteEditor(store, k).el)]) f();
+    for (const f of [() => S.soundScreen(store, ctx), () => S.vtScreen(store, ctx), () => S.metronomeScreen(store, new EventTarget()), () => S.musicScreen(store), () => S.settingsScreen(store, ctx), () => chordScreen(ctx), () => infoScreen(ctx), () => recorderScreen(ctx), () => touchCurveEditor(store).el, ...PER_NOTE.map((k) => () => perNoteEditor(store, k).el)]) f();
     for (const r of Object.values(RESULT)) i18n.t(r); // result codes are shown through tl()
     for (const r of S.CM_RESULT) i18n.t(r);
     for (const k of Object.values(S.TAB_TITLES)) i18n.t(k);
@@ -166,7 +166,7 @@ const DYNAMIC = [
   "Writes a signed cave payload into the free NOR slot; the piano starts it at the next power-on and falls back to the previous one if it fails. Hold A0, A#0 and B0 while switching on to start the built-in cave.", "Key {id} imported.", "No key imported.", "empty", "confirmed", "unconfirmed", "rejected", "failed check", "That is not a 32-byte key.", "{n} bytes, features {f0}/{f1}, key {id}.", "Not a OpenGrand payload file (.c79).", "Import the key first.", "Pick a payload file first.", "Uploading… {a}/{b} bytes", "Writing to the slot… ({s})", "Written to {slot}. Turn the piano off and on to start it.", "The built-in cave is running: nothing to roll back.", "Slot rejected. Turn the piano off and on to go back.",
   "Not connected", "Connecting to {name}…", "Disconnected", "Connection failed: {e}", "{model}{version} · {link}",
   "Paused while the app is in the background", "Syncing with {name}…", "Connecting…", "Connected", "Waking the piano…", "Another device (the panel or another app) took control", "The piano's panel took control as it started up — this firmware lets one device control the piano at a time.", "Use this app", "The connection to {name} was lost.", "Reconnect", "Try again", "Disconnect", "Connect another device…", "in use", "Now: {state}", "Standby · Bluetooth audio listening (sound wakes the piano)", "Standby · Bluetooth audio off", "Bluetooth audio playing · keeps the piano on", "Bluetooth audio playing", "Bluetooth audio connected · keeps the piano on", "Bluetooth audio connected", "Bluetooth audio: no device", "To switch the audio source (phone ↔ TV): disconnect Bluetooth on the device playing now, then connect the other one to the piano.",
-  "Searching…", "Connect to the piano", "Close", "Connect", "Bluetooth MIDI (pair new)…", "Firmware simulator ({url})", "Bar {bar} · Beat {beat}",
+  "Searching…", "Connect to the piano", "Close", "Connect", "Bluetooth MIDI (pair new)…", "Firmware simulator ({url})",
   "Checking…", "No reply", "Update check failed: {e}", "Check again", "Version {v} on the USB memory is not newer.", "Update to {v}",
   "Update failed: {e}", "Update installed.", "Installing…", "Reading module version…", "Looking for the update package…",
   "Restarting the module in update mode…", "Searching for the module bootloader…", "Updating… {p}%", "Module updated.",

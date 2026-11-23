@@ -152,7 +152,7 @@ test("information screen shows app, model, firmware and BLE module versions (fea
 
 test("music tab: lesson / concert magic / piano music modes, state line, song tempo, song transpose, part buttons (11, 50, 51, 52)", async () => {
   const { store, sent, notify } = await setup();
-  const el = S.musicScreen(store, () => "");
+  const el = S.musicScreen(store);
   document.body.append(el);
   // three modes only: the recorder and the USB player are the Recorder tab
   assert.deepEqual([...el.querySelectorAll(".modes button")].map((b) => b.textContent), ["Lesson", "Concert Magic", "Piano Music"]);
@@ -174,27 +174,28 @@ test("music tab: lesson / concert magic / piano music modes, state line, song te
   assert.ok(visible().includes("Lesson"));
   // ... and the first Play here sends the shown mode before the Music command
   const lesson = [...el.querySelectorAll("section")].find((s) => s.querySelector("h3")!.textContent === "Lesson")!;
-  byText(lesson, "button", "Play").click();
+  (el.querySelector('#music-player [data-act="play"]') as HTMLElement).click(); // the player bar's ▶
   await tick();
   const k = sent.lastIndexOf("F0 40 7F 31 08 02 52 1D 7F 04 F7");
   assert.ok(k >= 0 && k < sent.lastIndexOf("F0 40 7F 32 08 02 52 08 7F 01 F7"), "MusicMode 4, then Play");
   // lesson transport: count-in, A-B (in the folded options), a lesson song
   byText(lesson, "button", "Count-in").click();
-  byText(lesson, "button", "Set A").click();
+  byText(el, "button", "Set A").click();
   change(field<HTMLSelectElement>(lesson, "Lesson song"), "7");
   await tick();
   for (const s of ["F0 40 7F 32 08 02 52 08 7F 05 F7", "F0 40 7F 32 08 02 52 06 7F 01 F7", "F0 40 7F 10 08 02 52 00 7F 00 00 07 F7"]) assert.ok(sent.includes(s), s);
   assert.equal(sent.filter((m) => m === "F0 40 7F 31 08 02 52 1D 7F 04 F7").length, 1, "the mode is sent once");
   // the state line follows the piano's Music report (32 52 08) and lights the button of that state
-  const now = el.querySelector("#music-state")!;
-  assert.equal(now.querySelector(".now-text")!.textContent, "Stopped");
+  const now = el.querySelector("#music-player-state")!;
+  assert.equal(now.textContent, "Stopped");
   notify([0x52, 0x08, 0x7f, 1]);
   await tick(5);
-  assert.equal(now.querySelector(".now-text")!.textContent, "Playing");
-  assert.equal(el.getAttribute("data-play"), "1");
+  assert.equal(now.textContent, "Playing");
+  assert.equal(el.querySelector("#music-player")!.getAttribute("data-play"), "1");
+  assert.equal(el.querySelector("#music-player .pl-main")!.getAttribute("data-act"), "pause", "one button: it pauses while the piano plays");
   notify([0x52, 0x08, 0x7f, 0]);
   await tick(5);
-  assert.equal(now.querySelector(".now-text")!.textContent, "Paused");
+  assert.equal(now.textContent, "Paused");
 
   // song tempo (14-bit BPM), song transpose (offset 64, System part)
   change(field(el, "Song tempo"), "96", "input");

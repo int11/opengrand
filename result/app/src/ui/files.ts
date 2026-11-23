@@ -13,11 +13,14 @@
 // Play / stop (「USB 재생 정지」 and 「USB 재생 겹침 · 정지」,
 // ui/usbplay.ts): the stock's SMF and audio players run independently and Music Reset reaches only the player of
 // the type the last 24 08 selected, so a stop selects a file of each type and resets it; ▶ never starts a USB file
-// while another USB playback runs (it stops that first). The playing row shows ■ from the app's own ▶ and the
+// while another USB playback runs (it stops that first). The playing row is marked from the app's own ▶ and the
 // piano's word (32 52 1D, 32 52 08, MusicProgress 52 03); the pane's ■ always stops both players.
-// Rows (owner 2026-11-22): the name and ▶ / ■; a tap on the name opens that file's other buttons (import, rename,
-// delete) under it. The rarely used things - where an import goes, sending a file from this device, format - are in
-// the folded 「USB 관리」.
+// Rows (owner 2026-11-23, the player bar): a tap on a row chooses the file - it is what the Recorder tab's player bar
+// shows and its ▶ plays (nothing is sent by the choice itself; while a USB file plays, the tapped one plays instead);
+// ⋯ opens that file's other buttons (import, rename, delete) under it. The rarely used things - where an import goes,
+// sending a file from this device, format - are in the folded 「USB 관리」.
+// The play / stop line says only what went wrong: that a file plays is the player bar's to show (field 2026-11-23:
+// 「재생: 완료」 stayed under the list while the file was still playing).
 import { FileAccessError, resultText } from "../protocol/fileaccess.ts";
 import type { PianoSession } from "../protocol/session.ts";
 import { SONGS, type SongInfo } from "../protocol/songs.ts";
@@ -28,7 +31,8 @@ import type { AppContext } from "./context.ts";
 import { confirmTap } from "./confirm2.ts";
 import { h } from "./dom.ts";
 import { loadUsbList, usbListGone, usbListStale, usbListState } from "./usblist.ts";
-import { usbPlay, usbPlayback, usbPlayingName, usbStopAll } from "./usbplay.ts";
+import { iconButton, playingMark } from "./screens/songctl.ts";
+import { usbAnyRunning, usbPlay, usbPlayback, usbPlayingName, usbStopAll } from "./usbplay.ts";
 
 /** Last internal song table this app saw, per context: drawn at once when the tab opens again (same session). */
 interface SongCache {
@@ -62,9 +66,32 @@ export interface UsbPane {
   stop(): Promise<void>;
   /** The internal song an import goes to (0-based). */
   setImportTarget(n: number): void;
+  /** The file chosen in the list (what the player bar's ▶ plays); null = none. */
+  selected(): string | null;
+  /** Choose a file as a tap on its row does. */
+  pick(name: string): void;
+  /** Play a file (ui/usbplay.ts usbPlay: whatever USB playback runs is stopped first). */
+  play(name: string): Promise<void>;
 }
 
-export function usbPane(ctx: AppContext, lock: FileLock, songHasData: (n: number) => boolean = () => false): UsbPane {
+export interface UsbPaneOptions {
+  songHasData?: (n: number) => boolean;
+  /** a file was chosen in the list */
+  onPick?: (name: string) => void;
+}
+
+/** The last path part and its extension: "DIR\SONG.MID" -> ["SONG", "MID"]. */
+export function fileParts(name: string): { base: string; ext: string } {
+  const leaf = name.slice(name.lastIndexOf("\\") + 1);
+  const dot = leaf.lastIndexOf(".");
+  return dot > 0 ? { base: leaf.slice(0, dot), ext: leaf.slice(dot + 1).toUpperCase() } : { base: leaf, ext: "" };
+}
+
+/** The file last chosen, per context (the tab is rebuilt on every visit and language change). */
+const chosenFile = new WeakMap<AppContext, string>();
+
+export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = {}): UsbPane {
+  const songHasData = opts.songHasData ?? (() => false);
   const store = ctx.store;
   const status = h("p", { class: "muted", id: "usb-status" });
   const result = h("p", { class: "muted pane-result", id: "usb-result", role: "status" }, "");
@@ -100,8 +127,9 @@ export function usbPane(ctx: AppContext, lock: FileLock, songHasData: (n: number
 
   const songSel = h("select", { id: "usb-import-song" }, ...Array.from({ length: SONGS }, (_, i) => h("option", { value: String(i) }, t("Song {n}", { n: i + 1 })))) as HTMLSelectElement;
   const target = () => Number(songSel.value);
-  // the file whose other buttons are shown (one at a time)
+  // the file whose other buttons are shown (one at a time), and the file chosen for the player bar
   let open: string | null = null;
+  let chosen: string | null = chosenFile.get(ctx) ?? null;
   const importFile = (name: string, btn: EventTarget | null) => {
     const n = target();
     const go = () => void run(t("Import"), () => ctx.files()!.load(name, n), false);
@@ -116,18 +144,22 @@ export function usbPane(ctx: AppContext, lock: FileLock, songHasData: (n: number
       return;
     }
     if (open !== null && !files.includes(open)) open = null;
+    if (chosen !== null && !files.includes(chosen)) chosen = null;
     list.replaceChildren(
       ...files.map((name) => {
         const isOpen = open === name;
+        const on = chosen === name;
+        const plays = usbPlayingName(playing, name);
+        const { ext } = fileParts(name);
         return h(
           "div",
-          { class: "file-row", "data-file": name, "data-open": isOpen ? "1" : undefined },
+          { class: "file-row", "data-file": name, "data-on": on ? "1" : undefined, "data-open": isOpen ? "1" : undefined, "data-playing": plays ? "1" : undefined },
           h("div", { class: "file-main" },
-            h("button", { class: "file-pick", "data-act": "file-pick", "aria-expanded": String(isOpen), onclick: () => { open = isOpen ? null : name; render(); } },
-              h("span", { class: "file-name" }, name)),
-            usbPlayingName(playing, name)
-              ? h("button", { class: "icon-btn on", title: t("Stop"), "aria-label": t("Stop"), "data-act": "stop", onclick: () => void stop() }, "■")
-              : h("button", { class: "icon-btn", title: t("Play"), "aria-label": t("Play"), "data-act": "play", onclick: () => void play(name) }, "▶")),
+            h("button", { class: "file-pick", "data-act": "file-pick", "aria-pressed": String(on), title: name, onclick: () => pick(name) },
+              h("span", { class: "file-ext" }, plays ? playingMark() : ext || "–"),
+              // the type is the badge; the name keeps its directory ("DIR\SONG")
+              h("span", { class: "file-name" }, ext ? name.slice(0, name.length - ext.length - 1) : name)),
+            iconButton("more", t("More"), { class: "row-more", "data-act": "file-more", "aria-expanded": String(isOpen), onclick: () => { open = isOpen ? null : name; render(); } })),
           h("div", { class: "row-acts", hidden: !isOpen },
             h("button", { "data-act": "import", onclick: (e: Event) => importFile(name, e.currentTarget) }, `${t("Import")} → ${t("Song {n}", { n: target() + 1 })}`),
             h("button", { "data-act": "rename", onclick: () => void rename(name) }, t("Rename")),
@@ -176,20 +208,30 @@ export function usbPane(ctx: AppContext, lock: FileLock, songHasData: (n: number
   // play: USB memory mode (MusicMode 3), select the file into the USB player, then Play (ui/usbplay.ts) - after
   // stopping whatever USB playback runs; refused (with the panel way to stop) when it does not stop.
   const playing = usbPlayback(ctx);
-  // the rows' ▶/■ as last drawn (onPlay below redraws only when it changes)
+  // the rows' playing marks as last drawn (onPlay below redraws only when one changes)
   const playKey = () => ctx.usbFiles.map((n) => (usbPlayingName(playing, n) ? "■" : "▶") + n).join("\n");
   let shownKey = "";
   const stillText = () => t("The piano still plays from the USB memory. Stop it on the piano: on the panel's USB memory screen choose the playing file and press Stop; if it still plays, switch the piano off and on.");
   const play = async (name: string) => {
     if (lock.busy || playing.stopping) return;
     let refused: string | null = null;
-    await run(t("Play"), async () => {
+    const ok = await run(t("Play"), async () => {
       const r = await usbPlay(ctx, name, () => (result.textContent = t("Stopping the USB playback that runs first…")));
       if (!r.ok && r.why === "not-stopped") refused = t("{name} was not started: the USB playback that runs did not stop.", { name }) + " " + stillText();
       else if (!r.ok && r.why === "offline") throw new Error(t("Connect to the piano first."));
     }, false);
+    // started: the player bar and the row's mark say so - no "done" line that would outlast the playback
     if (refused) result.textContent = refused;
+    else if (ok) result.textContent = "";
     render();
+  };
+  // a tap on a row: the file the player bar shows; while a USB file plays, the tapped one plays instead
+  const pick = (name: string) => {
+    chosen = name;
+    chosenFile.set(ctx, name);
+    render();
+    opts.onPick?.(name);
+    if (usbAnyRunning(playing) && !usbPlayingName(playing, name)) void play(name);
   };
   // stop: both USB players (the selected type's, the audio one, the SMF one), then the piano must stay quiet
   const stop = async () => {
@@ -202,7 +244,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, songHasData: (n: number
     result.textContent = t("{op}…", { op: t("Stop") });
     try {
       const r = await usbStopAll(ctx);
-      result.textContent = r === "stopped" ? t("{op}: done", { op: t("Stop") }) : r === "still" ? stillText() : t("Connect to the piano first.");
+      result.textContent = r === "stopped" ? "" : r === "still" ? stillText() : t("Connect to the piano first.");
     } finally {
       lock.busy = false;
     }
@@ -298,7 +340,8 @@ export function usbPane(ctx: AppContext, lock: FileLock, songHasData: (n: number
           } }, t("Format the USB memory"))))),
   );
   return {
-    el, run, stop,
+    el, run, stop, pick, play,
+    selected: () => (chosen !== null && ctx.usbFiles.includes(chosen) ? chosen : null),
     setImportTarget(n) {
       if (n < 0 || n >= SONGS || target() === n) return;
       songSel.value = String(n);

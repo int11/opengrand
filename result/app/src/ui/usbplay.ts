@@ -16,7 +16,7 @@
 // bar / beat (first byte 0) advance while the SMF player plays, time (first byte 1) while the audio player does.
 import { FileAccessError } from "../protocol/fileaccess.ts";
 import type { PianoSession } from "../protocol/session.ts";
-import { findParam } from "../protocol/codecs.ts";
+import { findParam, progress as progressCodec } from "../protocol/codecs.ts";
 import type { AppContext } from "./context.ts";
 import { MUSIC_MODE } from "./screens/songctl.ts";
 
@@ -47,11 +47,15 @@ interface PlayerState {
   at: number; // the last sign of life
   progress: number | null; // last MusicProgress value of its kind
   progressSeen: boolean; // this player's progress kind has arrived in this session
+  pos: number | null; // where it is, for the player bar: bar (SMF, 1-based) or milliseconds (audio)
 }
 export interface UsbPlayback {
   session: PianoSession | null;
   mode: number | undefined; // the piano's MusicMode as it last said (32 52 1D / 10 52 1D) or we set
   sel: number | undefined; // type of the file last selected by 24 08
+  /** the selected file's length, if the piano said one after the select (MaxTime 10 52 18 in MusicMode 3: bar form
+   *  [0, hi7, lo7, ..] or time form [1, t4 .. t0]); null = not said - the player bar then shows the position only */
+  max: { unit: "bar" | "ms"; total: number } | null;
   smf: PlayerState;
   audio: PlayerState;
   stopping: boolean;
@@ -63,7 +67,7 @@ export interface UsbPlayback {
 }
 
 const states = new WeakMap<AppContext, UsbPlayback>();
-const fresh = (): PlayerState => ({ name: null, on: false, at: 0, progress: null, progressSeen: false });
+const fresh = (): PlayerState => ({ name: null, on: false, at: 0, progress: null, progressSeen: false, pos: null });
 
 /** Per context and session (a reconnect starts over), listening to the piano from the first call on. */
 export function usbPlayback(ctx: AppContext): UsbPlayback {
@@ -73,7 +77,7 @@ export function usbPlayback(ctx: AppContext): UsbPlayback {
   st?.off?.();
   if (st?.timer) clearTimeout(st.timer);
   const listeners = st?.listeners ?? new Set<() => void>();
-  st = { session: s, mode: undefined, sel: undefined, smf: fresh(), audio: fresh(), stopping: false, advances: 0, listeners, off: null, timer: null };
+  st = { session: s, mode: undefined, sel: undefined, max: null, smf: fresh(), audio: fresh(), stopping: false, advances: 0, listeners, off: null, timer: null };
   states.set(ctx, st);
   const me = st;
   me.off = ctx.store.onMessage((m) => {
@@ -83,6 +87,11 @@ export function usbPlayback(ctx: AppContext): UsbPlayback {
       changed(me);
     } else if (m.v2 === 0x08 && (m.fn === 0x10 || m.fn === 0x32)) onMusic(me, m.data[0]);
     else if (m.v2 === 0x03 && (m.fn === 0x10 || m.fn === 0x32) && m.data.length >= 4) onProgress(me, m.data);
+    else if (m.v2 === 0x18 && m.fn === 0x10 && m.data.length >= 3 && me.mode === MUSIC_MODE.UsbMemory) {
+      const d = progressCodec.decode(m.data);
+      const total = "bar" in d ? d.bar : d.ms;
+      me.max = total > 0 ? { unit: "bar" in d ? "bar" : "ms", total } : null;
+    }
   });
   return st;
 }
@@ -119,6 +128,8 @@ function onProgress(st: UsbPlayback, d: number[]): void {
   const grew = ps.progress !== null && v > ps.progress;
   ps.progress = v;
   ps.progressSeen = true;
+  const at = progressCodec.decode(d);
+  ps.pos = "bar" in at ? at.bar : at.ms;
   if (!grew) return;
   st.advances++;
   ps.on = true;
@@ -134,7 +145,16 @@ export function usbRunning(st: UsbPlayback, p: UsbPlayer, now = Date.now()): boo
 export function usbAnyRunning(st: UsbPlayback): boolean {
   return usbRunning(st, "smf") || usbRunning(st, "audio");
 }
-/** The file a row shows ■ for. */
+/** What the player bar shows of a running USB playback: the player that runs (the audio one first - it is heard over
+ *  an SMF), its file (null: started elsewhere), its position and - only if the piano said one for the file selected
+ *  last and it is this player's - the length. null when nothing runs. */
+export function usbNow(st: UsbPlayback): { player: UsbPlayer; name: string | null; unit: "bar" | "ms"; pos: number | null; total: number | null } | null {
+  const p = (["audio", "smf"] as const).find((q) => usbRunning(st, q));
+  if (!p) return null;
+  const unit = p === "smf" ? "bar" : "ms";
+  return { player: p, name: st[p].name, unit, pos: st[p].pos, total: st.max && st.max.unit === unit && playerOfType(st.sel) === p ? st.max.total : null };
+}
+/** The file a row shows as playing. */
 export function usbPlayingName(st: UsbPlayback, name: string): boolean {
   return (["smf", "audio"] as const).some((p) => usbRunning(st, p) && st[p].name === name);
 }
@@ -151,6 +171,7 @@ function sender(ctx: AppContext, st: UsbPlayback) {
     music: (v: number) => store.command(findParam("Music", 0x32)!, 0x7f, [v]),
     /** 24 08: Busy means that player runs - the stock set the type first and loaded nothing (the stop's case) */
     select: async (name: string, busyOk: boolean) => {
+      st.max = null; // the length the piano said belonged to the file selected before
       try {
         await ctx.files()!.select(name);
       } catch (e) {
@@ -242,7 +263,7 @@ export async function usbPlay(ctx: AppContext, name: string, onStopping?: () => 
   }
   await tx.music(MUSIC.Play);
   const p = playerOf(name);
-  if (p) Object.assign(st[p], { name, on: true, at: Date.now() });
+  if (p) Object.assign(st[p], { name, on: true, at: Date.now(), pos: null });
   changed(st);
   return { ok: true };
 }

@@ -14,7 +14,8 @@
 //   npm run panelsim -- --recorder           the 「레코더」 tab on a piano with the playback control (Identify feat2 0x10,
 //                                            op 0x1E answered here: ten songs, three recorded, the core deletes) and a
 //                                            USB memory with a few files: the views 20-… (song chosen, playing, the
-//                                            overwrite question, record standby, options, the USB list) on top of the tabs
+//                                            recording, the options sheet, a USB file playing, the Music tab's bar;
+//                                            overwrite question, record standby, the USB list) on top of the tabs
 //   npm run panelsim -- --updatemode         the piano in its USB firmware updater (E+A+B+C at power on): a model of
 //                                            the BootProgram's panel side (src/protocol/updatemode.ts UpdaterModel)
 //                                            instead of the firmware simulator. The panel page must show 「전원을 끄지
@@ -162,27 +163,40 @@ function ngFullAnswer(m: Uint8Array): Uint8Array | null {
 /**
  * `--recorder`: the piano's playback control (0x7D op 0x1E, firmware recctl) - the firmware simulator does not answer
  * it, so this script answers Identify (feat2 0x10), 1E 00 status (48 B, the core deletes), 1E 01 song table (songs 1, 2
- * and 5 recorded) and 1E 02 commands (select / play / pause / stop) with the status notice that follows. A Kawai Music
- * byte (32 52 08: 3 = record standby, 2 = stop) still goes to the simulator; the status notice it would cause is sent
- * through `recPush` (set by the page's link).
+ * and 5 recorded) and 1E 02 commands (select / play / pause / stop / bar seek) with the status notice that follows. A
+ * Kawai Music byte in the recorder mode (32 52 08: 3 = record standby, 1 there = record, 2 = stop) still goes to the
+ * simulator; the status notice it would cause is sent through `recPush` (set by the page's link). The MusicMode the
+ * app sets (31 52 1D) is followed: in MusicMode 3 (a USB file) the recorder's state is left alone, and a Play there
+ * is followed by the audio player's time (MusicProgress, time form - 7 s) as the stock sends it while an MP3 plays.
+ * No length is sent for it: the stock is not known to say one for a USB file.
  */
 let recSim = false;
 let recPush: ((m: Uint8Array) => void) | null = null;
-const recState = { state: 2, song: 0 };
+const recState = { state: 2, song: 0, bar: 0, mode: 2 };
 const REC_SONGS: [number, number][] = [[12, 3], [24, 1], [0, 0], [0, 0], [8, 2], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]; // [bars, part bits]
 function recAnswer(m: Uint8Array): Uint8Array | null {
   if (!recSim || m.length < 8 || m[0] !== 0xf0) return null;
   const head = [0xf0, 0x7d, 0x43, 0x41, 0x37, 0x39];
   const status = () => {
     const raw = new Array<number>(48).fill(0);
-    raw[0] = 1; raw[1] = recState.state; raw[3] = recState.song; raw[6] = 2; raw[8] = 120; raw[10] = 120;
-    raw[16] = REC_SONGS[recState.song][0]; raw[29] = recState.state === 1 ? 5 : 0; raw[31] = 1;
+    raw[0] = 1; raw[1] = recState.state; raw[3] = recState.song; raw[6] = recState.mode; raw[8] = 120; raw[10] = 120;
+    raw[16] = REC_SONGS[recState.song][0]; raw[29] = recState.state === 2 ? 0 : recState.bar; raw[31] = 1;
     return Uint8Array.from([...head, 0x5e, 0, 0, ...pack7(raw), 0xf7]);
   };
+  if (m[1] === 0x40 && m[3] === 0x31 && m[6] === 0x52 && m[7] === 0x1d) {
+    recState.mode = m[9]!;
+    return null;
+  }
   // Kawai Music command (F0 40 7F 32 08 02 52 08 7F v F7): forwarded; the recorder state follows as a notice
   if (m[1] === 0x40 && m[3] === 0x32 && m[6] === 0x52 && m[7] === 0x08) {
     const v = m[9]!;
+    if (recState.mode === 3) {
+      const time = (ms: number) => Uint8Array.from([0xf0, 0x40, 0x7f, 0x32, 0x04, 0x1e, 0x52, 0x03, 0x7f, 1, 0, 0, (ms >> 14) & 0x7f, (ms >> 7) & 0x7f, ms & 0x7f, 0xf7]);
+      if (v === 1) [0, 7000].forEach((ms, k) => setTimeout(() => recPush?.(time(ms)), 150 + 100 * k));
+      return null;
+    }
     recState.state = v === 3 ? (recState.state === 3 ? 2 : 3) : v === 1 && recState.state === 3 ? 4 : v <= 2 ? v : recState.state;
+    if (recState.state === 4) recState.bar = 3;
     setTimeout(() => recPush?.(status()), 120);
     return null;
   }
@@ -198,10 +212,11 @@ function recAnswer(m: Uint8Array): Uint8Array | null {
   if (m[7] !== 0x02) return null;
   const cmd = m[8]!, arg = (m[9]! << 7) | m[10]!;
   if (cmd === 1 && !REC_SONGS[recState.song][0]) return Uint8Array.from([...head, 0x5e, 2, 6, cmd, 0xf7]); // nothing recorded
-  if (cmd === 1) recState.state = 1;
-  if (cmd === 2) recState.state = 2;
+  if (cmd === 1) { recState.state = 1; recState.bar = recState.bar || 9; }
+  if (cmd === 2) { recState.state = 2; recState.bar = 0; }
   if (cmd === 3) recState.state = 0;
-  if (cmd === 4 && arg < 10) recState.song = arg;
+  if (cmd === 4 && arg < 10) { recState.song = arg; recState.bar = 0; }
+  if (cmd === 7) recState.bar = arg;
   setTimeout(() => recPush?.(status()), 60);
   return Uint8Array.from([...head, 0x5e, 2, 0, cmd, 0xf7]);
 }
@@ -212,7 +227,10 @@ function usbDir(outRoot: string): string {
   const dir = join(outRoot, "usb");
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  for (const f of ["SONG_01.MID", "SONG_02.KSO", "Nocturne Op.9 No.2 (practice take 3).MP3", "REC001.WAV"]) writeFileSync(join(dir, f), "MThd");
+  // each a small valid SMF (one note held for 200 bars) so that the simulator loads and plays it - also the audio
+  // names: the simulator has no audio player, recAnswer sends the time an MP3 would report
+  const smf = Buffer.from("4d546864000000060000000101e04d54726b0000001500ff5103" + "07a120" + "00903c40" + "97b800803c40" + "00ff2f00", "hex");
+  for (const f of ["SONG_01.MID", "SONG_02.KSO", "Nocturne Op.9 No.2 (practice take 3).MP3", "REC001.WAV"]) writeFileSync(join(dir, f), smf);
   return dir;
 }
 
@@ -488,11 +506,16 @@ async function shootTabs(page: Page, out: string, shots: string[], audits: Recor
   }
 }
 
-/** `--recorder`: the 「레코더」 tab's states (recAnswer above), each shot whole and audited. */
+/** `--recorder`: the 「레코더」 tab's states (recAnswer above) and the Music tab's player bar, each shot as the screen
+ *  shows it (the viewport, scrolled to the top unless `top` is false: a whole-page shot smears the docked bar and the
+ *  fixed tab row) and audited. */
 async function shootRecorder(page: Page, out: string, shots: string[], audits: Record<string, Audit>, log: string[]): Promise<void> {
-  const shot = async (name: string) => {
+  Object.assign(recState, { state: 2, song: 0, bar: 0, mode: 2 });
+  const shot = async (name: string, top = true) => {
     await sleep(500);
-    await page.screenshot({ path: join(out, `${name}.png`), fullPage: true, scale: "css" });
+    if (top) await page.evaluate(() => window.scrollTo(0, 0));
+    await sleep(100);
+    await page.screenshot({ path: join(out, `${name}.png`), scale: "css" });
     shots.push(`${name}.png`);
     audits[name] = await audit(page);
   };
@@ -502,33 +525,59 @@ async function shootRecorder(page: Page, out: string, shots: string[], audits: R
     await b.evaluate((e) => e.scrollIntoView({ block: "center" })); // clear of the fixed tab row
     await tap(b, sel, log);
   };
+  const expect = async (what: string, sel: string) => {
+    if (!(await page.locator(sel).count())) log.push(`RECORDER FAIL: ${what} (${sel})`);
+  };
   await openTab(page, "files", log);
   await sleep(900);
   await press('#songs-list [data-song="2"] .song-pick');
   await shot("20-recorder-song");
   await press('#rec-panel [data-act="play"]');
   await shot("21-recorder-playing");
+  await expect("the one button pauses while the song plays", '#rec-panel .pl-main[data-act="pause"]');
+  await expect("the playing row is marked", '#songs-list [data-song="2"][data-playing]');
+  await expect("the line is a slider on a piano with the bar seek", "#rec-panel .pl-range:not([hidden])");
   await press('#rec-panel [data-act="stop"]');
   await press('#rec-panel [data-act="rec"]');
   await shot("22-recorder-overwrite");
   await press('#rec-panel [data-act="rec-confirm"]');
   await shot("23-recorder-standby");
+  await press('#rec-panel [data-act="play"]'); // starts the recording that waits
+  await shot("24-recorder-recording");
+  await expect("the bar is in the recording state", '#rec-panel[data-play="4"]');
   await press('#rec-panel [data-act="stop"]');
-  await press("#rec-more > summary");
-  await shot("24-recorder-options");
-  await press("#rec-more > summary");
+  await press('#rec-panel [data-act="options"]');
+  await shot("25-recorder-options");
+  await press('#rec-panel-options [data-act="options-close"]');
+  await press('#songs-list [data-song="2"] [data-act="song-more"]');
   await press('#songs-list [data-song="2"] [data-act="song-delete"]');
-  await shot("25-recorder-delete-ask");
+  await shot("26-recorder-song-more");
+  await press('#songs-list [data-song="2"] [data-act="song-more"]');
   await press('#rec-lists [data-list="usb"]');
   await sleep(1500);
-  await shot("26-recorder-usb");
-  await press("#usb-files .file-row:nth-child(3) .file-pick");
+  await shot("27-recorder-usb");
+  // a USB file chosen and played: the bar is that file's, with the audio player's time
+  await press('#usb-files [data-file*="Nocturne"] .file-pick');
+  await press('#rec-panel [data-act="play"]');
+  await sleep(900);
+  await shot("28-recorder-usb-playing");
+  await expect("the bar's main button stops the USB file", '#rec-panel .pl-main[data-act="stop"]');
+  await expect("the playing file's row is marked", '#usb-files [data-file*="Nocturne"][data-playing]');
+  await press('#usb-files [data-file*="Nocturne"] [data-act="file-more"]');
   await press("#usb-manage > summary");
-  await shot("27-recorder-usb-open");
+  await shot("29-recorder-usb-more", false);
+  await press("#usb-manage > summary");
+  await press('#usb-files [data-file*="Nocturne"] [data-act="file-more"]');
+  await press('#rec-panel [data-act="stop"]');
+  await sleep(3200); // the stop watches the piano stay quiet (ui/usbplay.ts USB_STOP)
   await press('#rec-lists [data-list="internal"]');
+  await press('#songs-list [data-song="2"] .song-pick');
   await openTab(page, "music", log);
-  await press("#music-more > summary");
-  await shot("28-music-options");
+  await sleep(500);
+  await shot("30-music");
+  await press('#music-player [data-act="options"]');
+  await shot("31-music-options");
+  await press('#music-player-options [data-act="options-close"]');
 }
 
 /** Audit lines that fail the run: sideways overflow on every profile, small tap targets on the touch profiles. */
