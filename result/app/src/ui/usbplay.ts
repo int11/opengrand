@@ -59,6 +59,9 @@ export interface UsbPlayback {
   smf: PlayerState;
   audio: PlayerState;
   stopping: boolean;
+  /** the piano's audio recorder runs for this app (ui/audiorec.ts): its Music state and recorded time are not a
+   *  USB playback */
+  recording: boolean;
   /** advances of either player since the counter was read (the stop's quiet check) */
   advances: number;
   listeners: Set<() => void>;
@@ -77,7 +80,7 @@ export function usbPlayback(ctx: AppContext): UsbPlayback {
   st?.off?.();
   if (st?.timer) clearTimeout(st.timer);
   const listeners = st?.listeners ?? new Set<() => void>();
-  st = { session: s, mode: undefined, sel: undefined, max: null, smf: fresh(), audio: fresh(), stopping: false, advances: 0, listeners, off: null, timer: null };
+  st = { session: s, mode: undefined, sel: undefined, max: null, smf: fresh(), audio: fresh(), stopping: false, recording: false, advances: 0, listeners, off: null, timer: null };
   states.set(ctx, st);
   const me = st;
   me.off = ctx.store.onMessage((m) => {
@@ -108,7 +111,7 @@ function changed(st: UsbPlayback): void {
 
 /** Music state (FUN_4015C27C): in MusicMode 3 it is the selected type's player; other modes always say 2. */
 function onMusic(st: UsbPlayback, v: number | undefined): void {
-  if (st.mode !== MUSIC_MODE.UsbMemory) return;
+  if (st.mode !== MUSIC_MODE.UsbMemory || st.recording) return;
   const p = playerOfType(st.sel);
   if (!p) return;
   if (v === MUSIC.Play) Object.assign(st[p], { on: true, at: Date.now() });
@@ -120,7 +123,7 @@ function onMusic(st: UsbPlayback, v: number | undefined): void {
 /** MusicProgress: [0, bar hi, bar lo, beat, ..] from the SMF player, [1, t4 .. t0] from the audio player. A value
  *  that grows is a player playing; the same value again (select) or a smaller one (stop -> bar 1) is not. */
 function onProgress(st: UsbPlayback, d: number[]): void {
-  if (st.mode === MUSIC_MODE.Recorder) return; // the internal recorder's bars
+  if (st.mode === MUSIC_MODE.Recorder || st.recording) return; // the internal recorder's bars; the audio recorder's time
   const p: UsbPlayer | null = d[0] === 0 ? "smf" : d[0] === 1 ? "audio" : null;
   if (!p) return;
   const v = d.slice(1).reduce((a, b) => a * 128 + (b & 0x7f), 0);

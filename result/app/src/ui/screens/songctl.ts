@@ -111,6 +111,8 @@ export interface PlayerActions {
   seek?(bar: number): void;
   /** the Rec button; without it there is none */
   rec?(): void;
+  /** false: the chosen part is never said on the bar (it is in the options sheet only) - default true */
+  partPill?: boolean;
 }
 
 export interface PlayerBar {
@@ -266,7 +268,7 @@ export function playerBar(store: ParamStore, id: string, acts: PlayerActions): P
     parts.sync();
     const v = store.get(partP, 0x7f)?.[0];
     text(partVal, v === 0 ? "1" : v === 1 ? "2" : "1+2");
-    partBtn.hidden = !partMeant || (v !== 0 && v !== 1);
+    partBtn.hidden = acts.partPill === false || !partMeant || (v !== 0 && v !== 1);
   };
   syncPart();
 

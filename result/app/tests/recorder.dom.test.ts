@@ -113,10 +113,11 @@ test("recorder tab layout: the player bar on top, then [Piano songs | USB memory
   assert.equal((el.querySelector("#rec-panel .pl-range") as HTMLElement).hidden, true, "the line is a slider only where the piano can jump");
   assert.deepEqual([panelBtn(el, "prev").disabled, panelBtn(el, "next").disabled], [true, false]);
   assert.deepEqual([...el.querySelectorAll("#rec-panel [data-part-select] button")].map((b) => b.textContent), ["Part 1", "Part 2", "Both"]);
-  // the recording target: one today (the piano's own songs), so its buttons are not drawn
-  const target = el.querySelector("#rec-target") as HTMLElement;
-  assert.equal(target.hidden, true);
-  assert.deepEqual([...target.querySelectorAll("button")].map((b) => b.getAttribute("data-target")), ["internal"]);
+  // Rec records into the piano: no target or format to choose first (owner 2026-11-23), and no part on the bar
+  assert.equal(el.querySelector("#rec-target"), null);
+  assert.equal(panelBtn(el, "part").hidden, true);
+  // rows of one style: a piano song carries the badge a USB file's row has
+  assert.equal(songRow(el, 1).querySelector(".file-ext")!.textContent, "Piano");
   // part / tempo / transpose / seek / A-B are a sheet behind the options button
   const more = el.querySelector("#rec-panel-options") as HTMLDialogElement;
   assert.equal(more.open, false);
@@ -258,7 +259,7 @@ test("owner 2026-11-23: a tap on a song row plays a recorded song (an empty one 
   assert.equal(pill.hidden, true, "both parts: no pill");
   store.fromWire({ fn: 0x10, v1: 0x52, v2: 0x01, part: 0x7f, data: [0] });
   await wait(2);
-  assert.deepEqual([pill.hidden, pill.textContent], [false, "Part1"]);
+  assert.equal(pill.hidden, true, "one part: said in the options sheet only");
   assert.equal(partRow.hidden, false);
   assert.match(partRow.textContent!, /each hand can be recorded on its own/);
   // a USB file in the bar has no parts: no pill, no part row in the options
@@ -270,7 +271,9 @@ test("owner 2026-11-23: a tap on a song row plays a recorded song (an empty one 
   // into a piano song: only a KSO (the piano refuses MID / MP3 / WAV)
   for (const f of ["A.MP3", "B.KSO"]) (el.querySelector(`[data-file="${f}"] [data-act="file-more"]`) as HTMLElement).click();
   assert.equal(el.querySelector('[data-file="A.MP3"] [data-act="import"]'), null);
-  assert.equal(el.querySelector('[data-file="B.KSO"] [data-act="import"]')!.textContent, "Into piano song 3");
+  assert.equal(el.querySelector('[data-file="B.KSO"] [data-act="import"]')!.textContent, "Into the piano");
+  assert.deepEqual([...el.querySelectorAll('[data-file="A.MP3"] .row-acts button')].map((b) => b.getAttribute("data-act")), ["rename", "delete"]);
+  assert.equal(el.querySelector("#usb-import-song"), null, "no import target to choose");
   el.remove();
 });
 
@@ -347,5 +350,97 @@ test("recording panel on the stock: Rec needs a song, asks before recording over
   await tick(20);
   assert.equal(over.hidden, true);
   assert.equal(sent.filter((m) => m === music(3)).length, n + 1);
+  el.remove();
+});
+
+test("owner 2026-11-23, rule 2: Rec records into an empty piano song chosen by the app; when it stops the sheet says where it is and offers USB", async () => {
+  const store = new ParamStore();
+  const s = fakeSession(0x1f);
+  const params: number[][] = [];
+  // the Kawai bytes this screen sends as commands (the store has no session here)
+  store.command = async (p, _part, data) => (params.push([p.fn, p.v1, p.v2, ...data]), true);
+  const ctx = createContext(store, { session: () => s as never });
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  // song 1 (selected) and song 2 hold recordings, song 3 is the first empty one: no question, no target, no format
+  assert.equal(selected(el), "Song 13 bars");
+  panelBtn(el, "rec").click();
+  await wait();
+  assert.equal((el.querySelector("#rec-overwrite") as HTMLElement).hidden, true, "nothing is asked while a song is empty");
+  assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 4, 0, 2], "op select: song 3");
+  assert.deepEqual(params.at(-1), [0x32, 0x52, 0x08, 3], "Music 3 = record standby");
+  assert.match(selected(el)!, /^Song 3/);
+  // the piano records in song 3, then stops
+  const sheet = el.querySelector("#save-sheet") as HTMLElement;
+  s.push(frame([0x00, 0x00, ...ng.pack7(statusRaw(4, 2, 1))]));
+  await wait(4);
+  assert.equal(sheet.hasAttribute("open"), false);
+  s.push(frame([0x00, 0x00, ...ng.pack7(statusRaw(2, 2))]));
+  await wait(4);
+  assert.equal(sheet.hasAttribute("open"), true);
+  assert.deepEqual([sheet.querySelector("h3")!.textContent, sheet.querySelector("#save-sheet-sub")!.textContent], ["Saved: piano song 3", "Also save to USB"]);
+  assert.deepEqual([...sheet.querySelectorAll(".chip")].map((c) => c.textContent), ["MID", "KSO", "MP3", "WAV"]);
+  (sheet.querySelector('[data-act="save-close"]') as HTMLElement).click();
+  // the same sheet from a song's ⋯ menu (rule 3)
+  (songRow(el, 2).querySelector('[data-act="song-more"]') as HTMLElement).click();
+  assert.deepEqual([...songRow(el, 2).querySelectorAll(".row-acts button")].map((b) => b.textContent), ["Save to USB"]);
+  (songRow(el, 2).querySelector('[data-act="song-save"]') as HTMLElement).click();
+  assert.deepEqual([sheet.hasAttribute("open"), sheet.querySelector("h3")!.textContent, sheet.querySelector("#save-sheet-sub")!.textContent], [true, "Song 2", "Save to USB"]);
+  el.remove();
+});
+
+test("field 2026-11-23: in MusicMode 3 the piano's state and position are a USB player's - the bar does not show the piano song as playing", async () => {
+  const store = new ParamStore();
+  const s = fakeSession(0x1f);
+  const ctx = createContext(store, { session: () => s as never });
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  const usb = statusRaw(1, 1, 13);
+  usb[6] = 3; // MusicMode 3: USB memory
+  s.push(frame([0x00, 0x00, ...ng.pack7(usb)]));
+  await wait(4);
+  assert.equal(stateText(el), "Stopped", "not 「재생 중 · 곡 2 · 13/13마디」");
+  assert.equal(songRow(el, 2).getAttribute("data-playing"), null);
+  // back in the recorder mode the piano's word counts again
+  s.push(frame([0x00, 0x00, ...ng.pack7(statusRaw(1, 1, 2))]));
+  await wait(4);
+  assert.equal(stateText(el), "Playing");
+  el.remove();
+});
+
+test("「피아노에 넣기」 on a MID: read, convert to KSO (checked), write it next to the MID, then 24 09 into an empty song", async () => {
+  const { checkKso } = await import("../src/protocol/kso.ts");
+  const { buildSmf, note: smfNote } = await import("./fixtures/kso_cases.ts");
+  const store = new ParamStore();
+  const s = fakeSession(0x1f);
+  const calls: unknown[][] = [];
+  let smf: Uint8Array = buildSmf(0, 96, [smfNote(0, 0, 96, 60)]);
+  const files = {
+    list: async () => ctx.usbFiles,
+    read: async (n: string) => (calls.push(["read", n]), smf),
+    write: async (n: string, d: Uint8Array) => (calls.push(["write", n, checkKso(d)]), ctx.usbFiles.push(n), 0),
+    load: async (n: string, song: number) => (calls.push(["load", n, song]), 0),
+  };
+  const ctx = createContext(store, { session: () => s as never, files: () => files as never });
+  ctx.usbFiles = ["S.MID", "S.KSO", "BAD.MID"];
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  (el.querySelector("#rec-lists [data-list=usb]") as HTMLElement).click();
+  for (const f of ["S.MID", "BAD.MID"]) (el.querySelector(`[data-file="${f}"] [data-act="file-more"]`) as HTMLElement).click();
+  (el.querySelector('[data-file="S.MID"] [data-act="import"]') as HTMLElement).click();
+  await wait();
+  // songs 1 and 2 are recorded: song 3 (index 2) is the first empty one; S.KSO exists, so the new file is S_2.KSO
+  assert.deepEqual(calls, [["read", "S.MID"], ["write", "S_2.KSO", null], ["load", "S_2.KSO", 2]], "the KSO passed checkKso before 24 09");
+  assert.equal(el.querySelector("#rec-note")!.textContent, "S.MID is now piano song 3.");
+  // a file the converter refuses: said in plain words, nothing written, nothing imported
+  calls.length = 0;
+  smf = Uint8Array.from([1, 2, 3]);
+  (el.querySelector('[data-file="BAD.MID"] [data-act="import"]') as HTMLElement).click();
+  await wait();
+  assert.deepEqual(calls, [["read", "BAD.MID"]]);
+  assert.equal(el.querySelector("#usb-result")!.textContent, "Convert to a piano song failed: This is not a MIDI file the app can read.");
   el.remove();
 });

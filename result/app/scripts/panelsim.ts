@@ -15,7 +15,7 @@
 //                                            op 0x1E answered here: ten songs, three recorded, the core deletes) and a
 //                                            USB memory with a few files: the views 20-… (song chosen, playing, the
 //                                            recording, the options sheet, a USB file playing, the Music tab's bar;
-//                                            overwrite question, record standby, the USB list) on top of the tabs
+//                                            record standby, the sheet after a recording, 「USB로 저장」, the USB list) on top of the tabs
 //   npm run panelsim -- --updatemode         the piano in its USB firmware updater (E+A+B+C at power on): a model of
 //                                            the BootProgram's panel side (src/protocol/updatemode.ts UpdaterModel)
 //                                            instead of the firmware simulator. The panel page must show 「전원을 끄지
@@ -217,7 +217,10 @@ function recAnswer(m: Uint8Array): Uint8Array | null {
   if (cmd === 3) recState.state = 0;
   if (cmd === 4 && arg < 10) { recState.song = arg; recState.bar = 0; }
   if (cmd === 7) recState.bar = arg;
-  setTimeout(() => recPush?.(status()), 60);
+  setTimeout(() => {
+    recPush?.(status());
+    recPush?.(Uint8Array.from([...head, 0x5e, 3, 1, cmd, 0xf7])); // the command is done (recctl's event notice)
+  }, 60);
   return Uint8Array.from([...head, 0x5e, 2, 0, cmd, 0xf7]);
 }
 const fakeAnswer = (m: Uint8Array, port: number) => ngFullAnswer(m) ?? coBoundAnswer(m, port) ?? btSrcAnswer(m) ?? recAnswer(m);
@@ -530,35 +533,43 @@ async function shootRecorder(page: Page, out: string, shots: string[], audits: R
   };
   await openTab(page, "files", log);
   await sleep(900);
-  await press('#songs-list [data-song="2"] .song-pick');
+  await press('#songs-list [data-song="4"] .song-pick'); // an empty song is only chosen
   await shot("20-recorder-song");
-  await press('#rec-panel [data-act="play"]');
-  await shot("21-recorder-playing");
+  await press('#songs-list [data-song="2"] .song-pick');
+  await shot("21-recorder-playing"); // a tap on a recorded song's row plays it
   await expect("the one button pauses while the song plays", '#rec-panel .pl-main[data-act="pause"]');
   await expect("the playing row is marked", '#songs-list [data-song="2"][data-playing]');
   await expect("the line is a slider on a piano with the bar seek", "#rec-panel .pl-range:not([hidden])");
   await press('#rec-panel [data-act="stop"]');
+  // Rec: into an empty song the app chooses - no question, no target, no format (three songs are recorded here)
   await press('#rec-panel [data-act="rec"]');
-  await shot("22-recorder-overwrite");
-  await press('#rec-panel [data-act="rec-confirm"]');
   await shot("23-recorder-standby");
+  await expect("nothing is asked while a song is empty", "#rec-overwrite[hidden]");
   await press('#rec-panel [data-act="play"]'); // starts the recording that waits
   await shot("24-recorder-recording");
   await expect("the bar is in the recording state", '#rec-panel[data-play="4"]');
   await press('#rec-panel [data-act="stop"]');
+  // the recording stopped: 「저장됨: 피아노 곡 N」 with 「USB에도 저장」 (ui/savesheet.ts)
+  await shot("22-recorder-saved-sheet");
+  await expect("the sheet opens when a recording stops", "#save-sheet[open]");
+  await press('#save-sheet [data-act="save-close"]');
   await press('#rec-panel [data-act="options"]');
   await shot("25-recorder-options");
   await press('#rec-panel-options [data-act="options-close"]');
   await press('#songs-list [data-song="2"] [data-act="song-more"]');
   await press('#songs-list [data-song="2"] [data-act="song-delete"]');
   await shot("26-recorder-song-more");
+  // 「USB로 저장」: the one sheet with the one format list
+  await press('#songs-list [data-song="2"] [data-act="song-save"]');
+  await shot("26b-recorder-save-sheet");
+  await expect("the four formats", '#save-sheet [data-format="WAV"]');
+  await press('#save-sheet [data-act="save-close"]');
   await press('#songs-list [data-song="2"] [data-act="song-more"]');
   await press('#rec-lists [data-list="usb"]');
   await sleep(1500);
   await shot("27-recorder-usb");
   // a USB file chosen and played: the bar is that file's, with the audio player's time
-  await press('#usb-files [data-file*="Nocturne"] .file-pick');
-  await press('#rec-panel [data-act="play"]');
+  await press('#usb-files [data-file*="Nocturne"] .file-pick'); // a tap plays
   await sleep(900);
   await shot("28-recorder-usb-playing");
   await expect("the bar's main button stops the USB file", '#rec-panel .pl-main[data-act="stop"]');

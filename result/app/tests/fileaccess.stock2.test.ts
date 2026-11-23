@@ -274,11 +274,18 @@ test("USB playback: the piano's notices drive the row — Reset from the panel g
 
 test("field log: import 24 09 without arguments -> 7E 03 00 01 70; now 24 09 <song> <type>, KSO only on the stock", async () => {
   const { el, sent } = await setup();
-  // the stock (and the OpenGrand cave, whose file executor is the stock's) answers 0xF0 for a MID: no button for it
-  assert.equal(el.querySelector('[data-file="TEST01.MID"] [data-act="import"]'), null, "the stock imports only KSO");
+  // the stock (and the OpenGrand cave, whose file executor is the stock's) answers 0xF0 for a MID: a MID goes in
+  // through the app's converter (ui/midikso.ts - tests/recorder.dom.test.ts), never as 24 09 <song> 02
+  assert.ok(!sent.some((m) => m.startsWith("F0 40 7F 24 08 02 09") && !m.endsWith("03 F7")), "the stock imports only KSO");
+  // 「피아노에 넣기」: into an empty piano song - on the stock the songs are not known until a scan, so the song to
+  // replace is asked about (the chosen one, else the last)
   (el.querySelector('[data-file="SONG.KSO"] [data-act="import"]') as HTMLElement).click();
+  await tick(20);
+  assert.match(el.querySelector("#rec-overwrite")!.textContent!, /No piano song is empty\. SONG\.KSO goes into song 10/);
+  assert.ok(!sent.some((m) => m.startsWith("F0 40 7F 24 08 02 09")), "nothing before the answer");
+  (el.querySelector('#rec-overwrite [data-act="into-confirm"]') as HTMLElement).click();
   await tick(60);
-  assert.ok(sent.includes("F0 40 7F 24 08 02 09 00 03 F7"), "type index 3 = KSO");
+  assert.ok(sent.includes("F0 40 7F 24 08 02 09 09 03 F7"), "type index 3 = KSO");
   assert.equal(el.querySelector("#usb-result")!.textContent, "Import: done");
   el.remove();
 });
@@ -287,11 +294,12 @@ test("save as SMF: 24 0A <song> 02 + SONG_nn.MID, answered 32 51 7E by the stock
   const { el, sent, st } = await setup();
   (el.querySelector('[data-song="3"] [data-act="song-pick"]') as HTMLButtonElement).click(); // choose song 3: its buttons appear
   await tick(40);
-  (el.querySelector('[data-song="3"] [data-act="song-save"]') as HTMLButtonElement).click(); // 「USB로 (SMF)」
+  (el.querySelector('[data-song="3"] [data-act="song-save"]') as HTMLButtonElement).click(); // 「USB로 저장」
+  (el.querySelector('#save-sheet [data-format="MID"]') as HTMLElement).click(); // the one format list (ui/savesheet.ts)
   await tick(60);
   assert.ok(sent.includes("F0 40 7F 24 08 02 0A 02 02 F7"));
   assert.deepEqual(st.saved, [[2, 4, "\\SONG_03.MID"]], "FUN_4014F0E4(song 2, type 4 = MID)");
-  assert.equal(el.querySelector("#songs-status")!.textContent, "Save as SMF: done", "said next to the song list");
+  assert.equal(el.querySelector("#songs-status")!.textContent, "Saved to USB: SONG_03.MID", "said next to the song list");
   el.remove();
 });
 
@@ -326,4 +334,26 @@ test("stock: an unnamed upload (playData) is refused with 0xF0", async () => {
   const { session } = await setup();
   const fa = new FA.FileAccessClient(session, 500);
   await assert.rejects(fa.playData(Uint8Array.from([1, 2, 3])), (e: unknown) => e instanceof FA.FileAccessError && e.code === 0xf0);
+});
+
+test("a tap on a KSO row: into a piano song (24 09 <song> 03), then that song is selected and played; the bar shows the piano song", async () => {
+  const { el, sent, st } = await setup();
+  // the USB player does not play a KSO (manual: internal songs, SMF, MP3, WAV): the tap never selects it with 24 08
+  (el.querySelector('[data-file="SONG.KSO"] [data-act="file-pick"]') as HTMLElement).click();
+  await tick(20);
+  // stock, not scanned: no song is known to be empty -> which song it replaces is asked first
+  assert.match(el.querySelector("#rec-overwrite")!.textContent!, /Playing SONG\.KSO puts it into song 10/);
+  (el.querySelector('#rec-overwrite [data-act="into-confirm"]') as HTMLElement).click();
+  await tick(120);
+  const load = sent.indexOf("F0 40 7F 24 08 02 09 09 03 F7");
+  const mode = sent.indexOf("F0 40 7F 31 08 02 52 1D 7F 02 F7");
+  const select = sent.indexOf("F0 40 7F 10 08 02 52 00 7F 00 00 09 F7");
+  const play = sent.lastIndexOf("F0 40 7F 32 08 02 52 08 7F 01 F7");
+  assert.ok(load >= 0 && load < select && mode >= 0 && mode < select && select < play, `import ${load}, MusicMode 2 ${mode}, SongSelect ${select}, Play ${play}`);
+  assert.ok(!sent.includes("F0 40 7F 24 08 02 08 F7"), "never 24 08 (select into the USB player)");
+  assert.deepEqual(st.music.at(-1), 1);
+  assert.equal(el.querySelector("#rec-note")!.textContent, "Playing SONG.KSO from piano song 10.");
+  assert.match(el.querySelector("#rec-panel-info")!.textContent!, /^Song 10/, "the bar holds the piano song");
+  assert.equal(el.querySelector('[data-song="10"]')!.getAttribute("data-state"), "data");
+  el.remove();
 });

@@ -250,6 +250,7 @@ test("USB file manager lists files, deletes / renames by name, formats, reports 
   (el.querySelector('[data-song="1"] [data-act="song-pick"]') as HTMLElement).click();
   await tick(30);
   (el.querySelector('[data-song="1"] [data-act="song-save"]') as HTMLElement).click();
+  (el.querySelector('#save-sheet [data-format="MID"]') as HTMLElement).click(); // the one format list (ui/savesheet.ts)
   await tick(30);
   assert.ok(sent.includes("F0 40 7F 24 08 02 0A 00 02 F7"), "save internal song 0 as MID by name (24 0A 00 02), which the stock executes");
   assert.ok(!sent.some((m) => m.startsWith("F0 40 7F 32 08 02 52 20")), "not 32 52 20: a no-op on the stock");

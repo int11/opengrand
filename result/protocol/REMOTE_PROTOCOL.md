@@ -288,6 +288,23 @@ USB 파일 재생 순서(스톡 · OpenGrand 공통): `31 52 1D 7F 03`(MusicMode
 - `32 52 20 7F [01, song_hi7, song_lo7, part]` (InternalSongFileWrite): 내부 송을 SMF로 `SONG_nn.MID`에 저장한다(같은 이름이 있으면 `SONG_nn_k.MID`). Result를 보낸다. OpenGrand 전용 — 스톡은 무동작이라 앱은 `24 0A`를 쓴다.
 - Result는 모든 접속 컨트롤러에 보낸다.
 
+#### 9.5.1 오디오로 변환 (피아노 녹음곡 → USB의 WAV · MP3)
+
+스톡 펌웨어의 USB 오디오 녹음기를 「오디오로 변환」(RecMode 2)으로 쓰는 순서다. 앱 `ui/audiorec.ts`가 이대로 보낸다(실기 미확인, 스톡 V2.19 정적 분석 기준).
+
+| 단계 | 앱 → 피아노 | 피아노 → 앱 |
+|---|---|---|
+| 곡 고르기 | `31 52 1D 7F 02`, `10 52 00 7F 00 00 <곡>`, `10 52 01 7F 7F` | ACK, MaxTime |
+| 녹음 대기 | `10 52 23 7F 03 <형식 0 WAV · 1 MP3> 02 7F 7F 7F 03` — MusicMode 3 · AudioRecFormat · RecMode 2 · Music 3을 한 프레임으로 | `52 1D 7F 03`, `52 08 7F 03`. USB 메모리가 없으면 `52 1D`가 옛 모드를 말하고 Result `0x21` |
+| 시작 | `10/32 52 08 7F 04` | `52 08 7F 04`, 녹음 중 1초마다 `52 03 7F 01 <ms 5바이트>` |
+| 끝 | (곡이 끝나면 피아노가 스스로 멈춤) · 취소는 `32 52 08 7F 02` | `52 08 7F 02` |
+| 저장 | `24 07` + 이름 둘: `\kawairectempfile.tmp` → 새 이름. 같은 이름이 있으면 스톡이 말없이 덮어쓰므로 빈 이름을 고른다 | `32 51 7E 7F 00 00` |
+| 버리기 | `24 06` + `\kawairectempfile.tmp` | 위와 같음 |
+| 정리 | `10 52 1C 7F 00`(RecMode 0 — 2로 두면 곡이 끝날 때마다 오디오 녹음기에 정지가 들어감), `31 52 1D 7F 02` | ACK |
+
+- `52 23` 복합 프레임의 데이터는 `[MusicMode, 형식, RecMode, 곡 상위, 곡 하위, 파트, Music]`이다. MusicMode는 2 · 3만, 형식 · RecMode는 MusicMode 3일 때만, 곡 · 파트는 MusicMode 2일 때만, Music은 3 · 5만 받는다. 그래서 변환할 곡은 MusicMode 2에서 먼저 고른다.
+- 파일 작업(fn `0x24`)이 끝나기 전에는 Music · MusicMode를 보내지 않는다(스톡이 버린다).
+
 ### 9.6 레코더 영구 저장 / 리셋 (#39, #69)
 - 내부 송은 녹음 확정, 지우기, 로드 때마다 SMF(format 1)로 플랫폼 `save_song`(RecorderData)에 저장된다. 부팅할 때 `load_song`으로 복원된다.
 - `32 52 21 7F [fmt, hi, lo, part]` (InternalSongDelete)

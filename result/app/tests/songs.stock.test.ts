@@ -138,7 +138,7 @@ test("scan: 10 rows from the stock's answers, then the piano's song and part are
   assert.equal(el.querySelector("#songs-status")!.textContent, "4 of 10 songs recorded");
   // the scan put the piano's song 3 back: it is the lit row; every recorded row has its export buttons behind ⋯
   assert.equal(row(el, 3).getAttribute("data-on"), "1");
-  assert.ok(row(el, 3).querySelector('[data-act="song-save"]') && row(el, 3).querySelector('[data-act="song-save-kso"]'));
+  assert.equal(row(el, 3).querySelector('[data-act="song-save"]')!.textContent, "Save to USB", "one way out; the formats are in its sheet");
   assert.equal(el.querySelectorAll('.song-row .row-acts:not([hidden])').length, 0, "closed until ⋯ is tapped");
   assert.equal(el.querySelector("#rec-panel-info")!.textContent, "Song 34 bars · Part 2", "the player bar names the selected song");
 
@@ -186,10 +186,11 @@ test("play / stop from the player bar, save as SMF from a song row", async () =>
   await tick(20);
   assert.deepEqual(st.played, [1, 2], "Stop = Music Reset");
   (row(el, 4).querySelector('[data-act="song-save"]') as HTMLElement).click();
+  (el.querySelector('#save-sheet [data-format="MID"]') as HTMLElement).click(); // the one format list (ui/savesheet.ts)
   await tick(80);
   assert.ok(sent.includes("F0 40 7F 24 08 02 0A 03 02 F7"), "24 0A <song 4 = 3> <type MID>");
   assert.equal(st.saved.length, 1);
-  assert.equal(el.querySelector("#songs-status")!.textContent, "Save as SMF: done");
+  assert.equal(el.querySelector("#songs-status")!.textContent, "Saved to USB: SONG_04.MID");
   el.remove();
 });
 

@@ -16,8 +16,10 @@
 // while another USB playback runs (it stops that first). The playing row is marked from the app's own ▶ and the
 // piano's word (32 52 1D, 32 52 08, MusicProgress 52 03); the pane's ■ always stops both players.
 // Rows (owner 2026-11-23, the player bar): a tap on a row plays the file - it is then what the Recorder tab's player
-// bar shows; ⋯ opens that file's other buttons (into a piano song - KSO only -, rename, delete) under it. The rarely used things - where an import goes,
-// sending a file from this device, format - are in the folded 「USB 관리」.
+// bar shows; ⋯ opens that file's other buttons (into the piano - KSO only -, rename, delete) under it. What a kind
+// of file can do comes from the capability table (ui/songkinds.ts): a KSO is not played by the piano's USB player,
+// so its tap - and 「피아노에 넣기」 - is the Recorder tab's (opts.intoPiano: into an empty piano song, then played
+// there). The rarely used things - sending a file from this device, format - are in the folded 「USB 관리」.
 // The play / stop line says only what went wrong: that a file plays is the player bar's to show (field 2026-11-23:
 // 「재생: 완료」 stayed under the list while the file was still playing).
 import { FileAccessError, resultText } from "../protocol/fileaccess.ts";
@@ -31,6 +33,7 @@ import { confirmTap } from "./confirm2.ts";
 import { h } from "./dom.ts";
 import { loadUsbList, usbListGone, usbListStale, usbListState } from "./usblist.ts";
 import { iconButton, playingMark } from "./screens/songctl.ts";
+import { KINDS, kindOf } from "./songkinds.ts";
 import { usbAnyRunning, usbPlay, usbPlayback, usbPlayingName, usbStopAll } from "./usbplay.ts";
 
 /** Last internal song table this app saw, per context: drawn at once when the tab opens again (same session). */
@@ -61,10 +64,10 @@ export interface UsbPane {
   /** Run a file operation and show "…" / "done" / "failed" in `out` (default: the pane's own line); refresh: read the
    *  list again afterwards. */
   run(what: string, op: () => Promise<unknown>, refresh?: boolean, out?: HTMLElement): Promise<boolean>;
+  /** Read the list again (after something else wrote a file). */
+  reload(): Promise<void>;
   /** Stop both USB players (ui/usbplay.ts usbStopAll). */
   stop(): Promise<void>;
-  /** The internal song an import goes to (0-based). */
-  setImportTarget(n: number): void;
   /** The file chosen in the list (what the player bar's ▶ plays); null = none. */
   selected(): string | null;
   /** Choose a file and play it, as a tap on its row does; start false: only choose it (unless a USB file plays). */
@@ -74,9 +77,11 @@ export interface UsbPane {
 }
 
 export interface UsbPaneOptions {
-  songHasData?: (n: number) => boolean;
   /** a file was chosen in the list */
   onPick?: (name: string) => void;
+  /** a file the piano takes into a recorder song (KSO): put it into a piano song - and play it there (a row tap) or
+   *  only put it there (「피아노에 넣기」). The screen that owns the piano songs does it. */
+  intoPiano?: (name: string, play: boolean) => void;
 }
 
 /** The last path part and its extension: "DIR\SONG.MID" -> ["SONG", "MID"]. */
@@ -90,7 +95,6 @@ export function fileParts(name: string): { base: string; ext: string } {
 const chosenFile = new WeakMap<AppContext, string>();
 
 export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = {}): UsbPane {
-  const songHasData = opts.songHasData ?? (() => false);
   const store = ctx.store;
   const status = h("p", { class: "muted", id: "usb-status" });
   const result = h("p", { class: "muted pane-result", id: "usb-result", role: "status" }, "");
@@ -124,17 +128,12 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
     }
   };
 
-  const songSel = h("select", { id: "usb-import-song" }, ...Array.from({ length: SONGS }, (_, i) => h("option", { value: String(i) }, t("Song {n}", { n: i + 1 })))) as HTMLSelectElement;
-  const target = () => Number(songSel.value);
   // the file whose other buttons are shown (one at a time), and the file chosen for the player bar
   let open: string | null = null;
   let chosen: string | null = chosenFile.get(ctx) ?? null;
-  const importable = (name: string) => /\.kso$/i.test(name);
-  const importFile = (name: string, btn: EventTarget | null) => {
-    const n = target();
-    const go = () => void run(t("Import"), () => ctx.files()!.load(name, n), false);
-    if (songHasData(n)) confirmTap(btn, t("Song {n} already has a recording. Importing replaces it.", { n: n + 1 }), go);
-    else go();
+  const caps = (name: string) => {
+    const k = kindOf(name);
+    return k ? KINDS[k] : null;
   };
   const render = () => {
     const files = ctx.usbFiles;
@@ -156,21 +155,20 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
           { class: "file-row", "data-file": name, "data-on": on ? "1" : undefined, "data-open": isOpen ? "1" : undefined, "data-playing": plays ? "1" : undefined },
           h("div", { class: "file-main" },
             h("button", { class: "file-pick", "data-act": "file-pick", "aria-pressed": String(on), title: name, onclick: () => pick(name) },
-              h("span", { class: "file-ext" }, plays ? playingMark() : ext || "–"),
+              h("span", { class: "file-ext" }, plays ? playingMark() : caps(name)?.badge ?? (ext || "–")),
               // the type is the badge; the name keeps its directory ("DIR\SONG")
               h("span", { class: "file-name" }, ext ? name.slice(0, name.length - ext.length - 1) : name)),
             iconButton("more", t("More"), { class: "row-more", "data-act": "file-more", "aria-expanded": String(isOpen), onclick: () => { open = isOpen ? null : name; render(); } })),
           h("div", { class: "row-acts", hidden: !isOpen },
             // the piano takes only its own KSO into a recorder song (24 09: the stock and the OpenGrand cave answer
             // 0xF0 for MID / MP3 / WAV) - no button that can only fail (owner 2026-11-23: 「가져오기 → 곡 1」 on an mp3)
-            importable(name) ? h("button", { "data-act": "import", onclick: (e: Event) => importFile(name, e.currentTarget) }, t("Into piano song {n}", { n: target() + 1 })) : null,
+            caps(name)?.intoPiano && opts.intoPiano ? h("button", { "data-act": "import", onclick: () => opts.intoPiano!(name, false) }, t("Into the piano")) : null,
             h("button", { "data-act": "rename", onclick: () => void rename(name) }, t("Rename")),
             h("button", { class: "danger", "data-act": "delete", onclick: (e: Event) => del(name, e.currentTarget) }, t("Delete"))),
         );
       }),
     );
   };
-  songSel.addEventListener("change", render);
 
   // report: show "reading…" and then the count (tab open, ↻, stick inserted); false after a file operation,
   // whose own "done" line stays. A request already running is shared (loadUsbList).
@@ -230,6 +228,11 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
   // a tap on a row plays that file, as in any media player (owner 2026-11-23: a tap that only chose the file read as
   // 「재생이 안 된다」); the playing file's row does nothing. pick(name, false) only chooses (⏮ ⏭ while stopped).
   const pick = (name: string, start = true) => {
+    if (caps(name)?.howPlayed === "via piano song" && opts.intoPiano) {
+      // not the USB player's: it becomes a piano song and plays there (the bar then shows that song)
+      if (start) opts.intoPiano(name, true);
+      return;
+    }
     chosen = name;
     chosenFile.set(ctx, name);
     render();
@@ -327,10 +330,8 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
     result,
     list,
     h("details", { class: "fold", id: "usb-manage" },
-      h("summary", {}, h("span", { class: "fold-title" }, t("Manage the USB memory"), h("span", { class: "fold-note" }, t("Import target · send a file · format")))),
+      h("summary", {}, h("span", { class: "fold-title" }, t("Manage the USB memory"), h("span", { class: "fold-note" }, t("Send a file · format")))),
       h("div", { class: "fold-body" },
-        // saving an internal song to USB is in the song's own row (the other list); this picks where 「가져오기」 goes
-        h("label", { class: "row" }, h("span", {}, t("Import into")), songSel),
         h("p", { class: "sub" }, t("Upload from this device")),
         upload,
         h("div", { class: "transport" },
@@ -344,11 +345,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
   );
   return {
     el, run, stop, pick, play,
+    reload: () => load(false, true),
     selected: () => (chosen !== null && ctx.usbFiles.includes(chosen) ? chosen : null),
-    setImportTarget(n) {
-      if (n < 0 || n >= SONGS || target() === n) return;
-      songSel.value = String(n);
-      render();
-    },
   };
 }
