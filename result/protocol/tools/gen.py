@@ -169,7 +169,7 @@ def gen_ts(spec, idents):
             "export const PART_V3: Record<string, number> = " + json.dumps({n: v for n, v in SLOTS}) + ";", "",
             "/** msb/lsb/pc = the Sound (55 00) wire triple; prog = 0-based position in the manual program change list;",
             " * defaults = Main1 values the stock app sends with the sound (display value or value label, stock order) */",
-            "export interface SoundDef { name: string; category: string; msb: number; lsb: number; pc: number; prog: number; defaults: [string, string | number][] }",
+            "export interface SoundDef { name: string; category: string; msb: number; lsb: number; pc: number; prog: number; defaults: [string, string | number][]; vt: string[] }",
             "export const SOUNDS: SoundDef[] = " + json.dumps(spec["sounds"], ensure_ascii=False) + ";", "",
             "export interface RhythmDef { index: number; name: string; category: string; beat: string }",
             "export const RHYTHMS: RhythmDef[] = " + json.dumps(spec["rhythms"], ensure_ascii=False) + ";", "",

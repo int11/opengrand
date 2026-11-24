@@ -25,6 +25,33 @@ export const VT_PARAMS = [
   "Temperament", "KeyVolume", "HalfPedalAdjust", "SoftPedalDepth", "DamperHold",
 ];
 
+/**
+ * The VT rows the stock app shows for the Main sound (vtVm `get*` → `isShown`): the sound's own
+ * list (SoundDef.vt = stock sound.json `parameters` → `availableParams`), with two stock quirks
+ * kept on purpose:
+ * - Minimum Touch follows Touch Curve (stock `getMintouch` asks for 'touchCurve', not 'minimumTouch')
+ * - Touch Curve "Off" hides Minimum Touch and Hammer Delay; a temperament other than Equal hides
+ *   Stretch Tuning (stock `getMintouch` / `getHammerdelay` / `getStretchtuning`)
+ * A sound the app does not know (not read yet, a MIDI-only sound outside the panel list) shows
+ * every row. VT_PARAMS itself is never filtered: preset matching and the user VT use all of it.
+ */
+export function vtVisible(store: ParamStore, s: SoundDef | undefined = currentSound(store)): Set<string> {
+  const vis = new Set(s ? s.vt : VT_PARAMS);
+  if (vis.has("TouchCurve")) vis.add("MinimumTouch");
+  else vis.delete("MinimumTouch");
+  const tc = findParam("TouchCurve");
+  const tcOff = tc?.values?.find((v) => v.label === "Off")?.raw;
+  if (tcOff !== undefined && store.get(tc, MAIN)?.[0] === tcOff) {
+    vis.delete("MinimumTouch");
+    vis.delete("HammerDelay");
+  }
+  const tm = findParam("Temperament");
+  const equal = tm?.values?.find((v) => v.label.startsWith("Equal/"))?.raw;
+  const cur = store.get(tm, MAIN)?.[0];
+  if (equal !== undefined && cur !== undefined && cur !== equal) vis.delete("StretchTuning");
+  return vis;
+}
+
 export interface Setting {
   p: ParamDef;
   part: number;

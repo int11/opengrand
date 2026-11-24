@@ -181,13 +181,14 @@ test("sound tab: Piano category first and open, sound-dependent sections below t
   assert.ok(chips[0].classList.contains("on"), "Piano open by default");
   assert.deepEqual([...el.querySelectorAll(".sound-item .item")].map((b) => b.textContent), SOUNDS.filter((s) => s.category === "Piano").map((s) => s.name));
   const titles = [...el.querySelectorAll(":scope > section > h3")].map((h) => h.textContent);
-  assert.deepEqual(titles, ["Sound select", "SK-EX Rendering", "Virtual Technician", "Effect", "Reverb", "Keyboard mode"]);
+  assert.deepEqual(titles, ["Sound select", "SK-EX Rendering", "Virtual Technician", "Other sound settings", "Effect", "Reverb", "Keyboard mode"]);
   const sec = (t: string) => [...el.querySelectorAll<HTMLElement>(":scope > section")].find((s) => s.querySelector("h3")?.textContent === t)!;
   assert.equal([...el.querySelectorAll(".row > span:first-child")].some((s) => s.textContent === "Tuning" || s.textContent === "Transpose"), false);
-  // an organ: no VT, no rendering; effect and reverb stay
+  assert.equal(sec("Other sound settings").hidden, true, "not for a piano sound");
+  // an organ: no VT preset, no rendering, its Other sound settings; effect and reverb stay
   notify([0x55, 0x00, 0x00, ...(() => { const o = SOUNDS.find((s) => s.category === "Organ")!; return [o.msb, o.lsb, o.pc]; })()]);
   await tick();
-  assert.deepEqual(["SK-EX Rendering", "Virtual Technician", "Effect", "Reverb"].map((t) => sec(t).hidden), [true, true, false, false]);
+  assert.deepEqual(["SK-EX Rendering", "Virtual Technician", "Other sound settings", "Effect", "Reverb"].map((t) => sec(t).hidden), [true, true, false, false, false]);
   // the star + Save this sound sit with the list
   assert.ok(sec("Sound select").querySelector("[data-action=favorite-current]") && sec("Sound select").querySelector("[data-action=save-sound]"));
   el.remove();
