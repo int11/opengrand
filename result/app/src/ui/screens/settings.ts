@@ -6,6 +6,7 @@ import { AUTO_OFF_MINUTES, SCALES, TAB_IDS, type TabId } from "../../state/setti
 import type { ParamStore } from "../../state/store.ts";
 import type { AppContext } from "../context.ts";
 import { control } from "../controls.ts";
+import { toneRows } from "../tone.ts";
 import { confirmTap, disarm } from "../confirm2.ts";
 import { h, section } from "../dom.ts";
 import { powerPolicySection } from "../power.ts";
@@ -109,7 +110,7 @@ export function settingsScreen(store: ParamStore, ctx?: AppContext): HTMLElement
       control(store, "Tuning", { label: t("Tuning"), min: 427, max: 453, toRaw: tuning.encode, fromRaw: tuning.decode, format: (v) => `${v.toFixed(1)} Hz` }),
       control(store, "TransposeValue", { label: t("Transpose"), part: 0x0f, min: -12, max: 12, toRaw: offset64.encode, fromRaw: offset64.decode }),
     ),
-    section(t("Speaker / Headphone"), control(store, "ToneControl", { label: t("Tone control") }), control(store, "SpeakerVolume", { label: t("Speaker volume") }), control(store, "SHSMode", { label: t("Spatial headphone sound") }), control(store, "PhonesType", { label: t("Headphone type") }), control(store, "PhonesVolume", { label: t("Headphone volume") }), control(store, "LineInLevel", { label: t("Line in level") })),
+    section(t("Speaker / Headphone"), control(store, "ToneControl", { label: t("Tone control") }), ...toneRows(store), control(store, "SpeakerVolume", { label: t("Speaker volume") }), control(store, "SHSMode", { label: t("Spatial headphone sound") }), control(store, "PhonesType", { label: t("Headphone type") }), control(store, "PhonesVolume", { label: t("Headphone volume") }), control(store, "LineInLevel", { label: t("Line in level") })),
     // 「전원」: the stock auto power-off and, on OpenGrand, standby / off / wake and the power policy (ui/power.ts). The
     // piano's Bluetooth settings are on the Bluetooth tab only.
     h("section", { class: "card", id: "power-settings" },

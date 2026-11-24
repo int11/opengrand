@@ -155,7 +155,7 @@ test("technician screen opens the user editors", async () => {
     (el.querySelector(`[data-editor="${id}"]`) as HTMLElement).click();
     assert.equal(el.querySelectorAll(".editor-host .editor").length, 1, id);
   }
-  assert.equal(el.querySelectorAll("section:nth-of-type(2) .row").length, 22, "22 VT rows unchanged");
+  assert.equal(el.querySelectorAll("section:nth-of-type(2) .row").length, 23, "VT rows unchanged (22 parameters, Temperament as type + key)");
   el.remove();
 });
 

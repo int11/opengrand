@@ -146,6 +146,8 @@ def gen_ts(spec, idents):
            "  len: number; varLen: boolean; kind: string; dataMax: number[];",
            "  values?: EnumValue[]; range?: RangeCodec; unit?: string; codecClass?: string;",
            "  parts?: Record<string, number>;",
+           "  /** value label -> [parameter, display value] pairs the stock app sends after the user picks that value */",
+           "  linked?: Record<string, [string, number][]>;",
            "}", "", "export const PARAMS: ParamDef[] = ["]
     for i, p in enumerate(spec["params"]):
         d = {"id": idents[i], "name": p["name"], "fn": p["fn"], "v1": p["v1"], "v2": p["v2"], "scope": p["scope"],
@@ -164,6 +166,9 @@ def gen_ts(spec, idents):
             d["unit"] = p["unit"]
         if p.get("parts"):
             d["parts"] = p["parts"]
+        if codec.get("linked_params_on_receive"):
+            d["linked"] = {label: [[l[k], l[v]] for k, v in (("linkedParameter", "linkedValue"), ("linkedParameter2", "linkedValue2")) if k in l]
+                           for label, l in codec["linked_params_on_receive"].items()}
         out.append("  " + json.dumps(d, ensure_ascii=False) + ",")
     out += ["];", "",
             "export const PART_V3: Record<string, number> = " + json.dumps({n: v for n, v in SLOTS}) + ";", "",

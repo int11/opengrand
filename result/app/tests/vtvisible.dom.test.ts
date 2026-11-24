@@ -29,7 +29,12 @@ function storeWith(name?: string) {
   }
   return store;
 }
-const shownRows = (sec: Element) => [...sec.querySelectorAll(".row")].filter((r) => !(r as HTMLElement).hidden).map((r) => r.querySelector("span")!.textContent);
+/** rows not hidden themselves nor by a wrapper inside `sec` (a VT row sits in its own div with its note) */
+const shownRows = (sec: Element) =>
+  [...sec.querySelectorAll(".row")].filter((r) => {
+    for (let e: Element | null = r; e && e !== sec; e = e.parentElement) if ((e as HTMLElement).hidden) return false;
+    return true;
+  }).map((r) => r.querySelector("span")!.textContent);
 
 test("every panel sound has its VT list, only VT parameters, Touch Curve everywhere", () => {
   assert.equal(SOUNDS.length, 67);
@@ -89,8 +94,8 @@ test("Technician tab: an organ shows Other sound settings without the preset; a 
   const [preset, rows] = [...el.querySelectorAll("section")];
   assert.equal(preset.hidden, true, "no VT preset for a non-piano sound");
   assert.equal(rows.querySelector("h3")!.textContent, "Other sound settings");
-  assert.deepEqual(shownRows(rows), ["Touch Curve", "Voicing", "Minimum Touch", "Temperament", "Key Volume", "Half Pedal Adjust", "Soft Pedal Depth", "Damper Hold"]);
-  assert.equal(rows.querySelectorAll(".row").length, 22, "rows stay in the DOM (hidden)");
+  assert.deepEqual(shownRows(rows), ["Touch Curve", "Voicing", "Minimum Touch", "Temperament", "Temperament key", "Key Volume", "Half Pedal Adjust", "Soft Pedal Depth", "Damper Hold"]);
+  assert.equal(rows.querySelectorAll(".row").length, 23, "rows stay in the DOM (hidden; Temperament as type + key)");
   const opts = [...el.querySelectorAll("section")].find((s) => s.querySelector("h3")!.textContent === "Sound preview")!.querySelectorAll("option");
   const offered = [...opts].filter((o) => !o.disabled).map((o) => o.value);
   assert.ok(!offered.includes("DamperResonance") && offered.includes("TouchCurve"));
@@ -101,7 +106,7 @@ test("Technician tab: an organ shows Other sound settings without the preset; a 
   await store.set(findParam("Sound")!, 0, [p.msb, p.lsb, p.pc]);
   assert.equal(preset.hidden, false);
   assert.equal(rows.querySelector("h3")!.textContent, "Advanced");
-  assert.equal(shownRows(rows).length, 16);
+  assert.equal(shownRows(rows).length, 17, "16 parameters, Temperament as type + key");
   assert.ok(shownRows(rows).includes("Resonance Depth") && !shownRows(rows).includes("Damper Resonance"));
   el.remove();
 });
@@ -118,6 +123,6 @@ test("Sound tab: Other sound settings only for a non-piano Main sound, with that
   await store.set(findParam("Sound")!, 0, [s.msb, s.lsb, s.pc]);
   assert.equal(other.hidden, false);
   assert.equal(vt.hidden, true);
-  assert.deepEqual(shownRows(other), ["Touch Curve", "Voicing", "Minimum Touch", "Temperament", "Key Volume", "Half Pedal Adjust", "Soft Pedal Depth", "Damper Hold"]);
+  assert.deepEqual(shownRows(other), ["Touch Curve", "Voicing", "Minimum Touch", "Temperament", "Temperament key", "Key Volume", "Half Pedal Adjust", "Soft Pedal Depth", "Damper Hold"]);
   el.remove();
 });

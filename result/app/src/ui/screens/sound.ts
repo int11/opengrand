@@ -21,6 +21,7 @@ import {
   settingsOf,
   trackVt,
 } from "../../features/pianosound.ts";
+import { ambienceSwitch, effectLabel, effectNames, sendLinked } from "../../features/soundfx.ts";
 import { findParam, offset64 } from "../../protocol/codecs.ts";
 import { SOUNDS, VT_PRESETS } from "../../protocol/params.gen.ts";
 import type { SoundRef } from "../../state/settings.ts";
@@ -162,15 +163,29 @@ export function soundScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   // same VT rows that sound has (manual p.34 (8); stock index.html other-sound-settings → the VT editor)
   const otherVt = vtRows(store);
   const otherSection = section(t("Other sound settings"), ...otherVt.rows.values());
+  // a type picked here also sends that type's paired defaults (stock editor); a type the piano reports does not
+  const paired = (name: string) => (data: number[]) => void sendLinked(store, findParam(name)!, MAIN, data);
+  // Ambience on / off = depth 0 or not (manual p.23; the stock editor has no separate on/off value)
+  const amb = ambienceSwitch(store, MAIN);
+  const ambOn = h("input", { type: "checkbox", role: "switch" }) as HTMLInputElement;
+  ambOn.addEventListener("change", () => {
+    if (amb.isOn() === undefined) refresh(); // unknown depth: the tap does nothing
+    else void amb.set(ambOn.checked);
+  });
+  const ambRow = h("label", { class: "row" }, h("span", {}, t("Ambience on")), ambOn);
   const renderingSection = section(
     t("SK-EX Rendering"),
     control(store, "RenderingCharacter", { label: t("Character") }),
     control(store, "ResonanceDepth", { label: t("Resonance Depth") }),
-    control(store, "AmbienceType", { label: t("Ambience") }),
+    ambRow,
+    control(store, "AmbienceType", { label: t("Ambience"), onPick: paired("AmbienceType") }),
     control(store, "AmbienceDepth", { label: t("Ambience Depth") }),
   );
-  const effectSection = section(t("Effect"), control(store, "Effect", { label: t("Effect") }), control(store, "EffectType", { label: t("Type") }), control(store, "EffectSetting1", { label: t("Setting 1") }), control(store, "EffectSetting2", { label: t("Setting 2") }));
-  const reverbSection = section(t("Reverb"), control(store, "Reverb", { label: t("Reverb") }), control(store, "ReverbType", { label: t("Type") }), control(store, "ReverbDepth", { label: t("Depth") }), control(store, "ReverbTime", { label: t("Time") }));
+  // the two effect sliders are named by the effect type (manual p.33)
+  const fx1 = control(store, "EffectSetting1", { label: t("Dry / Wet") });
+  const fx2 = control(store, "EffectSetting2", { label: t("Speed") });
+  const effectSection = section(t("Effect"), control(store, "Effect", { label: t("Effect") }), control(store, "EffectType", { label: t("Type"), onPick: paired("EffectType") }), fx1, fx2);
+  const reverbSection = section(t("Reverb"), control(store, "Reverb", { label: t("Reverb") }), control(store, "ReverbType", { label: t("Type"), onPick: paired("ReverbType") }), control(store, "ReverbDepth", { label: t("Depth") }), control(store, "ReverbTime", { label: t("Time") }));
   for (const s of [vtSection, otherSection, renderingSection, effectSection, reverbSection]) s.classList.add("sound-dep");
 
   // ---- keyboard mode: only the settings of the active mode (owner's manual p.29 Dual, p.30 Split, p.69 4 Hands) ----
@@ -228,6 +243,13 @@ export function soundScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     vtSection.hidden = rendering || (!!main && !isPiano(main));
     otherSection.hidden = !otherSoundSettings(store);
     otherVt.refresh();
+    const [n1, n2] = effectNames(effectLabel(store, MAIN));
+    fx1.querySelector("span")!.textContent = t(n1);
+    fx2.querySelector("span")!.textContent = t(n2);
+    const on = amb.isOn();
+    ambOn.indeterminate = on === undefined;
+    ambOn.checked = !!on;
+    ambRow.classList.toggle("unknown", on === undefined);
     const st = trackVt(store, lib);
     vtSelect.value = st.kind === "preset" ? String(st.index) : st.kind === "user" ? USER_VT : "";
     (vtSelect.querySelector(`option[value="${USER_VT}"]`) as HTMLOptionElement).disabled = st.kind !== "user" && !lib.userVt;
