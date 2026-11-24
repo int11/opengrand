@@ -97,6 +97,7 @@ export const STRINGS: Record<"ja" | "ko", Record<string, string>> = {
     "Time signature": "拍子", "Rhythm": "リズム", "Volume": "音量",
     // music
     "Recorder": "レコーダー", "Lesson": "レッスン", "Concert Magic": "コンサートマジック", "Piano Music": "ピアノミュージック",
+    "Previous tempo term": "前のテンポ表記", "Next tempo term": "次のテンポ表記", "Tempo −10": "テンポ −10", "Tempo +10": "テンポ +10",
     "Song playback": "曲の再生", "Song tempo": "曲のテンポ", "Song transpose": "ソングトランスポーズ", "Part 1 (right hand)": "パート 1(右手)",
     "Part 2 (left hand)": "パート 2(左手)", "Repeat": "リピート", "Play mode": "再生モード", "Internal song": "内蔵ソング", "Song {n}": "ソング {n}",
     "Rec": "録音", "Play": "再生", "Pause": "一時停止", "Rewind": "巻き戻し", "Fast forward": "早送り", "Set A": "A 点", "Set B": "B 点", "A-B off": "A-B 解除",
@@ -689,6 +690,7 @@ export const STRINGS: Record<"ja" | "ko", Record<string, string>> = {
     "Preview volume": "미리 듣기 음량",
     "Time signature": "박자", "Rhythm": "리듬", "Volume": "음량",
     "Recorder": "레코더", "Lesson": "레슨", "Concert Magic": "콘서트 매직", "Piano Music": "피아노 뮤직",
+    "Previous tempo term": "이전 빠르기말", "Next tempo term": "다음 빠르기말", "Tempo −10": "템포 −10", "Tempo +10": "템포 +10",
     "Song playback": "곡 재생", "Song tempo": "곡 템포", "Song transpose": "곡 트랜스포즈", "Part 1 (right hand)": "파트 1(오른손)",
     "Part 2 (left hand)": "파트 2(왼손)", "Repeat": "반복", "Play mode": "재생 모드", "Internal song": "내장 곡", "Song {n}": "곡 {n}",
     "Rec": "녹음", "Play": "재생", "Pause": "일시정지", "Rewind": "되감기", "Fast forward": "빨리 감기", "Set A": "A 지점", "Set B": "B 지점", "A-B off": "A-B 해제",
