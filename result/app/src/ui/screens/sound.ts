@@ -168,7 +168,10 @@ export function soundScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   // Ambience on / off = depth 0 or not (manual p.23; the stock editor has no separate on/off value)
   const amb = ambienceSwitch(store, MAIN);
   const ambOn = h("input", { type: "checkbox", role: "switch" }) as HTMLInputElement;
-  ambOn.addEventListener("change", () => void amb.set(ambOn.checked));
+  ambOn.addEventListener("change", () => {
+    if (amb.isOn() === undefined) refresh(); // unknown depth: the tap does nothing
+    else void amb.set(ambOn.checked);
+  });
   const ambRow = h("label", { class: "row" }, h("span", {}, t("Ambience on")), ambOn);
   const renderingSection = section(
     t("SK-EX Rendering"),

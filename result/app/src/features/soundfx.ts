@@ -46,6 +46,8 @@ export async function sendLinked(store: ParamStore, p: ParamDef, part: number, d
   const found = p.linked?.[enumLabel(p, data[0], data[1])];
   if (!found?.length) return false;
   const pairs = SECOND_FIRST.has(p.name) ? [...found].reverse() : found;
+  // an enum target (rendering character -> ambience type) carries a list position, not a wire value: not sent
+  if (pairs.some(([name]) => findParam(name)?.values)) return false;
   for (const [name, v] of pairs) {
     const q = findParam(name);
     if (!q || !(await store.set(q, part, linkedData(q, v)))) return false;
@@ -69,8 +71,10 @@ export function ambienceSwitch(store: ParamStore, part: number) {
       const d = store.get(p, part);
       return d ? d[0] !== 0 : undefined;
     },
+    /** nothing is sent while the depth is unknown */
     set: (on: boolean): Promise<boolean> => {
       const d = store.get(p, part);
+      if (!d) return Promise.resolve(false);
       if (!on) {
         if (d && d[0] !== 0) ambienceBefore.set(part, d[0]);
         return store.set(p, part, [0]);

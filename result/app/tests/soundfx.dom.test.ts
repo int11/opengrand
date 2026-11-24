@@ -90,6 +90,10 @@ test("ambience: a switch (depth 0 = off), off remembers the depth, on brings it 
   document.body.append(el);
   const sw = field(el, "Ambience on");
   assert.equal(sw.indeterminate, true, "unknown until the piano tells its depth");
+  change(sw, true);
+  await tick(40);
+  assert.deepEqual(setsOf(sent, "55 61"), [], "a tap on an unknown depth sends nothing");
+  assert.equal(sw.indeterminate, true);
   // no depth to come back to: on = 64
   notify([0x55, 0x61, 0x00, 0x00]);
   await tick();
@@ -112,6 +116,14 @@ test("ambience: a switch (depth 0 = off), off remembers the depth, on brings it 
   await tick(60);
   assert.deepEqual(sent.filter((m) => /^F0 40 7F 10 08 02 55 6[01]/.test(m)), ["F0 40 7F 10 08 02 55 60 00 03 F7", "F0 40 7F 10 08 02 55 61 00 3F F7"]);
   el.remove();
+});
+
+test("pairing: a rendering character's ambience (a list position, not a wire value) is never sent", async () => {
+  const { store, sent } = await setup();
+  const rc = findParam("RenderingCharacter")!;
+  assert.equal(await FX.sendLinked(store, rc, 0, [1]), false);
+  await tick();
+  assert.deepEqual([...setsOf(sent, "50 2A"), ...setsOf(sent, "55 60")], []);
 });
 
 test("reverb type picked in the app: the type, then its time and depth defaults (stock order)", async () => {
