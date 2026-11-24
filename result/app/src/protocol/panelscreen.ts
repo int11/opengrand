@@ -58,10 +58,11 @@ export function decodeRead(data: Uint8Array): ReadReply | null {
 export function captureRequest(kind: number, tag: number, p1 = 0, p2 = 0): Uint8Array {
   return puiRequest(PanelScreenOp.Capture, [kind, tag, p1, p2]);
 }
-/** Act (panelscreen.js v2): click (1) or set the value (2) of the element with this id on the panel page */
-export function actRequest(tag: number, action: 1 | 2, id: string, value = ""): Uint8Array {
+/** Act (panelscreen.js v2): click (1) or set the value (2) of the element with this id on the panel page;
+ *  v3: 3 / 4 = the same by CSS selector (first match) */
+export function actRequest(tag: number, action: 1 | 2 | 3 | 4, id: string, value = ""): Uint8Array {
   const ascii = (t: string) => [...t].map((c) => c.charCodeAt(0) & 0x7f);
-  return puiRequest(PanelScreenOp.Act, [tag, action, ...ascii(id), ...(action === 2 ? [0, ...ascii(value)] : [])]);
+  return puiRequest(PanelScreenOp.Act, [tag, action, ...ascii(id), ...(action === 2 || action === 4 ? [0, ...ascii(value)] : [])]);
 }
 /** Read: tag, 21-bit offset, at most n bytes (1..200, 0 = 200) */
 export function readRequest(tag: number, off: number, n = PS_CHUNK): Uint8Array {
@@ -191,9 +192,9 @@ export class PanelScreenClient {
 
   /** Press (click) or fill (set) an element on the panel page by id; rc 0 done · 1 bad args · 4 no such element,
    *  null = no answer (older panel page without op 0x37, or not our page). */
-  async act(id: string, value?: string, timeoutMs = 2500): Promise<number | null> {
+  async act(id: string, value?: string, timeoutMs = 2500, bySelector = false): Promise<number | null> {
     const tag = this.nextTag();
-    const action = value === undefined ? 1 : 2;
+    const action = ((value === undefined ? 1 : 2) + (bySelector ? 2 : 0)) as 1 | 2 | 3 | 4;
     const d = await this.ask(actRequest(tag, action, id, value ?? ""), PanelScreenOp.Act, (x) => x[1] === tag, timeoutMs);
     return d ? d[0]! : null;
   }

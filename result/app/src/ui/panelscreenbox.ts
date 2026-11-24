@@ -13,16 +13,20 @@ export interface PanelScreenGlobals {
   __panelSnapshot?: (o?: { width?: number; kb?: number }) => Promise<string | null>;
   __panelLast?: Record<string, unknown>;
   __panelAct?: (id: string, value?: string) => Promise<string>;
+  /** the same by CSS selector (panelscreen.js v3) */
+  __panelActSel?: (selector: string, value?: string) => Promise<string>;
 }
 
 /** window.__panelReport / __panelSnapshot over whatever session is current. */
 export function installPanelScreenGlobals(session: () => PuiPort | null, w: PanelScreenGlobals = globalThis as unknown as PanelScreenGlobals): void {
-  w.__panelAct = async (id: string, value?: string) => {
+  const act = async (id: string, value: string | undefined, bySel: boolean) => {
     const s = session();
     if (!s) return "not connected";
-    const rc = await new PanelScreenClient(s).act(id, value);
+    const rc = await new PanelScreenClient(s).act(id, value, 2500, bySel);
     return rc === null ? "no answer" : rc === 0 ? "ok" : rc === 4 ? "no such element" : `rc ${rc}`;
   };
+  w.__panelAct = (id: string, value?: string) => act(id, value, false);
+  w.__panelActSel = (selector: string, value?: string) => act(selector, value, true);
   w.__panelReport = async (maxBytes?: number) => {
     const s = session();
     if (!s) return { error: "not connected" };

@@ -14,7 +14,7 @@
  * Install AFTER the UI loader hooked KWM (CA79UI.hookKwm): the filter here then sees the frames first. */
 (function (root) {
   "use strict";
-  var VERSION = 2; // 2: op 0x37 Act (owner 2026-11-15)
+  var VERSION = 3; // 2: op 0x37 Act (owner 2026-11-15) · 3: Act by CSS selector (actions 3 / 4)
   if (!root || (root.CA79Screen && root.CA79Screen.version >= VERSION)) return;
 
   var TAG = [0x7d, 0x43, 0x41, 0x37, 0x39];
@@ -553,7 +553,8 @@
   /**
    * op 0x37 Act (lets an automated test press panel buttons): `37 <tag> <action>
    * <id ASCII> [00 <value ASCII>]`, action 1 = click, 2 = set value (input / select, then input + change events).
-   * Only an element id (letters, digits, - _) on the page shown now. Reply `77 <rc> <tag> <action>` (plain 7-bit):
+   * Actions 1 / 2 take an element id (letters, digits, - _) on the page shown now; 3 / 4 (v3) are the same with a
+   * CSS selector (printable ASCII, 1-120 chars, first match) — pieces in a list have no ids. Reply `77 <rc> <tag> <action>` (plain 7-bit):
    * rc 0 done · 1 bad args · 4 no such element.
    */
   function later(f) {
@@ -564,15 +565,17 @@
     var str = function (a) { var o = ""; for (var i = 0; i < a.length; i++) o += String.fromCharCode(a[i]); return o; };
     id = str(z < 0 ? rest : rest.slice(0, z)); val = z < 0 ? "" : str(rest.slice(z + 1));
     var out = function (rc) { return [0xf0].concat(TAG, [OP.act | 0x40, rc, tag, action, 0xf7]); };
-    if ((action !== 1 && action !== 2) || !/^[A-Za-z0-9_-]{1,40}$/.test(id)) return out(RC.args);
-    el = document.getElementById(id);
+    var bySel = action === 3 || action === 4;
+    if (action < 1 || action > 4) return out(RC.args);
+    if (bySel ? !/^[\x20-\x7e]{1,120}$/.test(id) : !/^[A-Za-z0-9_-]{1,40}$/.test(id)) return out(RC.args);
+    try { el = bySel ? document.querySelector(id) : document.getElementById(id); } catch (e) { return out(RC.args); }
     if (!el) return out(4);
     // after the reply (the filter sends it when this returns) — as a microtask, not a timer: a WebView whose activity
     // is in the background runs no timers, and the act answered rc 0 but never clicked (field 2026-11-15, record
     // 04_panel_ui_remote last lines [inference])
     later(function () {
       try {
-        if (action === 1) el.click();
+        if (action === 1 || action === 3) el.click();
         else {
           el.value = val;
           var ev = function (n) { var e = document.createEvent("Event"); e.initEvent(n, true, true); el.dispatchEvent(e); };

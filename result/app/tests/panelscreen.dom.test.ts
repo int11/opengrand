@@ -138,7 +138,7 @@ test("hook order: screen ops answered in front of the loader; loader ops and the
     assert.equal(p.app.length, 1, "other MIDI reaches the app");
     // a newer copy (a remote package over an older bundle): swaps the handler, no second wrapper
     p.w.eval(screenSource({ minify: false }).replace(/var VERSION = 1;/, "var VERSION = 2;"));
-    assert.equal(p.w.CA79Screen.version, 2);
+    assert.equal(p.w.CA79Screen.version, 3);
     p.w.CA79Screen.install(p.w.KWM);
     p.deliver([...captureRequest(PS_KIND.Report, 6)]);
     assert.equal(p.sent.length, 3, "one reply, not two");
@@ -389,6 +389,18 @@ test("act (op 0x37): click / set an element by id on the panel page; bad id → 
     assert.deepEqual(rc(), [4, 8, 1]);
     p.deliver([...actRequest(9, 1, "a b")]);
     assert.deepEqual(rc(), [1, 9, 1]);
+    // v3: by CSS selector — list rows have no ids
+    p.deliver([...actRequest(11, 3, 'button[id="go"]')]);
+    assert.deepEqual(rc(), [0, 11, 3]);
+    await tick(5);
+    assert.equal(clicks, 2);
+    p.deliver([...actRequest(12, 4, "select#pick", "x")]);
+    await tick(5);
+    assert.equal(changed, "x");
+    p.deliver([...actRequest(13, 3, ".nothing-here")]);
+    assert.deepEqual(rc(), [4, 13, 3]);
+    p.deliver([...actRequest(14, 3, "[[bad")]);
+    assert.deepEqual(rc(), [1, 14, 3]);
     assert.equal(p.app.length, 0, "act frames never reach the app's MIDI handler");
     // a WebView in the background (another activity on top) runs no timers — field 2026-11-15: rc 0 but no click.
     // The click must not wait for a timer.
@@ -398,7 +410,7 @@ test("act (op 0x37): click / set an element by id on the panel page; bad id → 
       p.deliver([...actRequest(10, 1, "go")]);
       assert.deepEqual(rc(), [0, 10, 1]);
       await Promise.resolve();
-      assert.equal(clicks, 2, "clicked without a timer");
+      assert.equal(clicks, 3, "clicked without a timer");
     } finally {
       (p.w as unknown as { setTimeout: unknown }).setTimeout = realSetTimeout;
     }
