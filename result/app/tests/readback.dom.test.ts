@@ -113,7 +113,7 @@ test("full stock dump: every control has its value; only the 4 stock-less values
   assert.deepEqual(store.unreadable().sort(), STOCK_UNREADABLE);
   // the values reported as unreadable on hardware (field 2026-10-31)
   assert.equal(out(screens.settings, "Transpose"), "0");
-  assert.equal(out(screens.sound, "Split point"), "60");
+  assert.equal(out(screens.sound, "Split point"), "C4");
   assert.equal(out(screens.sound, "Layer octave"), "0");
   assert.equal(out(screens.sound, "Lower octave"), "0");
   assert.equal(out(screens.sound, "Layer dynamics"), "127");
@@ -135,7 +135,7 @@ test("dump cut short: the values it lost are read back one by one and shown", { 
   assert.deepEqual(store.missing().sort(), STOCK_UNREADABLE);
   assert.equal(out(screens.settings, "Transpose"), "0");
   assert.equal(out(screens.sound, "Resonance Depth"), "6");
-  assert.equal(out(screens.sound, "Split point"), "60");
+  assert.equal(out(screens.sound, "Split point"), "C4");
   assert.equal(out(screens.sound, "Layer octave"), "0");
   assert.equal(out(screens.sound, "Lower octave"), "0");
   assert.equal(out(screens.sound, "Layer dynamics"), "127");
@@ -157,7 +157,7 @@ test("before any value: sliders show –, selects are blank, switches indetermin
   // a value arriving later is shown
   store.fromWire({ fn: 0x10, v1: 0x53, v2: 0x06, part: 0x09, data: [48] });
   store.fromWire({ fn: 0x10, v1: 0x50, v2: 0x21, part: 0x0f, data: [1] });
-  assert.equal(out(el, "Split point"), "48");
+  assert.equal(out(el, "Split point"), "C3");
   assert.equal(field(el, "Lower pedal").indeterminate, false);
   assert.equal(field(el, "Lower pedal").checked, true);
 });

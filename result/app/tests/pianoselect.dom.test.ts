@@ -181,7 +181,7 @@ test("sound tab: Piano category first and open, sound-dependent sections below t
   assert.ok(chips[0].classList.contains("on"), "Piano open by default");
   assert.deepEqual([...el.querySelectorAll(".sound-item .item")].map((b) => b.textContent), SOUNDS.filter((s) => s.category === "Piano").map((s) => s.name));
   const titles = [...el.querySelectorAll(":scope > section > h3")].map((h) => h.textContent);
-  assert.deepEqual(titles, ["Sound select", "SK-EX Rendering", "Virtual Technician", "Effect", "Reverb", "Keyboard mode", "Part"]);
+  assert.deepEqual(titles, ["Sound select", "SK-EX Rendering", "Virtual Technician", "Effect", "Reverb", "Keyboard mode"]);
   const sec = (t: string) => [...el.querySelectorAll<HTMLElement>(":scope > section")].find((s) => s.querySelector("h3")?.textContent === t)!;
   assert.equal([...el.querySelectorAll(".row > span:first-child")].some((s) => s.textContent === "Tuning" || s.textContent === "Transpose"), false);
   // an organ: no VT, no rendering; effect and reverb stay
