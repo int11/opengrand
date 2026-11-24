@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 const { ParamStore } = await import("../src/state/store.ts");
 const { bindStore } = await import("../src/ui/controls.ts");
 const S = await import("../src/ui/screens.ts");
-const { handVolumes, beatTicks, _resetMusicForTests } = await import("../src/ui/screens/music.ts");
+const { handParts, trackArray, beatTicks, _resetMusicForTests } = await import("../src/ui/screens/music.ts");
 const { builtinBooks, builtinCount, songKey, regionOf, LESSON_BOOKS, CONCERT_MAGIC, PIANO_MUSIC } = await import("../src/protocol/builtinsongs.ts");
 const { _resetKwmcoreForTests } = await import("../src/transport/kwmcore.ts");
 const i18n = await import("../src/i18n.ts");
@@ -17,7 +17,7 @@ type G = { kwmcore?: unknown; KWM?: Record<string, (...a: string[]) => void> };
 const g = globalThis as unknown as G;
 
 /** A panel shell that answers selectSmf / setConcertMagicMode and records every bridge call. */
-function fakeShell(opt: { failSelect?: boolean; files?: string[] } = {}) {
+function fakeShell(opt: { failSelect?: boolean; files?: string[]; info?: Record<string, unknown> } = {}) {
   const calls: { cmd: string; obj: Record<string, unknown> }[] = [];
   g.kwmcore = {
     postMessage(url: string) {
@@ -27,7 +27,7 @@ function fakeShell(opt: { failSelect?: boolean; files?: string[] } = {}) {
       calls.push({ cmd, obj });
       if (cmd === "getSmfList") setTimeout(() => g.KWM!.resolvePromise(cmd, JSON.stringify((opt.files ?? []).map((name) => ({ name })))), 1);
       if (cmd === "selectSmf" || cmd === "setConcertMagicMode") {
-        setTimeout(() => (opt.failSelect && cmd === "selectSmf" ? g.KWM!.rejectPromise(cmd, "{}") : g.KWM!.resolvePromise(cmd, '{"format":1,"totalTime":1000}')), 1);
+        setTimeout(() => (opt.failSelect && cmd === "selectSmf" ? g.KWM!.rejectPromise(cmd, "{}") : g.KWM!.resolvePromise(cmd, JSON.stringify(cmd === "selectSmf" && opt.info ? opt.info : { format: 1, totalTime: 1000 }))), 1);
       }
     },
   };
@@ -127,7 +127,7 @@ test("music tab without the panel shell: three modes with one line each, real li
   el.remove();
 });
 
-test("music tab on the panel: a tap plays the piece through the shell; hand practice sets the two hand volumes", async () => {
+test("music tab on the panel: a tap plays the piece through the shell; hand practice mutes that hand in the shell's player", async () => {
   const inv = bookOf(LESSON_BOOKS, "inventions");
   const files = [stub(inv, 3, "T-A.mid"), stub(inv, 4, "T-B.mid"), stub(bookOf(PIANO_MUSIC, "piano"), 13, "T-C.mid"), "Kawai/updater/X.mid"];
   const calls = fakeShell({ files });
@@ -137,18 +137,21 @@ test("music tab on the panel: a tap plays the piece through the shell; hand prac
   assert.equal(el.querySelector("#builtin-where"), null);
   change(field<HTMLSelectElement>(el, "Lesson book"), "inventions");
   assert.ok(!el.querySelector("#hand-practice")!.hasAttribute("hidden"));
-  // choose the left hand to play: the piano leaves it out (MIDI2ch volume 0), right hand stays (Global 100)
+  // choose the left hand to play: the shell's player leaves it out (the second hand part muted) - set after the select
   byText(el, "button", "Left hand").click();
+  assert.equal(calls.length, 0, "nothing loaded yet: nothing to mute");
   (rows(el)[3].querySelector("button") as HTMLButtonElement).click();
   await tick(30);
-  assert.deepEqual(calls.map((c) => c.cmd), ["getSmfList", "selectSmf", "setSmfRelativeTempo", "playStartSmf"]);
+  assert.deepEqual(calls.map((c) => c.cmd), ["getSmfList", "selectSmf", "setSmfTrack", "setSmfRelativeTempo", "playStartSmf"]);
   assert.deepEqual(calls[0].obj, { bundle: true }, "the shell lists its own song files");
   calls.shift();
   assert.deepEqual(calls[0].obj, { path: "Kawai/default/T-A.mid", quantise: 256 });
+  assert.deepEqual(calls[1].obj, { array: [1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1] }, "channel 2 muted (numbers, not booleans)");
+  calls.splice(1, 1);
   assert.deepEqual(calls[1].obj, { tempo: 1 }, "the lesson tempo again after each select (1× until moved)");
   calls.splice(1, 1);
   assert.deepEqual(calls[1].obj, { interval: 480 }, "ticks per beat, as the original app passes");
-  assert.ok(sent.includes("F0 40 7F 10 08 02 55 01 0F 64 F7") && sent.includes("F0 40 7F 10 08 02 55 01 31 00 F7"), "Global 100, MIDI2ch 0");
+  assert.ok(!sent.some((m) => m.includes(" 55 01 ")), "no Volume frames to the piano");
   assert.equal(rows(el)[3].getAttribute("data-playing"), "1");
   assert.match(el.querySelector("#music-player .pl-title")!.textContent!, /Invention No\. 4/);
   assert.ok(!sent.some((m) => m.includes(" 52 00 7F") || m.includes(" 52 1D ")), "no SongSelect / MusicMode for a lesson piece");
@@ -158,19 +161,59 @@ test("music tab on the panel: a tap plays the piece through the shell; hand prac
   (el.querySelector('#music-player [data-act="next"]') as HTMLElement).click();
   await tick(30);
   (el.querySelector('#music-player [data-act="stop"]') as HTMLElement).click();
-  assert.deepEqual(calls.slice(2).map((c) => c.cmd), ["playPauseSmf", "playStartSmf", "playStopSmf", "selectSmf", "setSmfRelativeTempo", "playStartSmf", "playStopSmf"]);
-  await tick();
-  assert.equal(sent.filter((m) => m === "F0 40 7F 10 08 02 55 01 31 64 F7").length, 1, "Stop puts the left hand back");
+  assert.deepEqual(calls.slice(2).map((c) => c.cmd), ["playPauseSmf", "playStartSmf", "playStopSmf", "selectSmf", "setSmfTrack", "setSmfRelativeTempo", "playStartSmf", "playStopSmf"],
+    "the next piece is muted again after its select");
   assert.equal(calls[5].obj.path, "Kawai/default/T-B.mid");
+  assert.deepEqual(calls[6].obj.array, [1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
   // Piano Music plays with both hands again
   byText(el, "button", "Piano Music").click();
   (rows(el)[13].querySelector("button") as HTMLButtonElement).click();
   await tick(30);
   assert.equal(calls.at(-3)!.obj.path, "Kawai/default/T-C.mid");
+  assert.equal(calls.at(-2)!.cmd, "setSmfRelativeTempo", "a fresh select mutes nothing: no setSmfTrack for Piano Music");
   assert.equal(calls.filter((c) => c.cmd === "getSmfList").length, 0, "the list is asked once");
-  assert.deepEqual(handVolumes("right"), [0, 100]);
+  assert.ok(!sent.some((m) => m.includes(" 55 01 ")), "still no Volume frames");
   assert.equal(beatTicks({ division: 480, beatInfo: [{ numra: 6, denom: 8 }] }), 720, "6/8: a dotted quarter");
   assert.equal(beatTicks({ division: 480, beatInfo: [{ numra: 3, denom: 4 }] }), 480);
+  el.remove();
+});
+
+test("hand practice: the hand parts come from selectSmf's existTrack; a change while playing is sent at once", async () => {
+  // format 1: track 0 is the conductor track (no channel messages), the hands are tracks 1 and 2
+  assert.deepEqual(handParts([false, true, true, ...Array(13).fill(false)]), [1, 2]);
+  assert.deepEqual(handParts([true, true, ...Array(14).fill(false)]), [0, 1], "format 0: channels 1 and 2");
+  assert.deepEqual(handParts(undefined), [0, 1]);
+  assert.deepEqual(handParts([false, false, false, true]), [3, 4], "one part only: the next index");
+  assert.deepEqual(trackArray("both", [1, 2]), Array(16).fill(1));
+  assert.equal(trackArray("right", [1, 2]).indexOf(0), 1);
+  assert.equal(trackArray("left", [1, 2]).indexOf(0), 2);
+
+  const inv = bookOf(LESSON_BOOKS, "inventions");
+  const files = [stub(inv, 0, "T-A.mid")];
+  const calls = fakeShell({ files, info: { format: 1, division: 480, existTrack: [false, true, true, ...Array(13).fill(false)] } });
+  const { store, sent } = await setup();
+  const el = S.musicScreen(store);
+  document.body.append(el);
+  change(field<HTMLSelectElement>(el, "Lesson book"), "inventions");
+  (rows(el)[0].querySelector("button") as HTMLButtonElement).click();
+  await tick(30);
+  assert.equal(calls.filter((c) => c.cmd === "setSmfTrack").length, 0, "both hands: nothing muted, nothing sent");
+  const tracks = () => calls.filter((c) => c.cmd === "setSmfTrack").map((c) => (c.obj.array as number[]).indexOf(0));
+  byText(el, "button", "Right hand").click();
+  assert.deepEqual(tracks(), [1], "right hand = the first hand part (track 1)");
+  byText(el, "button", "Right hand").click();
+  assert.deepEqual(tracks(), [1], "the same choice again: not re-sent");
+  byText(el, "button", "Left hand").click();
+  byText(el, "button", "Both hands").click();
+  assert.deepEqual(tracks(), [1, 2, -1], "left = track 2, both = nothing muted");
+  // paused: still the loaded piece - sent; stopped: nothing until the next select
+  (el.querySelector("#music-player .pl-main") as HTMLElement).click();
+  byText(el, "button", "Left hand").click();
+  assert.deepEqual(tracks(), [1, 2, -1, 2]);
+  (el.querySelector('#music-player [data-act="stop"]') as HTMLElement).click();
+  byText(el, "button", "Right hand").click();
+  assert.deepEqual(tracks(), [1, 2, -1, 2], "stopped: sent with the next select instead");
+  assert.ok(!sent.some((m) => m.includes(" 55 01 ")), "no Volume frames");
   el.remove();
 });
 

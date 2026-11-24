@@ -12,8 +12,12 @@
 // Lesson / Piano Music playStartSmf; for Concert Magic setConcertMagicMode {mode, smooth, triggerTrack} +
 // setConcertMagicNativeTrigger {isNative: true} + MusicMode 5 (31 52 1D 05: the piano stops sounding its own keys, the
 // shell turns each key into the song's next notes and reports the tap through KWM.donePlayConcertMagic).
-// Hand practice (Lesson): the piano plays the right hand on the Volume part Global (10 55 01 0F) and the left hand on
-// MIDI2ch (part 0x31) - the original app's balance slider; 0 silences that hand.
+// Hand practice (Lesson): the shell's own player leaves the hand out - setSmfTrack {array: [16 × 0/1]} mutes a part
+// inside the shell (index = channel for a format 0 file, track for format 1; 0 = muted), so its notes are never sent
+// and the piano's own keys are untouched. The hand parts are the first two parts selectSmf reports in existTrack:
+// right hand first (channel 1), left hand second (channel 2). A new selectSmf starts with nothing muted, so the choice
+// is sent again after each select. (2026-11-24 on the panel: Volume 10 55 01 on parts Global / MIDI2ch - what the
+// original app's balance slider sends - made no audible difference to the shell's playback.)
 // Lesson tempo (manual p.39 「Tempo」): the shell's player speed, setSmfRelativeTempo {tempo: 0.5..2} - the original
 // app's lesson slider (0..100, middle = 1×: 0.5..1 on the left half, 1..2 on the right). Like the original it is sent
 // again after each selectSmf: the lesson's speed in Lesson, 1× for anything else.
@@ -39,12 +43,23 @@ export function songSelectData(n: number, numType = 0): number[] {
   return [numType & 0x7f, (n >> 7) & 0x7f, n & 0x7f];
 }
 
-/** Volume parts the original app's lesson balance uses: right hand = Global, left hand = MIDI2ch. */
-export const HAND_PART = { right: 0x0f, left: 0x31 } as const;
 /** Hand practice: which hand the piano leaves out (you play it). */
 export type Hands = "both" | "right" | "left";
-/** [Global, MIDI2ch] Volume for a hand-practice choice. */
-export const handVolumes = (hands: Hands): [number, number] => (hands === "right" ? [0, 100] : hands === "left" ? [100, 0] : [100, 100]);
+/**
+ * The [right, left] hand parts of a loaded piece as setSmfTrack indexes: the first two parts holding channel messages
+ * in selectSmf's existTrack (16 flags). Without that answer: channels 1 and 2 (index 0, 1).
+ */
+export function handParts(existTrack: unknown): [number, number] {
+  const on: number[] = [];
+  if (Array.isArray(existTrack)) existTrack.slice(0, 16).forEach((x, i) => x && on.push(i)); // no flatMap on Chrome 71
+  const r = on[0] ?? 0;
+  return [r, on[1] ?? Math.min(r + 1, 15)];
+}
+/** setSmfTrack's array for a choice: 1 = plays, 0 = muted (the shell reads numbers). */
+export function trackArray(hands: Hands, [r, l]: [number, number]): number[] {
+  const off = hands === "right" ? r : hands === "left" ? l : -1;
+  return Array.from({ length: 16 }, (_, i) => (i === off ? 0 : 1));
+}
 
 type Status = "idle" | "loading" | "playing" | "paused" | "magic" | "error" | "missing";
 
@@ -61,7 +76,7 @@ export function relativeSpeed(v: number): number {
 }
 
 /** What the selectSmf answer holds that the start needs (the shell's KWMSmf info). */
-interface SmfInfo { division?: number; beatInfo?: { numra?: number; denom?: number }[] }
+interface SmfInfo { division?: number; beatInfo?: { numra?: number; denom?: number }[]; existTrack?: unknown }
 /** playStartSmf's interval as the original app computes it: ticks per beat (a dotted beat in 6/8, 9/8, 12/8). */
 export function beatTicks(info: SmfInfo | null): number {
   const div = info?.division ?? 480;
@@ -79,8 +94,8 @@ const live = {
   cur: null as { mode: number; book: BuiltinBook; i: number } | null,
   magicOn: false, // MusicMode 5 + native trigger are set (undo them when Concert Magic ends)
   hands: "both" as Hands,
-  handsSent: "both" as Hands,
-  saved: null as [number, number] | null, // the Global / MIDI2ch Volume before hand practice changed them
+  handsSent: "both" as Hands, // what the shell's player has muted for the loaded piece
+  parts: [0, 1] as [number, number], // the loaded piece's right / left hand parts (setSmfTrack indexes)
   cmCfg: { mode: 1, smooth: 0, track: 0 }, // Ensemble, no smoothing, trigger part 1 (the original app's start)
   interval: 480,
   speed: 50, // the lesson tempo slider (relativeSpeed), kept across pieces as the original app keeps it
@@ -117,21 +132,18 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   // the CA79's EU and US lists differ (Concert Magic, Piano Music, hymns): the piano's destination picks one
   const region = regionOf(ctx?.session()?.identity?.destination);
   const modeP = findParam("MusicMode", 0x31)!;
-  const volP = findParam("Volume")!;
   const keyOf = (m: number) => MODES.find(([, v]) => v === m)![2];
 
   const redraw = () => live.redraw?.();
 
+  // the shell's player mutes the hand left out; it needs a loaded piece (a new select clears every mute)
   const sendHands = (want: Hands) => {
-    if (want === live.handsSent) return;
-    // keep what the piano had, to put back when both hands play again
-    if (live.handsSent === "both") live.saved = [store.get(volP, HAND_PART.right)?.[0] ?? 100, store.get(volP, HAND_PART.left)?.[0] ?? 100];
+    if (!canPlay || want === live.handsSent) return;
     live.handsSent = want;
-    const [r0, l0] = live.saved ?? [100, 100];
-    const [r, l] = want === "right" ? [0, l0] : want === "left" ? [r0, 0] : [r0, l0];
-    void store.set(volP, HAND_PART.right, [r]);
-    void store.set(volP, HAND_PART.left, [l]);
+    callNative("setSmfTrack", { array: trackArray(want, live.parts) });
   };
+  /** Which hand the current piece should leave out: only a lesson piece from a book with two hand parts. */
+  const handsFor = (c: typeof live.cur) => (c && c.mode === MUSIC_MODE.Lesson && c.book.hands ? live.hands : "both");
   const endMagic = () => {
     if (!live.magicOn) return;
     live.magicOn = false;
@@ -142,7 +154,6 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     // the shell may play a piece started from an earlier screen: always stop it, end Concert Magic, both hands again
     if (canPlay) callNative("playStopSmf");
     endMagic();
-    sendHands("both");
     if (live.cur) live.status = "idle";
     redraw();
   };
@@ -153,8 +164,6 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     live.cur = { mode, book: b, i };
     live.status = "loading";
     redraw();
-    // hand practice only means something for a lesson piece with two live.hands; anything else plays with both
-    sendHands(mode === MUSIC_MODE.Lesson && b.hands ? live.hands : "both");
     let info: SmfInfo | null = null;
     const path = (await shellPaths()).get(song.key);
     if (live.cur?.book.id !== b.id || live.cur.i !== i) return; // another piece was picked meanwhile
@@ -169,6 +178,10 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
       return redraw();
     }
     if (live.cur?.book.id !== b.id || live.cur.i !== i) return; // another piece was picked meanwhile
+    // the new piece starts with nothing muted: hand practice (a lesson piece with two hand parts) is set again
+    live.parts = handParts(info?.existTrack);
+    live.handsSent = "both";
+    sendHands(handsFor(live.cur));
     callNative("setSmfRelativeTempo", { tempo: mode === MUSIC_MODE.Lesson ? relativeSpeed(live.speed) : 1 });
     if (mode === MUSIC_MODE.ConcertMagic) {
       await callPromise("setConcertMagicMode", { mode: live.cmCfg.mode, smooth: live.cmCfg.smooth, triggerTrack: live.cmCfg.track }, 3000).catch(() => {});
@@ -238,7 +251,7 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   // hand practice: shown in Lesson for a book whose pieces have two live.hands
   const handSeg = h("div", { class: "segmented", "data-hands": "" },
     ...([["Both hands", "both"], ["Right hand", "right"], ["Left hand", "left"]] as const).map(([label, v]) =>
-      h("button", { "data-hand": v, onclick: () => { live.hands = v; if (live.cur?.mode === MUSIC_MODE.Lesson && live.cur.book.hands) sendHands(v); redraw(); } }, t(label))));
+      h("button", { "data-hand": v, onclick: () => { live.hands = v; if (live.status === "playing" || live.status === "paused") sendHands(handsFor(live.cur)); redraw(); } }, t(label))));
   const handRow = h("div", { class: "pl-part-row", id: "hand-practice" },
     h("div", { class: "row seg-row" }, h("span", {}, t("One-hand practice")), handSeg),
     h("p", { class: "muted" }, t("Choose the hand you play: the piano leaves that hand out and plays the other.")));
