@@ -276,8 +276,13 @@ test("relay: no reporter on the panel page (Kawai UI, old bundle) — 'no reply'
     const r = await new PanelScreenClient(relay2.phone()).snapshot();
     assert.equal(r.ok, false);
     assert.equal(r.info?.rc, 13);
-    // a stale Read (the page reloaded since the capture) answers rc 8
-    q.deliver([...readRequest(77, 0)]);
+    // a stale Read (the page reloaded since the capture: a tag it does not hold) answers rc 8. The tag must differ
+    // from the snapshot's: the client starts its tags at random (1..100), and a fixed 77 met it about once in 100
+    // runs — the panel then threw on a capture without bytes and sent nothing (q.sent.at(-1) undefined).
+    const stale = (r.info!.tag % 127) + 1;
+    const before = q.sent.length;
+    q.deliver([...readRequest(stale, 0)]);
+    assert.equal(q.sent.length, before + 1, "the Read is answered at once");
     assert.equal(decodeCapture(parsePuiReply(Uint8Array.from(q.sent.at(-1)!))!.data)?.rc, 8);
   } finally {
     relay2.stop();

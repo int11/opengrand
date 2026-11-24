@@ -178,7 +178,11 @@ a { color: #5fc3cf; }
 .segmented > * { margin: 2px; }
 .segmented button.on, .transport button.on { background: var(--accent); color: var(--accent-ink); }
 .tempo-row { display: flex; align-items: center; justify-content: center; }
-.tempo-row > * + * { margin-left: 24px; }
+.tempo-row > * + * { margin-left: 12px; }
+.tempo-row .tempo-10 { font-size: 15px; padding-left: 6px; padding-right: 6px; }
+.tempo-term { display: flex; align-items: center; justify-content: center; margin-top: 4px; }
+.tempo-term-name { min-width: 9em; text-align: center; font-size: 20px; }
+.tempo-term-step { min-width: 44px; font-size: 20px; }
 .tempo { font-size: 56px; font-weight: 300; font-variant-numeric: tabular-nums; min-width: 3ch; text-align: center; }
 .beats { display: flex; justify-content: center; min-height: 18px; }
 .beats > * + * { margin-left: 8px; }

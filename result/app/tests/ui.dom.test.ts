@@ -91,6 +91,62 @@ test("metronome controls send tempo and run commands", async () => {
   assert.ok(sent.includes("F0 40 7F 32 08 02 56 08 7F 01 F7"), "metronome run (fn 0x32)");
 });
 
+test("metronome ±10 and tempo terms: 10..400 kept, the term follows the tempo, [<] [>] go to a term's start, none in Rhythm mode", async () => {
+  const { store, sent, piano } = setup();
+  const M = await import("../src/ui/screens/metronome.ts");
+  // the term table covers 10..400 without a gap
+  assert.equal(M.TEMPO_TERMS[0]!.min, 10);
+  assert.equal(M.TEMPO_TERMS.at(-1)!.max, 400);
+  M.TEMPO_TERMS.slice(1).forEach((x, i) => assert.equal(x.min, M.TEMPO_TERMS[i]!.max + 1, x.name));
+  assert.equal(M.tempoTermStep(45, -1), null);
+  assert.equal(M.tempoTermStep(400, 1), null);
+  assert.equal(M.tempoTermStep(100, 1), 108);
+  assert.equal(M.tempoTermStep(100, -1), 88);
+  const el = S.metronomeScreen(store, new EventTarget());
+  document.body.append(el);
+  const btn = (s: string) => [...el.querySelectorAll("button")].find((b) => b.textContent === s)!;
+  const term = () => el.querySelector(".tempo-term-name")!.textContent;
+  assert.equal(term(), "–", "no term before the piano's tempo is known");
+  const tempo = (v: number) => piano.send(encodeFrame({ dev: 0, fn: 0x10, group: 4, machine: 0x1e, body: [0x56, 0x01, 0x7f, v >> 7, v & 0x7f] }));
+  const wait = () => new Promise((r) => setTimeout(r, 20));
+  tempo(100);
+  await wait();
+  assert.equal(term(), "Moderato");
+  btn("+10").click();
+  await wait();
+  assert.ok(sent.includes("F0 40 7F 10 08 02 56 01 7F 00 6E F7"), "tempo 110");
+  assert.equal(term(), "Allegretto");
+  btn("−10").click();
+  btn("−10").click();
+  await wait();
+  assert.ok(sent.includes("F0 40 7F 10 08 02 56 01 7F 00 5A F7"), "tempo 90");
+  assert.equal(term(), "Maestoso");
+  btn("›").click();
+  await wait();
+  assert.ok(sent.includes("F0 40 7F 10 08 02 56 01 7F 00 60 F7"), "next term: Moderato starts at 96");
+  btn("‹").click();
+  await wait();
+  assert.ok(sent.includes("F0 40 7F 10 08 02 56 01 7F 00 58 F7"), "previous term: Maestoso starts at 88");
+  // the ends: 10..400 kept, the term buttons off at the first / last term
+  tempo(395);
+  await wait();
+  btn("+10").click();
+  await wait();
+  assert.ok(sent.includes("F0 40 7F 10 08 02 56 01 7F 03 10 F7"), "395 + 10 → 400");
+  assert.equal((btn("›") as HTMLButtonElement).disabled, true);
+  tempo(15);
+  await wait();
+  btn("−10").click();
+  await wait();
+  assert.ok(sent.includes("F0 40 7F 10 08 02 56 01 7F 00 0A F7"), "15 − 10 → 10");
+  assert.equal((btn("‹") as HTMLButtonElement).disabled, true);
+  // Rhythm mode (MetronomeMode 1): no tempo term, as on the panel
+  piano.send(encodeFrame({ dev: 0, fn: 0x10, group: 4, machine: 0x1e, body: [0x56, 0x0a, 0x7f, 1] }));
+  await wait();
+  assert.equal((el.querySelector(".tempo-term") as HTMLElement).hidden, true);
+  el.remove();
+});
+
 test("metronome button follows the piano: start/stop from the panel or another app (56 08 notification) and beats", async () => {
   const { store, piano } = setup();
   const beats = document.createElement("div"); // jsdom target, so jsdom's CustomEvent can be dispatched

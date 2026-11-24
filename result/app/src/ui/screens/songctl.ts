@@ -99,6 +99,15 @@ export interface PlayerView {
   next: boolean;
   /** the part means something for what is loaded (a piano song; not a USB file) - default true */
   part?: boolean;
+  /** the song's own tempo (OpenGrand op status, the stock's original tempo the player divides by): the song tempo
+   *  then also reads as a share of it ("♩=96 · 0.80×"); null / 0 = not known, the plain BPM only */
+  tempoBase?: number | null;
+}
+
+/** The song tempo's text: the BPM, and with the song's own tempo known the share of it (the stock plays at
+ *  tempo / original tempo). */
+export function songTempoText(v: number, base: number | null | undefined): string {
+  return base ? `♩=${v} · ${(v / base).toFixed(2)}×` : `♩=${v}`;
 }
 
 export interface PlayerActions {
@@ -153,6 +162,9 @@ export function playerBar(store: ParamStore, id: string, acts: PlayerActions): P
 
   // ---- the options sheet (built once: its controls stay bound to the store) ----
   const parts = partSelector(store);
+  const tempoP = findParam("MusicTempo")!;
+  let tempoBase: number | null = null;
+  const tempoRow = control(store, "MusicTempo", { label: t("Song tempo"), part: 0x7f, min: 10, max: 400, toRaw: bpm.encode, fromRaw: bpm.decode, format: (v) => songTempoText(v, tempoBase) });
   const options = h("dialog", { class: "sheet pl-sheet", id: `${id}-options` }) as HTMLDialogElement;
   const close = () => {
     if (typeof options.close === "function") options.close();
@@ -165,7 +177,7 @@ export function playerBar(store: ParamStore, id: string, acts: PlayerActions): P
         h("div", { class: "row seg-row" }, h("span", {}, t("Part")), parts.el),
         // owner 2026-11-23: 「파트 기능이 뭔지 모르겠다」 - say what it is where it is chosen
         h("p", { class: "muted pl-part-hint" }, t("A song has two parts, so each hand can be recorded on its own. Recording and playback use the part chosen here."))),
-      control(store, "MusicTempo", { label: t("Song tempo"), part: 0x7f, min: 10, max: 400, toRaw: bpm.encode, fromRaw: bpm.decode, format: (v) => `♩=${v}` }),
+      tempoRow,
       // Song transpose: the original table has PartTransposeValue on the same
       // wire id (53 02) with the System part; the key transpose uses part 0x0F.
       control(store, "TransposeValue", { label: t("Song transpose"), part: 0x7f, min: -12, max: 12, toRaw: offset64.encode, fromRaw: offset64.decode }),
@@ -288,6 +300,11 @@ export function playerBar(store: ParamStore, id: string, acts: PlayerActions): P
         attr(main, "title", t(MAIN_LABEL[v.main]));
         attr(main, "aria-label", t(MAIN_LABEL[v.main]));
         main.replaceChildren(icon(v.main));
+      }
+      if ((v.tempoBase || null) !== tempoBase) {
+        tempoBase = v.tempoBase || null;
+        const d = store.get(tempoP, 0x7f), out = tempoRow.querySelector("output");
+        if (d && out) out.textContent = songTempoText(bpm.decode(d), tempoBase);
       }
       prev.disabled = !v.prev;
       next.disabled = !v.next;

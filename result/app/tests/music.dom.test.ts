@@ -141,10 +141,12 @@ test("music tab on the panel: a tap plays the piece through the shell; hand prac
   byText(el, "button", "Left hand").click();
   (rows(el)[3].querySelector("button") as HTMLButtonElement).click();
   await tick(30);
-  assert.deepEqual(calls.map((c) => c.cmd), ["getSmfList", "selectSmf", "playStartSmf"]);
+  assert.deepEqual(calls.map((c) => c.cmd), ["getSmfList", "selectSmf", "setSmfRelativeTempo", "playStartSmf"]);
   assert.deepEqual(calls[0].obj, { bundle: true }, "the shell lists its own song files");
   calls.shift();
   assert.deepEqual(calls[0].obj, { path: "Kawai/default/T-A.mid", quantise: 256 });
+  assert.deepEqual(calls[1].obj, { tempo: 1 }, "the lesson tempo again after each select (1× until moved)");
+  calls.splice(1, 1);
   assert.deepEqual(calls[1].obj, { interval: 480 }, "ticks per beat, as the original app passes");
   assert.ok(sent.includes("F0 40 7F 10 08 02 55 01 0F 64 F7") && sent.includes("F0 40 7F 10 08 02 55 01 31 00 F7"), "Global 100, MIDI2ch 0");
   assert.equal(rows(el)[3].getAttribute("data-playing"), "1");
@@ -156,7 +158,7 @@ test("music tab on the panel: a tap plays the piece through the shell; hand prac
   (el.querySelector('#music-player [data-act="next"]') as HTMLElement).click();
   await tick(30);
   (el.querySelector('#music-player [data-act="stop"]') as HTMLElement).click();
-  assert.deepEqual(calls.slice(2).map((c) => c.cmd), ["playPauseSmf", "playStartSmf", "playStopSmf", "selectSmf", "playStartSmf", "playStopSmf"]);
+  assert.deepEqual(calls.slice(2).map((c) => c.cmd), ["playPauseSmf", "playStartSmf", "playStopSmf", "selectSmf", "setSmfRelativeTempo", "playStartSmf", "playStopSmf"]);
   await tick();
   assert.equal(sent.filter((m) => m === "F0 40 7F 10 08 02 55 01 31 64 F7").length, 1, "Stop puts the left hand back");
   assert.equal(calls[5].obj.path, "Kawai/default/T-B.mid");
@@ -164,11 +166,50 @@ test("music tab on the panel: a tap plays the piece through the shell; hand prac
   byText(el, "button", "Piano Music").click();
   (rows(el)[13].querySelector("button") as HTMLButtonElement).click();
   await tick(30);
-  assert.equal(calls.at(-2)!.obj.path, "Kawai/default/T-C.mid");
+  assert.equal(calls.at(-3)!.obj.path, "Kawai/default/T-C.mid");
   assert.equal(calls.filter((c) => c.cmd === "getSmfList").length, 0, "the list is asked once");
   assert.deepEqual(handVolumes("right"), [0, 100]);
   assert.equal(beatTicks({ division: 480, beatInfo: [{ numra: 6, denom: 8 }] }), 720, "6/8: a dotted quarter");
   assert.equal(beatTicks({ division: 480, beatInfo: [{ numra: 3, denom: 4 }] }), 480);
+  el.remove();
+});
+
+test("music tab on the panel: lesson tempo 0.5×–2× is the shell's relative speed (setSmfRelativeTempo), sent while a lesson piece plays and after each select; 1× for Piano Music", async () => {
+  const { relativeSpeed } = await import("../src/ui/screens/music.ts");
+  assert.deepEqual([0, 25, 50, 60, 100].map(relativeSpeed), [0.5, 0.75, 1, 1.2, 2]);
+  const inv = bookOf(LESSON_BOOKS, "inventions");
+  const files = [stub(inv, 3, "T-A.mid"), stub(bookOf(PIANO_MUSIC, "piano"), 13, "T-C.mid")];
+  const calls = fakeShell({ files });
+  const { store } = await setup();
+  const el = S.musicScreen(store);
+  document.body.append(el);
+  const speed = el.querySelector("#lesson-tempo input") as HTMLInputElement;
+  const out = () => el.querySelector("#lesson-tempo output")!.textContent;
+  assert.ok(!el.querySelector("#lesson-tempo")!.hasAttribute("hidden"));
+  assert.equal(out(), "1.00×");
+  // moved before anything plays: nothing sent yet, the next lesson piece starts at that speed
+  change(speed, "25", "input");
+  assert.equal(out(), "0.75×");
+  assert.equal(calls.filter((c) => c.cmd === "setSmfRelativeTempo").length, 0);
+  change(field<HTMLSelectElement>(el, "Lesson book"), "inventions");
+  (rows(el)[3].querySelector("button") as HTMLButtonElement).click();
+  await tick(30);
+  const rel = () => calls.filter((c) => c.cmd === "setSmfRelativeTempo").map((c) => c.obj.tempo);
+  assert.deepEqual(rel(), [0.75]);
+  const i = calls.findIndex((c) => c.cmd === "setSmfRelativeTempo");
+  assert.deepEqual([calls[i - 1]!.cmd, calls[i + 1]!.cmd], ["selectSmf", "playStartSmf"]);
+  // while it plays a move goes to the shell at once
+  change(speed, "100");
+  assert.deepEqual(rel(), [0.75, 2]);
+  assert.equal(out(), "2.00×");
+  // Piano Music: the shell back at 1×; the lesson speed is kept for the next lesson piece
+  byText(el, "button", "Piano Music").click();
+  (rows(el)[13].querySelector("button") as HTMLButtonElement).click();
+  await tick(30);
+  assert.deepEqual(rel(), [0.75, 2, 1]);
+  change(speed, "50");
+  assert.deepEqual(rel(), [0.75, 2, 1], "not a lesson piece: the slider waits for the next one");
+  (el.querySelector('#music-player [data-act="stop"]') as HTMLElement).click();
   el.remove();
 });
 
@@ -182,8 +223,10 @@ test("music tab on the panel: Concert Magic sets the shell up, mutes the piano's
   (rows(el)[1].querySelector("button") as HTMLButtonElement).click(); // Ode to Joy
   await tick(30);
   calls.shift(); // getSmfList
-  assert.deepEqual(calls.map((c) => c.cmd), ["selectSmf", "setConcertMagicMode", "setConcertMagicNativeTrigger"]);
+  assert.deepEqual(calls.map((c) => c.cmd), ["selectSmf", "setSmfRelativeTempo", "setConcertMagicMode", "setConcertMagicNativeTrigger"]);
   assert.equal(calls[0].obj.path, "Kawai/default/T-D.mid");
+  assert.deepEqual(calls[1].obj, { tempo: 1 }, "not a lesson: the shell back at 1×");
+  calls.splice(1, 1);
   assert.deepEqual(calls[1].obj, { mode: 1, smooth: 0, triggerTrack: 0 });
   assert.deepEqual(calls[2].obj, { isNative: true });
   assert.ok(sent.includes("F0 40 7F 31 08 02 52 1D 7F 05 F7"), "MusicMode 5");

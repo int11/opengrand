@@ -690,3 +690,34 @@ test("the first status answer is lost: nothing is taken as empty until a status 
   assert.equal(el.querySelector("#songs-status")!.textContent, "2 of 10 songs recorded");
   el.remove();
 });
+
+test("song tempo reads a share of the song's own tempo (op status bytes 10-11) on OpenGrand; the plain BPM without it", async () => {
+  const { songTempoText } = await import("../src/ui/screens/songctl.ts");
+  assert.equal(songTempoText(96, 120), "♩=96 · 0.80×");
+  assert.equal(songTempoText(240, 120), "♩=240 · 2.00×");
+  assert.equal(songTempoText(96, null), "♩=96");
+  assert.equal(songTempoText(96, 0), "♩=96", "0 = the piano does not know it: no share invented");
+  const store = new ParamStore();
+  bindStore(store);
+  const s = fakeSession(0x1f);
+  const ctx = createContext(store, { session: () => s as never });
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  const out = () => el.querySelector("#rec-panel-options output")!.textContent;
+  assert.equal(out(), "–", "the piano's song tempo is not known yet");
+  // the song tempo (MusicTempo 10 52 02 7F hi lo) comes; the status says the song's own tempo is 120
+  store.fromWire({ fn: 0x10, v1: 0x52, v2: 0x02, part: 0x7f, data: [0, 96] });
+  await wait();
+  assert.equal(out(), "♩=96 · 0.80×");
+  store.fromWire({ fn: 0x10, v1: 0x52, v2: 0x02, part: 0x7f, data: [1, 0x10] });
+  await wait();
+  assert.equal(out(), "♩=144 · 1.20×", "a tempo change keeps the base");
+  el.remove();
+  // the stock (no op status): no base, the plain BPM
+  const { el: el2, store: store2 } = await stock();
+  store2.fromWire({ fn: 0x10, v1: 0x52, v2: 0x02, part: 0x7f, data: [0, 96] });
+  await tick(10);
+  assert.equal(el2.querySelector("#rec-panel-options output")!.textContent, "♩=96");
+  el2.remove();
+});

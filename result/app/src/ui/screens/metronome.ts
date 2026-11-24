@@ -6,6 +6,46 @@ import type { ParamStore } from "../../state/store.ts";
 import { control } from "../controls.ts";
 import { h, section } from "../dom.ts";
 
+/** The metronome tempo range (manual p.44: 10~400 BPM, ±1 by [–] [+], ±10 by an up / down swipe). */
+export const TEMPO_MIN = 10;
+export const TEMPO_MAX = 400;
+
+/**
+ * Tempo terms (manual p.44 「Tempo term」, shown in Metronome mode only): the name for a tempo and the BPM span it
+ * covers - the spans the stock remote app uses. The [<] [>] buttons go to the start of the term before / after.
+ */
+export const TEMPO_TERMS: readonly { name: string; min: number; max: number }[] = [
+  { name: "Grave", min: 10, max: 45 },
+  { name: "Largo", min: 46, max: 51 },
+  { name: "Lento", min: 52, max: 55 },
+  { name: "Larghetto", min: 56, max: 59 },
+  { name: "Adagio", min: 60, max: 65 },
+  { name: "Adagietto", min: 66, max: 71 },
+  { name: "Andante", min: 72, max: 79 },
+  { name: "Andantino", min: 80, max: 87 },
+  { name: "Maestoso", min: 88, max: 95 },
+  { name: "Moderato", min: 96, max: 107 },
+  { name: "Allegretto", min: 108, max: 119 },
+  { name: "Animato", min: 120, max: 131 },
+  { name: "Allegro", min: 132, max: 159 },
+  { name: "Vivace", min: 160, max: 183 },
+  { name: "Presto", min: 184, max: 191 },
+  { name: "Vivacissimo", min: 192, max: 207 },
+  { name: "Prestissimo", min: 208, max: 400 },
+];
+
+/** The index into TEMPO_TERMS for a BPM (-1 outside 10..400). */
+export function tempoTermIndex(bpmValue: number): number {
+  return TEMPO_TERMS.findIndex((x) => bpmValue >= x.min && bpmValue <= x.max);
+}
+
+/** The tempo the [<] (-1) / [>] (+1) term buttons go to: the start of the neighbouring term, or null at either end. */
+export function tempoTermStep(bpmValue: number, dir: -1 | 1): number | null {
+  const i = tempoTermIndex(bpmValue);
+  const next = i < 0 ? undefined : TEMPO_TERMS[i + dir];
+  return next ? next.min : null;
+}
+
 export function metronomeScreen(store: ParamStore, beatEvents: EventTarget): HTMLElement {
   const tempoP = findParam("MetronomeTempo")!;
   const beatP = findParam("BeatSelect")!;
@@ -14,6 +54,25 @@ export function metronomeScreen(store: ParamStore, beatEvents: EventTarget): HTM
   for (const p of [tempoP, beatP, rhythmP]) store.want(p, 0x7f); // runP is not asked for: notifications and beats set it
   // "–" until the piano's tempo is known (not a 120 that looks like the piano's value)
   const tempoOut = h("div", { class: "tempo" }, store.get(tempoP, 0x7f) ? String(bpm.decode(store.get(tempoP, 0x7f)!)) : "–");
+  // the tempo term under the number (Metronome mode only, as on the panel); "–" until the piano's tempo is known
+  const termOut = h("span", { class: "tempo-term-name" }, "–");
+  const termStep = (dir: -1 | 1) => {
+    const d = store.get(tempoP, 0x7f);
+    const v = d ? tempoTermStep(bpm.decode(d), dir) : null;
+    if (v !== null) setTempo(v);
+  };
+  const termPrev = h("button", { class: "tempo-term-step", "aria-label": t("Previous tempo term"), onclick: () => termStep(-1) }, "‹") as HTMLButtonElement;
+  const termNext = h("button", { class: "tempo-term-step", "aria-label": t("Next tempo term"), onclick: () => termStep(1) }, "›") as HTMLButtonElement;
+  const termRow = h("div", { class: "tempo-term" }, termPrev, termOut, termNext);
+  const modeP = findParam("MetronomeMode")!;
+  const syncTerm = () => {
+    const d = store.get(tempoP, 0x7f);
+    const i = d ? tempoTermIndex(bpm.decode(d)) : -1;
+    termOut.textContent = i >= 0 ? TEMPO_TERMS[i]!.name : "–";
+    termPrev.disabled = i <= 0;
+    termNext.disabled = i < 0 || i >= TEMPO_TERMS.length - 1;
+    termRow.hidden = store.get(modeP, 0x7f)?.[0] === 1; // Rhythm mode: no term
+  };
   const dots = h("div", { class: "beats" });
   let running = false;
   const runBtn = h("button", { class: "primary big" }, t("Start"));
@@ -22,7 +81,7 @@ export function metronomeScreen(store: ParamStore, beatEvents: EventTarget): HTM
     running = on;
     runBtn.textContent = running ? t("Stop") : t("Start");
   };
-  const setTempo = (v: number) => void store.set(tempoP, 0x7f, bpm.encode(Math.max(10, Math.min(400, v))));
+  const setTempo = (v: number) => void store.set(tempoP, 0x7f, bpm.encode(Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, v))));
   const curTempo = () => bpm.decode(store.get(tempoP, 0x7f) ?? [0, 120]);
   beatEvents.addEventListener("beat", (e) => {
     const n = (e as CustomEvent<number>).detail;
@@ -54,9 +113,11 @@ export function metronomeScreen(store: ParamStore, beatEvents: EventTarget): HTM
   };
   store.subscribe((k) => {
     if (k === "MetronomeTempo@127" || k === "BeatSelect@127" || k === "RhythmSelect@127") syncMetronome();
+    if (k === "MetronomeTempo@127" || k === "MetronomeMode@127") syncTerm();
     if (k === "Metronome@127") setRunning(store.get(runP, 0x7f)?.[0] === 1);
   });
   syncMetronome();
+  syncTerm();
   setRunning(store.get(runP, 0x7f)?.[0] === 1);
   runBtn.addEventListener("click", () => {
     setRunning(!running);
@@ -67,7 +128,14 @@ export function metronomeScreen(store: ParamStore, beatEvents: EventTarget): HTM
     { class: "screen" },
     section(
       t("Metronome"),
-      h("div", { class: "tempo-row" }, h("button", { onclick: () => setTempo(curTempo() - 1) }, "−"), tempoOut, h("button", { onclick: () => setTempo(curTempo() + 1) }, "+")),
+      // ±1 and ±10 (the panel's left / right and up / down swipes)
+      h("div", { class: "tempo-row" },
+        h("button", { class: "tempo-10", "aria-label": t("Tempo −10"), onclick: () => setTempo(curTempo() - 10) }, "−10"),
+        h("button", { onclick: () => setTempo(curTempo() - 1) }, "−"),
+        tempoOut,
+        h("button", { onclick: () => setTempo(curTempo() + 1) }, "+"),
+        h("button", { class: "tempo-10", "aria-label": t("Tempo +10"), onclick: () => setTempo(curTempo() + 10) }, "+10")),
+      termRow,
       dots,
       runBtn,
       h("label", { class: "row" }, h("span", {}, t("Time signature")), sigSel),
