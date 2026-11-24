@@ -35,6 +35,11 @@
 //            and the stock's remote start, Music 4, is never sent in MusicMode 2 by this app (the stock takes it
 //            in any state, also without a standby; the incident's take was opened with it by hand). With the record
 //            control the core judges a Kawai Music 4 like cmd 11 - the app sends the op itself.
+// Part 2 of a song with no part 1 (the same incident: the stock's commit of such a take ended without a key leaves the
+// song's part-1 slot pointing past the song - firmware R3 mends it): ● asks first - record into part 1 instead (op cmd 8
+// with part 0, on the stock IntSongPart 0 before Music 3), into part 2 anyway, or cancel. The part ● records into is the
+// piano's (op status byte 4: IntSongPart 7F leaves it as it was), on the stock IntSongPart 0 / 1 as last said; part 1
+// is the song list's flag bit 0 (track slot 0 present) - an empty song has none.
 // A broken song table (op status byte 19 not 0; the song list then reads all zero) leaves every song's state unknown:
 // the list says so, and Rec, the automatic empty-song choice, putting a file into the piano, delete and save are
 // refused with that reason.
@@ -93,6 +98,9 @@ const TABLE_TEXT = {
   bad: "The piano's song list is not valid. Check it before switching the piano off.",
 } as const;
 
+/** ● would record part 2 of a song that has no part 1 */
+const PART2_TEXT = "Song {n} has no part 1, and this take goes into part 2. Record into part 1 instead?";
+
 /** Strings shown only in a state a screen test does not reach (for the translation check). */
 export const RECORDER_STRINGS = [
   ...Object.values(PIANO_RC), ...STATE_TEXT, "Bar {bar}", "{a} / {n} bars", "The piano did not confirm the command.", "No answer from the piano.",
@@ -108,9 +116,12 @@ export const RECORDER_STRINGS = [
   "Needs OpenGrand song delete: the piano's own delete does not remove the song.", "Play a key or press Play to start recording.",
   "Play a key to start recording.", ...Object.values(TABLE_TEXT), "Unknown",
   "Previous song", "Next song", "Go to bar", "More", "Pause", "Stop", "Close",
+  PART2_TEXT, "Record into part 1", "Record into part 2",
 ];
 
 type ListId = "internal" | "usb";
+/** the part a recording goes to: the piano's now, or part 1 */
+type RecPart = 0 | typeof REC_PART_NOW;
 /** The list last shown and what the bar last held, per context (the tab is rebuilt on every visit and language change). */
 const shownList = new WeakMap<AppContext, ListId>();
 const shownSource = new WeakMap<AppContext, ListId>();
@@ -152,6 +163,8 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   let recCtl = false;
   // op status byte 19, the song table check: 0 OK, 0xFF not read yet, else broken; null = no status yet
   let tableStore: number | null = null;
+  // op status byte 4: the part a recording goes to (0 part 1, 1 part 2); null = no status yet
+  let recPart: number | null = null;
   let canDelete = false;
   // what the bar holds when no USB file plays: the piano song, or the file chosen in the USB list
   let src: ListId = shownSource.get(ctx) ?? "internal";
@@ -356,17 +369,19 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     const n = sel < 0 ? 0 : sel + d;
     if (n >= 0 && n < SONGS) void pick(n);
   };
-  /** A question under the bar with one red button (record over a song, replace a song with a file). */
-  const askOver = (text: string, label: string, act: string, run: () => void) => {
+  /** A question under the bar: its buttons, then Cancel. */
+  const ask = (text: string, btns: { label: string; act: string; cls?: string; run: () => void }[]) => {
     over.replaceChildren(
       h("p", {}, text),
       h("div", { class: "tp-row" },
-        h("button", { class: "danger", "data-act": act, onclick: () => { hideOver(); run(); } }, label),
+        ...btns.map((b) => h("button", { class: b.cls, "data-act": b.act, onclick: () => { hideOver(); b.run(); } }, b.label)),
         h("button", { "data-act": "rec-cancel", onclick: hideOver }, t("Cancel"))));
     over.hidden = false;
     clearTimeout(overTimer);
     overTimer = setTimeout(hideOver, CONFIRM.ms);
   };
+  /** A question under the bar with one red button (record over a song, replace a song with a file). */
+  const askOver = (text: string, label: string, act: string, run: () => void) => ask(text, [{ label, act, cls: "danger", run }]);
   /** The song a new recording or a file goes to without asking: the chosen one if it is empty, else the first empty
    *  one; -1 = none is known to be empty. */
   const emptySong = () => (tableReason() ? -1
@@ -385,14 +400,38 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   // Rec: record standby (op cmd 8 with the record control, else Music 3) - in an empty song this app chooses (rule 2);
   // only when none is empty, or the song table is not known (stock, not scanned), the chosen song is asked about first.
   // overwrite: the user agreed to record over what the song may hold (cmd 8 refuses a recorded part without it)
-  const standby = (overwrite: boolean) => (recCtl ? void op(RecorderCmd.RecStandby, REC_PART_NOW | (overwrite ? REC_OVERWRITE : 0)) : kawai(MUSIC_CMD.Rec));
-  const startRec = async (overwrite = false) => {
+  // part: the part the piano records now (REC_PART_NOW), or part 1 chosen in the part question
+  const standby = (overwrite: boolean, part: RecPart = REC_PART_NOW) => (recCtl ? void op(RecorderCmd.RecStandby, part | (overwrite ? REC_OVERWRITE : 0)) : kawai(MUSIC_CMD.Rec));
+  const startRec = async (overwrite = false, part: RecPart = REC_PART_NOW) => {
     hideOver();
     if (refuseTable()) return;
     if (usbAnyRunning(pb)) await usb.stop();
     await ensureMode();
     if (refuseTable()) return;
-    standby(overwrite);
+    // the stock (and a core without the record control): IntSongPart 0 sets the part Music 3 records into
+    if (part === 0 && !recCtl) await store.set(partP, 0x7f, [0]);
+    standby(overwrite, part);
+  };
+  /** The part ● records into: the piano's (op status byte 4 - ● sends 「the part now」 and IntSongPart 7F leaves it as
+   *  it was), else IntSongPart 0 / 1 as last said; null = not known. */
+  const recPartNow = (): number | null => {
+    if (rec && recPart !== null) return recPart;
+    const v = store.get(partP, 0x7f)?.[0];
+    return v === 0 || v === 1 ? v : null;
+  };
+  /** Song n is known to hold no part 1: empty, or its tracks without part 1 (song list flag bit 0). */
+  const noPart1 = (n: number) => {
+    const i = songs[n];
+    return !!i && (!i.hasData || (!!i.parts && !i.parts[0]));
+  };
+  /** ● into song n: part 2 of a song with no part 1 is asked about first (see the head of this file), before anything
+   *  is sent - go gets the part to record into. */
+  const partGuard = (n: number, go: (part: RecPart) => void) => {
+    if (recPartNow() !== 1 || !noPart1(n)) return go(REC_PART_NOW);
+    ask(t(PART2_TEXT, { n: n + 1 }), [
+      { label: `● ${t("Record into part 1")}`, act: "rec-part1", cls: "primary", run: () => go(0) },
+      { label: t("Record into part 2"), act: "rec-part2", run: () => go(REC_PART_NOW) },
+    ]);
   };
   const recTap = () => {
     note.textContent = "";
@@ -404,9 +443,9 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     const i = sel < 0 ? null : songs[sel];
     const part = store.get(partP, 0x7f)?.[0];
     // one part alone was chosen in the options and the chosen song has room in it: the second hand of that song
-    if (i?.hasData && i.parts && (part === 0 || part === 1) && !i.parts[part]) return void startRec();
+    if (i?.hasData && i.parts && (part === 0 || part === 1) && !i.parts[part]) return partGuard(sel, (p) => void startRec(false, p));
     const to = emptySong();
-    if (to >= 0) return void (async () => {
+    if (to >= 0) return partGuard(to, (p) => void (async () => {
       if (to !== sel) {
         // OpenGrand: the piano confirms one command at a time - Rec goes out when the song choice is done (panelsim
         // 2026-11-23: a Music 3 right behind the op select was dropped)
@@ -414,14 +453,15 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
         if (!(await pick(to))) return;
         await done;
       }
-      if (sel === to) await startRec();
-    })();
+      if (sel === to) await startRec(false, p);
+    })());
     if (sel < 0) {
       note.textContent = songs.some((s) => s) ? t("All 10 piano songs are used. Choose the song to record over below, then press Rec.") : t("Choose a song first.");
       return;
     }
-    const ask = i ? "Song {n} already has a recording. Recording again replaces it." : "Song {n} may already have a recording. Recording replaces it.";
-    askOver(t(ask, { n: sel + 1 }), `● ${t("Record over it")}`, "rec-confirm", () => void startRec(true));
+    const q = i ? "Song {n} already has a recording. Recording again replaces it." : "Song {n} may already have a recording. Recording replaces it.";
+    const n = sel;
+    askOver(t(q, { n: n + 1 }), `● ${t("Record over it")}`, "rec-confirm", () => partGuard(n, (p) => void startRec(true, p)));
   };
 
   const player = playerBar(store, "rec-panel", {
@@ -798,6 +838,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       if (st.musicMode !== undefined && pb.mode !== st.musicMode) pb.mode = st.musicMode;
       canDelete = st.deletes;
       tempoOrig = st.tempoOrig;
+      recPart = st.recPart;
       // the song table check: anything but 0 = no song's state is known (the list reads zero then); back to 0 = read
       // the list again
       tableStore = st.store;

@@ -12,9 +12,9 @@ const { createContext } = await import("../src/ui/context.ts");
 const { bindStore } = await import("../src/ui/controls.ts");
 const { recorderScreen } = await import("../src/ui/recorder.ts");
 
-function statusRaw(state: number, song: number, bar = 0, store = 0): number[] {
+function statusRaw(state: number, song: number, bar = 0, store = 0, recPart = 0): number[] {
   const raw = new Array(48).fill(0);
-  raw[0] = 1; raw[1] = state; raw[3] = song; raw[6] = 2; raw[8] = 120; raw[10] = 120; raw[16] = 3; raw[29] = bar;
+  raw[0] = 1; raw[1] = state; raw[3] = song; raw[4] = recPart; raw[6] = 2; raw[8] = 120; raw[10] = 120; raw[16] = 3; raw[29] = bar;
   raw[19] = store; // the song table check: 0 OK, 0xFF not read yet, else broken (recview.h RV_STORE_*)
   return raw;
 }
@@ -54,7 +54,7 @@ const OTA_MAIN_ID = [0x04, 0x02, 0x13, 0x3b, 0x77, 0x7f, 0x3f];
 
 /** A session stand-in: Identify (feat2, or a whole identify), op 0x1E 00 / 01 / 02 like recctl_cave.c - with id's
  *  feat3 0x01 also the record commands 8 / 11 (R2). store: the song table check (status byte 19). */
-function fakeSession(feat2: number, o: { id?: number[]; store?: number; full?: boolean; dropStatus?: number } = {}) {
+function fakeSession(feat2: number, o: { id?: number[]; store?: number; full?: boolean; dropStatus?: number; recPart?: number } = {}) {
   const listeners: ((m: Uint8Array) => void)[] = [];
   const asked: number[][] = [];
   const push = (m: Uint8Array) => queueMicrotask(() => listeners.forEach((l) => l(m)));
@@ -62,6 +62,8 @@ function fakeSession(feat2: number, o: { id?: number[]; store?: number; full?: b
   let state = 2, song = 0, bar = 0;
   const rec2 = !!o.id && ((o.id[6] ?? 0) & 1) === 1;
   let store = o.store ?? 0;
+  // status byte 4: the part a recording goes to - cmd 8 with part 0 / 1 sets it (recctl.c rec_arm)
+  let recPart = o.recPart ?? 0;
   return {
     /** the piano's table check changes (a recovery) */
     setStore(v: number) {
@@ -90,7 +92,7 @@ function fakeSession(feat2: number, o: { id?: number[]; store?: number; full?: b
       if (op !== 0x1e) return;
       const sub = m[7]!;
       if (sub === 0 && o.dropStatus && o.dropStatus-- > 0) return; // the answer is lost
-      if (sub === 0) reply(0x1e, [0, 0, ...ng.pack7(statusRaw(state, song, bar, store))]);
+      if (sub === 0) reply(0x1e, [0, 0, ...ng.pack7(statusRaw(state, song, bar, store, recPart))]);
       if (sub === 1) reply(0x1e, [1, 0, ...ng.pack7(listRaw({ full: o.full, bad: store !== 0 }))]);
       if (sub === 2) {
         const cmd = m[8]!, arg = (m[9]! << 7) | m[10]!;
@@ -107,9 +109,9 @@ function fakeSession(feat2: number, o: { id?: number[]; store?: number; full?: b
         if (cmd === 3) state = state === 4 ? 2 : recState ? state : 0;
         if (cmd === 4) { song = arg; bar = 0; }
         if (cmd === 7) bar = arg;
-        if (cmd === 8) state = 3;
+        if (cmd === 8) { state = 3; if ((arg & 0x7f) !== 0x7f) recPart = arg & 0x7f; }
         if (cmd === 11) { state = 4; bar = 1; }
-        reply(0x1e, [0, 0, ...ng.pack7(statusRaw(state, song, bar, store))]);
+        reply(0x1e, [0, 0, ...ng.pack7(statusRaw(state, song, bar, store, recPart))]);
         reply(0x1e, [3, 1, cmd]);
       }
     },
@@ -689,6 +691,127 @@ test("the first status answer is lost: nothing is taken as empty until a status 
   assert.equal(songRow(el, 3).querySelector(".song-info")!.textContent, "Empty");
   assert.equal(el.querySelector("#songs-status")!.textContent, "2 of 10 songs recorded");
   el.remove();
+});
+
+test("field incident 2026-11-24: ● into part 2 of a song with no part 1 asks first (record part = status byte 4, even with both parts playing) - part 1 / part 2 / cancel", async () => {
+  const store = new ParamStore();
+  const params = tapStore(store);
+  // the options say both parts play (IntSongPart 7F), but the piano still records into part 2 (7F leaves it)
+  store.fromWire({ fn: 0x10, v1: 0x52, v2: 0x01, part: 0x7f, data: [0x7f] });
+  const s = fakeSession(0, { id: OTA_MAIN_ID, recPart: 1 });
+  const ctx = createContext(store, { session: () => s as never });
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  assert.equal(ng.decodeRecorderStatus(Uint8Array.from(statusRaw(2, 0, 0, 0, 1)))!.recPart, 1, "status byte 4");
+  const over = el.querySelector("#rec-overwrite") as HTMLElement;
+  const ops = () => s.asked.filter((a) => a[0] === 0x1e && a[1] === 0x02);
+  // song 3 is the first empty one: no part 1 there - asked before the song choice goes out
+  panelBtn(el, "rec").click();
+  await wait();
+  assert.equal(over.hidden, false);
+  assert.equal(over.querySelector("p")!.textContent, "Song 3 has no part 1, and this take goes into part 2. Record into part 1 instead?");
+  assert.deepEqual([...over.querySelectorAll("button")].map((b) => [b.getAttribute("data-act"), b.textContent]),
+    [["rec-part1", "● Record into part 1"], ["rec-part2", "Record into part 2"], ["rec-cancel", "Cancel"]]);
+  assert.deepEqual(ops(), [], "nothing sent before the answer");
+  // cancel: nothing
+  (over.querySelector('[data-act="rec-cancel"]') as HTMLElement).click();
+  await wait();
+  assert.equal(over.hidden, true);
+  assert.deepEqual(ops(), []);
+  // part 1 instead: select song 3, then record standby into part 0 (the core sets IntSongPart itself)
+  panelBtn(el, "rec").click();
+  await wait();
+  (over.querySelector('[data-act="rec-part1"]') as HTMLElement).click();
+  await wait();
+  assert.deepEqual(ops(), [[0x1e, 0x02, 4, 0, 2], [0x1e, 0x02, 8, 0, 0]]);
+  assert.equal(stateText(el), "Ready to record");
+  assert.deepEqual(params.filter(isMusic), []);
+  el.remove();
+});
+
+test("part 2 anyway keeps today's bytes; a song with part 1 records part 2 without a question", async () => {
+  const store = new ParamStore();
+  tapStore(store);
+  store.fromWire({ fn: 0x10, v1: 0x52, v2: 0x01, part: 0x7f, data: [1] });
+  const s = fakeSession(0, { id: OTA_MAIN_ID, recPart: 1 });
+  const ctx = createContext(store, { session: () => s as never });
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  const over = el.querySelector("#rec-overwrite") as HTMLElement;
+  const ops = () => s.asked.filter((a) => a[0] === 0x1e && a[1] === 0x02);
+  // song 1 (selected) holds part 1 alone and part 2 is chosen: its second hand - nothing asked
+  assert.equal(selected(el), "Song 13 bars");
+  panelBtn(el, "rec").click();
+  await wait();
+  assert.equal(over.hidden, true);
+  assert.deepEqual(ops(), [[0x1e, 0x02, 8, 0, 0x7f]]);
+  panelBtn(el, "stop").click();
+  await wait();
+  // an empty song: asked; 「part 2」 sends what ● always sent (the piano's part)
+  (songRow(el, 4).querySelector('[data-act="song-pick"]') as HTMLElement).click();
+  await wait();
+  const n = ops().length;
+  panelBtn(el, "rec").click();
+  await wait();
+  assert.equal(over.hidden, false);
+  assert.equal(ops().length, n);
+  (over.querySelector('[data-act="rec-part2"]') as HTMLElement).click();
+  await wait();
+  assert.deepEqual(ops().at(-1), [0x1e, 0x02, 8, 0, 0x7f]);
+  el.remove();
+});
+
+test("without the record control (op 0x1E, Music bytes): part 1 instead = IntSongPart 0, then Music 3; part 1 recorded = no question", async () => {
+  const store = new ParamStore();
+  const params = tapStore(store);
+  const s = fakeSession(0x1f, { recPart: 1 });
+  const ctx = createContext(store, { session: () => s as never });
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  const over = el.querySelector("#rec-overwrite") as HTMLElement;
+  panelBtn(el, "rec").click();
+  await wait();
+  assert.equal(over.hidden, false);
+  assert.ok(!params.some(isMusic));
+  (over.querySelector('[data-act="rec-part1"]') as HTMLElement).click();
+  await wait();
+  const i = params.findIndex((p) => p[1] === 0x52 && p[2] === 0x01);
+  assert.deepEqual(params[i], [0x10, 0x52, 0x01, 0], "IntSongPart 0");
+  assert.deepEqual(params.slice(i + 1).filter(isMusic), [[0x32, 0x52, 0x08, 3]], "then Music 3");
+  el.remove();
+  // the piano records part 1: nothing asked
+  const s1 = fakeSession(0x1f, { recPart: 0 });
+  const el1 = recorderScreen(createContext(store, { session: () => s1 as never }));
+  document.body.append(el1);
+  await wait();
+  panelBtn(el1, "rec").click();
+  await wait();
+  assert.equal((el1.querySelector("#rec-overwrite") as HTMLElement).hidden, true);
+  el1.remove();
+});
+
+test("ko: the part-2 question reads Korean", async () => {
+  const i18n = await import("../src/i18n.ts");
+  const store = new ParamStore();
+  tapStore(store);
+  const s = fakeSession(0, { id: OTA_MAIN_ID, recPart: 1 });
+  i18n.setLang("ko");
+  try {
+    const el = recorderScreen(createContext(store, { session: () => s as never }));
+    document.body.append(el);
+    await wait();
+    panelBtn(el, "rec").click();
+    await wait();
+    const over = el.querySelector("#rec-overwrite") as HTMLElement;
+    assert.match(over.querySelector("p")!.textContent!, /^곡 3에는 파트 1이 없는데 이 녹음은 파트 2로 들어갑니다\./);
+    assert.deepEqual([...over.querySelectorAll("button")].map((b) => b.textContent), ["● 파트 1로 녹음", "파트 2로 녹음", "취소"]);
+    el.remove();
+  } finally {
+    i18n.setLang("en");
+  }
 });
 
 test("song tempo reads a share of the song's own tempo (op status bytes 10-11) on OpenGrand; the plain BPM without it", async () => {

@@ -41,6 +41,9 @@ export interface RecorderStatus {
   recording: boolean;
   /** selected song 0-9 */
   song: number;
+  /** byte 4: the part a recording goes to (stock 0x4191EF73: 0 part 1, 1 part 2) - IntSongPart 0 / 1 set it, 7F (both)
+   *  leaves it as it was, so it can be part 2 while both parts play */
+  recPart: number;
   /** play-part selector: 0 both, 1 part 1, 2 part 2 */
   playSel: number;
   musicMode: number;
@@ -89,7 +92,7 @@ export function decodeRecorderStatus(raw: Uint8Array): RecorderStatus | null {
   if (raw.length < 33 || raw[0] !== 1) return null;
   const state = raw[1]!;
   return {
-    state, playing: state === 1, recording: state >= 3 && state <= 6, song: raw[3]!, playSel: raw[5]!, musicMode: raw[6]!,
+    state, playing: state === 1, recording: state >= 3 && state <= 6, song: raw[3]!, recPart: raw[4]!, playSel: raw[5]!, musicMode: raw[6]!,
     busy: raw[7]!, tempo: u16(raw, 8), tempoOrig: u16(raw, 10), maxBars: u16(raw, 16), store: raw[19]!, storeAt: raw[28]!, bar: u16(raw, 29),
     pending: raw[32]!, deletes: !!(raw[31]! & 1),
   };
