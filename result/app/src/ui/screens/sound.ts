@@ -2,7 +2,8 @@
 // the sound list (Piano category first and open by default, then the other categories, favorites, recent, user
 // sounds) with the chosen part's sound shown as selected, ☆ and "Save this sound"; then everything choosing a
 // sound changes right below it — SK-EX Rendering (character, resonance, ambience) for Rendering, the Virtual
-// Technician preset for piano sounds, Effect, Reverb (not for Rendering); keyboard mode and parts last.
+// Technician preset for piano sounds, Effect, Reverb (not for Rendering); keyboard mode last, with only the
+// settings of the active mode (Dual / Split / 4 Hands).
 // Tuning and Transpose are global, not per sound: they are on the Settings tab.
 // Stock behaviour and evidence:
 import { t, tl } from "../../i18n.ts";
@@ -20,7 +21,7 @@ import {
   settingsOf,
   trackVt,
 } from "../../features/pianosound.ts";
-import { offset64 } from "../../protocol/codecs.ts";
+import { findParam, offset64 } from "../../protocol/codecs.ts";
 import { SOUNDS, VT_PRESETS } from "../../protocol/params.gen.ts";
 import type { SoundRef } from "../../state/settings.ts";
 import type { ParamStore } from "../../state/store.ts";
@@ -167,6 +168,43 @@ export function soundScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   const reverbSection = section(t("Reverb"), control(store, "Reverb", { label: t("Reverb") }), control(store, "ReverbType", { label: t("Type") }), control(store, "ReverbDepth", { label: t("Depth") }), control(store, "ReverbTime", { label: t("Time") }));
   for (const s of [vtSection, renderingSection, effectSection, reverbSection]) s.classList.add("sound-dep");
 
+  // ---- keyboard mode: only the settings of the active mode (owner's manual p.29 Dual, p.30 Split, p.69 4 Hands) ----
+  // Which part each setting is on and the octave ranges follow the stock remote app's own editors: Dual = Layer
+  // (balance, octave -2..+2, dynamics), Split = Lower (balance, split point, octave 0..+3, lower pedal), 4 Hands =
+  // balance and split point on the left part, octave right -3..0 / left 0..+3 (the manual gives 0~+3 for both; the
+  // stock app's limits and the piano's start values, right -2 / left +2, say right -3..0). Single (or a mode not read
+  // yet) shows none of them; the rows stay in the page, hidden, so their values are still read back.
+  const octave = (part: number, label: string, min: number, max: number) =>
+    control(store, "OctaveShift", { part, label, min, max, toRaw: offset64.encode, fromRaw: offset64.decode, format: signed });
+  const kbGroup = (mode: string, ...rows: HTMLElement[]) => h("div", { class: "kbmode", "data-kbmode": mode, hidden: true }, ...rows);
+  const kbGroups = [
+    kbGroup(
+      "Dual",
+      balance(store, PART.Layer, "Sub", "Main"),
+      octave(PART.Layer, t("Layer octave"), -2, 2),
+      control(store, "Dynamics", { part: PART.Layer, label: t("Layer dynamics") }),
+    ),
+    kbGroup(
+      "Split",
+      balance(store, PART.Lower, "Sub", "Main"),
+      control(store, "SplitPoint", { part: PART.Lower, label: t("Split point"), ...KEY_RANGE }),
+      octave(PART.Lower, t("Lower octave"), 0, 3),
+      control(store, "LowerPedal", { part: 0x0f, label: t("Lower pedal") }),
+    ),
+    kbGroup(
+      "4Hands",
+      balance(store, PART.FourHandsLeft, "Left", "Right"),
+      octave(PART.FourHandsRight, t("Right octave"), -3, 0),
+      octave(PART.FourHandsLeft, t("Left octave"), 0, 3),
+      control(store, "SplitPoint", { part: PART.FourHandsLeft, label: t("Split point"), ...KEY_RANGE }),
+    ),
+  ];
+  const kbSection = section(t("Keyboard mode"), control(store, "KeyboardMode", { label: t("Mode"), part: 0x0f }), ...kbGroups);
+  const showKbMode = () => {
+    const mode = keyboardMode(store);
+    for (const g of kbGroups) g.hidden = g.dataset.kbmode !== mode;
+  };
+
   function refresh(): void {
     markSelected();
     const d = store.get(soundParam(), target);
@@ -187,6 +225,7 @@ export function soundScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     vtSelect.value = st.kind === "preset" ? String(st.index) : st.kind === "user" ? USER_VT : "";
     (vtSelect.querySelector(`option[value="${USER_VT}"]`) as HTMLOptionElement).disabled = st.kind !== "user" && !lib.userVt;
     vtNote.textContent = st.kind === "user" ? t("Edited values: the preset shows User.") : st.kind === "unknown" ? t("Reading the Virtual Technician values…") : "";
+    showKbMode();
   }
   // every value the preset match compares: read back what the dump / group gets left out
   for (const s of presetSettings(VT_PRESETS[0])) store.want(s.p, s.part);
@@ -202,12 +241,39 @@ export function soundScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     vtSection,
     effectSection,
     reverbSection,
-    section(t("Keyboard mode"), control(store, "KeyboardMode", { label: t("Mode"), part: 0x0f }), control(store, "SplitPoint", { part: PART.Lower, label: t("Split point") }), control(store, "Balance", { part: PART.Layer, label: t("Balance") }), control(store, "LowerPedal", { part: 0x0f, label: t("Lower pedal") })),
-    section(
-      t("Part"),
-      control(store, "OctaveShift", { part: PART.Layer, label: t("Layer octave"), min: -3, max: 3, toRaw: offset64.encode, fromRaw: offset64.decode }),
-      control(store, "OctaveShift", { part: PART.Lower, label: t("Lower octave"), min: -3, max: 3, toRaw: offset64.encode, fromRaw: offset64.decode }),
-      control(store, "Dynamics", { part: PART.Layer, label: t("Layer dynamics") }),
-    ),
+    kbSection,
   );
+}
+
+/** The piano's keyboard mode label (Single, Dual, Split, 4Hands), "" while not known. */
+export function keyboardMode(store: ParamStore): string {
+  const p = findParam("KeyboardMode");
+  const d = p && store.get(p, 0x0f);
+  return (d && p.values?.find((v) => v.raw === d[0])?.label) ?? "";
+}
+
+const signed = (v: number) => (v > 0 ? `+${v}` : String(v));
+const NOTE = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+/** key number -> name, 60 = C4 (the stock remote app's naming) */
+export const noteName = (n: number) => `${NOTE[n % 12]}${Math.floor(n / 12) - 1}`;
+/** split point range of the stock remote app's key number codec */
+const KEY_RANGE = { min: 22, max: 108, format: noteName };
+
+/**
+ * Balance as a slider over the 17 stock steps (raw 0, 8 … 120, 127). The step label "a-b" reads as the
+ * level of the part the value is on (`own`: Sub / Left) then of the other one (`other`: Main / Right); the
+ * slider runs like the stock one: left end = own part loudest, right end = other part loudest.
+ */
+function balance(store: ParamStore, part: number, own: string, other: string): HTMLElement {
+  const steps = findParam("Balance")?.values ?? [];
+  const index = (d: number[]) => {
+    let best = 0;
+    steps.forEach((s, i) => { if (Math.abs(s.raw - d[0]) < Math.abs(steps[best].raw - d[0])) best = i; });
+    return best;
+  };
+  const format = (i: number) => {
+    const [a, b] = (steps[i]?.label ?? "").split("-");
+    return t("{own} {a} · {other} {b}", { own: t(own), a, other: t(other), b });
+  };
+  return control(store, "Balance", { part, label: t("Balance"), min: 0, max: steps.length - 1, toRaw: (i) => [steps[i].raw], fromRaw: index, format });
 }
