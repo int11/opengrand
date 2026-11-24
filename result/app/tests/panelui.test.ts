@@ -897,6 +897,9 @@ test("BLE transfer estimate for the real app bundle (MTU 23, paced writer)", asy
   // (Alfred books, US Concert Magic / Piano Music, hymns included) and book names in ja/ko, the panel-shell player in
   // ui/screens/music.ts; esbuild charset "utf8" in scripts/bundlecore.ts took about 3 KB off the whole bundle: main was
   // 200 615 B, this 216 120 B - about 1.9 KB of margin)
-  assert.ok(file.length < 218_000, `package ${file.length} B`);
+  // 218 000 -> 221 000 (2026-11-24, misc parity: metronome tempo terms and ±10, the piano song tempo as a share of the
+  // song's own tempo, the lesson tempo slider (setSmfRelativeTempo) and their ja/ko lines: main was 217 255 B, with
+  // all three 218 341 B)
+  assert.ok(file.length < 221_000, `package ${file.length} B`);
   console.log(`# real bundle: package ${file.length} B, ${e.frames} frames, ${e.blePackets} BLE packets; window ≈ ${e.windowedS.toFixed(0)} s, stop-and-wait ≈ ${e.stopAndWaitS.toFixed(0)} s`);
 });

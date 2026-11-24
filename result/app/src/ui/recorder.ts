@@ -137,6 +137,8 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   // where the piano song is (bar, 1-based; 0 = not said) and - op status only - the bars of what is selected to play
   let bar = 0;
   let maxBars = 0;
+  // the song's own tempo (op status bytes 10-11; 0 = not known): the options sheet's song tempo reads a share of it
+  let tempoOrig = 0;
   let ngMode: number | undefined;
   // selected recorder song (0-based; -1 = not known)
   const stockSel = () => {
@@ -229,6 +231,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       main: state === 1 || state === 4 || state === 6 ? (KINDS.piano.pause ? "pause" : "stop") : "play",
       prev: !recording && sel > 0, next: !recording && sel < SONGS - 1,
       part: KINDS.piano.parts,
+      tempoBase: rec && sel >= 0 ? tempoOrig : null,
     };
   };
   // a recording that ran in a song (-1: none): when it stops, the sheet says where it is and offers the USB memory
@@ -794,6 +797,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       // MusicMode, its bars were taken for the SMF player and the bar said 「USB 재생 중」 (■ only tried USB stops)
       if (st.musicMode !== undefined && pb.mode !== st.musicMode) pb.mode = st.musicMode;
       canDelete = st.deletes;
+      tempoOrig = st.tempoOrig;
       // the song table check: anything but 0 = no song's state is known (the list reads zero then); back to 0 = read
       // the list again
       tableStore = st.store;
