@@ -14,6 +14,9 @@
 // shell turns each key into the song's next notes and reports the tap through KWM.donePlayConcertMagic).
 // Hand practice (Lesson): the piano plays the right hand on the Volume part Global (10 55 01 0F) and the left hand on
 // MIDI2ch (part 0x31) - the original app's balance slider; 0 silences that hand.
+// Lesson tempo (manual p.39 「Tempo」): the shell's player speed, setSmfRelativeTempo {tempo: 0.5..2} - the original
+// app's lesson slider (0..100, middle = 1×: 0.5..1 on the left half, 1..2 on the right). Like the original it is sent
+// again after each selectSmf: the lesson's speed in Lesson, 1× for anything else.
 import { t } from "../../i18n.ts";
 import { findParam } from "../../protocol/codecs.ts";
 import { builtinBooks, type BuiltinBook, type BuiltinMode, type BuiltinSong, regionOf, songKey } from "../../protocol/builtinsongs.ts";
@@ -51,6 +54,12 @@ const MODES: [label: string, mode: number, key: BuiltinMode, line: string][] = [
   ["Piano Music", MUSIC_MODE.PianoMusic, "piano", "Listen to the built-in piano pieces."],
 ];
 
+/** The lesson tempo slider (0..100, 50 = 1×) as the shell's relative speed 0.5..2. */
+export function relativeSpeed(v: number): number {
+  const x = Math.max(0, Math.min(100, v));
+  return x <= 50 ? 0.5 + (0.5 * x) / 50 : (2 * x) / 100;
+}
+
 /** What the selectSmf answer holds that the start needs (the shell's KWMSmf info). */
 interface SmfInfo { division?: number; beatInfo?: { numra?: number; denom?: number }[] }
 /** playStartSmf's interval as the original app computes it: ticks per beat (a dotted beat in 6/8, 9/8, 12/8). */
@@ -74,6 +83,7 @@ const live = {
   saved: null as [number, number] | null, // the Global / MIDI2ch Volume before hand practice changed them
   cmCfg: { mode: 1, smooth: 0, track: 0 }, // Ensemble, no smoothing, trigger part 1 (the original app's start)
   interval: 480,
+  speed: 50, // the lesson tempo slider (relativeSpeed), kept across pieces as the original app keeps it
   view: MUSIC_MODE.Lesson as number,
   redraw: null as (() => void) | null, // the newest screen's
 };
@@ -159,6 +169,7 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
       return redraw();
     }
     if (live.cur?.book.id !== b.id || live.cur.i !== i) return; // another piece was picked meanwhile
+    callNative("setSmfRelativeTempo", { tempo: mode === MUSIC_MODE.Lesson ? relativeSpeed(live.speed) : 1 });
     if (mode === MUSIC_MODE.ConcertMagic) {
       await callPromise("setConcertMagicMode", { mode: live.cmCfg.mode, smooth: live.cmCfg.smooth, triggerTrack: live.cmCfg.track }, 3000).catch(() => {});
       callNative("setConcertMagicNativeTrigger", { isNative: true });
@@ -232,6 +243,20 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     h("div", { class: "row seg-row" }, h("span", {}, t("One-hand practice")), handSeg),
     h("p", { class: "muted" }, t("Choose the hand you play: the piano leaves that hand out and plays the other.")));
 
+  // lesson tempo: the shell's speed for the piece now playing (or the next one picked)
+  const speedIn = h("input", { type: "range", min: 0, max: 100, step: 1, value: String(live.speed) }) as HTMLInputElement;
+  const speedOut = h("output", {}, `${relativeSpeed(live.speed).toFixed(2)}×`);
+  const speedRow = h("label", { class: "row slider", id: "lesson-tempo" }, h("span", {}, t("Tempo")), speedIn, speedOut);
+  const speedSet = () => {
+    live.speed = Number(speedIn.value);
+    speedOut.textContent = `${relativeSpeed(live.speed).toFixed(2)}×`;
+    if (live.cur?.mode === MUSIC_MODE.Lesson && (live.status === "playing" || live.status === "paused")) {
+      callNative("setSmfRelativeTempo", { tempo: relativeSpeed(live.speed) });
+    }
+  };
+  speedIn.addEventListener("input", speedSet);
+  speedIn.addEventListener("change", speedSet);
+
   // Concert Magic settings: the panel shell's (setConcertMagicMode), and the last tap's result
   const cmMode = h("select", {}, h("option", { value: "0" }, t("Melody")), h("option", { value: "1" }, t("Ensemble"))) as HTMLSelectElement;
   const cmSmooth = h("input", { type: "checkbox", role: "switch" }) as HTMLInputElement;
@@ -255,7 +280,7 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
 
   const sections: Record<number, HTMLElement> = {
     // hand practice above the list (a book can be 126 pieces long)
-    [MUSIC_MODE.Lesson]: ((pick, rows) => section(t("Lesson"), pick, handRow, rows))(...listFor(MUSIC_MODE.Lesson)),
+    [MUSIC_MODE.Lesson]: ((pick, rows) => section(t("Lesson"), pick, speedRow, handRow, rows))(...listFor(MUSIC_MODE.Lesson)),
     [MUSIC_MODE.ConcertMagic]: section(t("Concert Magic"), ...listFor(MUSIC_MODE.ConcertMagic),
       h("label", { class: "row" }, h("span", {}, t("Concert Magic mode")), cmMode),
       h("label", { class: "row" }, h("span", {}, t("Smooth tempo")), cmSmooth),
@@ -276,6 +301,9 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     modeLine.textContent = t(line);
     for (const [m, sec] of Object.entries(sections)) sec.hidden = Number(m) !== live.view;
     handRow.hidden = !(canPlay && lists[MUSIC_MODE.Lesson].book().hands);
+    speedRow.hidden = !canPlay;
+    if (speedIn.value !== String(live.speed)) speedIn.value = String(live.speed);
+    speedOut.textContent = `${relativeSpeed(live.speed).toFixed(2)}×`;
     handSeg.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.getAttribute("data-hand") === live.hands));
     for (const m of Object.keys(lists)) fillRows(Number(m));
     const song = live.cur ? live.cur.book.songs[live.cur.i] : null;
