@@ -14815,6 +14815,24 @@
      "AmbienceDepth",
      63
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "ResonanceDepth",
+    "DamperNoise",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -14857,6 +14875,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -14899,6 +14939,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -14941,6 +15003,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -14983,6 +15067,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15025,6 +15131,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15067,6 +15195,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15109,6 +15259,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15151,6 +15323,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15193,6 +15387,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15235,6 +15451,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15277,6 +15515,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15319,6 +15579,28 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "DamperResonance",
+    "DamperNoise",
+    "StringResonance",
+    "UndampedStringResonance",
+    "CabinetResonance",
+    "KeyOffEffect",
+    "FallbackNoise",
+    "KeyAttackNoise",
+    "HammerDelay",
+    "TopboardSimulation",
+    "DecayTime",
+    "DCAReleaseTime",
+    "MinimumTouch",
+    "StretchTuning",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15361,6 +15643,16 @@
      "EffectSetting2",
      37
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "KeyOffEffect",
+    "MinimumTouch",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15403,6 +15695,16 @@
      "EffectSetting2",
      60
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "KeyOffEffect",
+    "MinimumTouch",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15445,6 +15747,15 @@
      "EffectSetting2",
      4
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "KeyOffEffect",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15487,6 +15798,16 @@
      "EffectSetting2",
      6
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "KeyOffEffect",
+    "MinimumTouch",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15529,6 +15850,16 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "KeyOffEffect",
+    "MinimumTouch",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15571,6 +15902,15 @@
      "EffectSetting2",
      43
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "KeyOffEffect",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -15613,6 +15953,15 @@
      "EffectSetting2",
      48
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -15655,6 +16004,15 @@
      "EffectSetting2",
      48
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -15697,6 +16055,15 @@
      "EffectSetting2",
      48
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -15739,6 +16106,15 @@
      "EffectSetting2",
      48
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -15781,6 +16157,15 @@
      "EffectSetting2",
      48
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -15823,6 +16208,15 @@
      "EffectSetting2",
      48
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -15865,6 +16259,15 @@
      "EffectSetting2",
      64
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -15907,6 +16310,15 @@
      "EffectSetting2",
      64
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -15949,6 +16361,15 @@
      "EffectSetting2",
      64
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -15991,6 +16412,15 @@
      "EffectSetting2",
      64
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -16033,6 +16463,15 @@
      "EffectSetting2",
      64
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -16075,6 +16514,15 @@
      "EffectSetting2",
      64
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -16117,6 +16565,14 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16159,6 +16615,14 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16201,6 +16665,14 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16243,6 +16715,14 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16285,6 +16765,14 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16327,6 +16815,14 @@
      "EffectSetting2",
      64
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16369,6 +16865,15 @@
      "EffectSetting2",
      64
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "KeyOffEffect",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16411,6 +16916,15 @@
      "EffectSetting2",
      64
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "KeyOffEffect",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16453,6 +16967,14 @@
      "EffectSetting2",
      48
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16495,6 +17017,14 @@
      "EffectSetting2",
      3
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16537,6 +17067,14 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16579,6 +17117,14 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16621,6 +17167,15 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -16663,6 +17218,15 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -16705,6 +17269,15 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -16747,6 +17320,15 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -16789,6 +17371,15 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -16831,6 +17422,14 @@
      "EffectSetting2",
      21
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -16873,6 +17472,15 @@
      "EffectSetting2",
      43
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -16915,6 +17523,15 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -16957,6 +17574,15 @@
      "EffectSetting2",
      43
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -16999,6 +17625,15 @@
      "EffectSetting2",
      43
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -17041,6 +17676,15 @@
      "EffectSetting2",
      43
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -17083,6 +17727,15 @@
      "EffectSetting2",
      43
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -17125,6 +17778,15 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -17167,6 +17829,15 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -17209,6 +17880,15 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -17251,6 +17931,15 @@
      "EffectSetting2",
      4
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -17293,6 +17982,15 @@
      "EffectSetting2",
      36
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -17335,6 +18033,15 @@
      "EffectSetting2",
      7
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth",
+    "DamperHold"
    ]
   },
   {
@@ -17377,6 +18084,14 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -17419,6 +18134,14 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -17461,6 +18184,14 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -17503,6 +18234,14 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -17545,6 +18284,14 @@
      "EffectSetting2",
      8
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   },
   {
@@ -17587,6 +18334,14 @@
      "EffectSetting2",
      64
     ]
+   ],
+   "vt": [
+    "TouchCurve",
+    "Voicing",
+    "Temperament",
+    "KeyVolume",
+    "HalfPedalAdjust",
+    "SoftPedalDepth"
    ]
   }
  ],
