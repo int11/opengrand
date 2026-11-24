@@ -34,13 +34,18 @@ function linkedData(p: ParamDef, v: number): number[] {
   return [p.range ? rangeEncode(p, v) : v];
 }
 
+/** the stock editor sends the reverb pair the other way round: time, then depth */
+const SECOND_FIRST = new Set(["ReverbType"]);
+
 /**
- * Send the paired defaults of a value the user just picked (stock order: the first linked parameter, then the
- * second), one after the other. False when the value has no pairing or a send failed.
+ * Send the paired defaults of a value the user just picked, one after the other in the stock editor's order
+ * (the first linked parameter, then the second; reverb: time, then depth). False when the value has no pairing
+ * or a send failed.
  */
 export async function sendLinked(store: ParamStore, p: ParamDef, part: number, data: readonly number[]): Promise<boolean> {
-  const pairs = p.linked?.[enumLabel(p, data[0], data[1])];
-  if (!pairs?.length) return false;
+  const found = p.linked?.[enumLabel(p, data[0], data[1])];
+  if (!found?.length) return false;
+  const pairs = SECOND_FIRST.has(p.name) ? [...found].reverse() : found;
   for (const [name, v] of pairs) {
     const q = findParam(name);
     if (!q || !(await store.set(q, part, linkedData(q, v)))) return false;

@@ -182,7 +182,7 @@ export function soundScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   const fx1 = control(store, "EffectSetting1", { label: t("Dry / Wet") });
   const fx2 = control(store, "EffectSetting2", { label: t("Speed") });
   const effectSection = section(t("Effect"), control(store, "Effect", { label: t("Effect") }), control(store, "EffectType", { label: t("Type"), onPick: paired("EffectType") }), fx1, fx2);
-  const reverbSection = section(t("Reverb"), control(store, "Reverb", { label: t("Reverb") }), control(store, "ReverbType", { label: t("Type") }), control(store, "ReverbDepth", { label: t("Depth") }), control(store, "ReverbTime", { label: t("Time") }));
+  const reverbSection = section(t("Reverb"), control(store, "Reverb", { label: t("Reverb") }), control(store, "ReverbType", { label: t("Type"), onPick: paired("ReverbType") }), control(store, "ReverbDepth", { label: t("Depth") }), control(store, "ReverbTime", { label: t("Time") }));
   for (const s of [vtSection, otherSection, renderingSection, effectSection, reverbSection]) s.classList.add("sound-dep");
 
   // ---- keyboard mode: only the settings of the active mode (owner's manual p.29 Dual, p.30 Split, p.69 4 Hands) ----

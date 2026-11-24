@@ -114,6 +114,18 @@ test("ambience: a switch (depth 0 = off), off remembers the depth, on brings it 
   el.remove();
 });
 
+test("reverb type picked in the app: the type, then its time and depth defaults (stock order)", async () => {
+  const { store, ctx, sent } = await setup();
+  const el = S.soundScreen(store, ctx);
+  document.body.append(el);
+  const rv = [...el.querySelectorAll("section")].find((s) => s.querySelector("h3")?.textContent === "Reverb")!;
+  pick(rv.querySelector("select")!, "Lounge");
+  await tick(80);
+  // Lounge: depth 50, time 32 (protocol table linked defaults)
+  assert.deepEqual(sent.filter((m) => /^F0 40 7F 10 08 02 55 0[389] 00/.test(m)), ["F0 40 7F 10 08 02 55 08 00 01 F7", "F0 40 7F 10 08 02 55 09 00 20 F7", "F0 40 7F 10 08 02 55 03 00 32 F7"]);
+  el.remove();
+});
+
 test("temperament: type and key are separate selects over one value; each keeps the other byte", async () => {
   const { store, ctx, sent, notify } = await setup();
   const el = S.vtScreen(store, ctx);
