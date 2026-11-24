@@ -58,45 +58,33 @@
 // that op they need 「읽기」: the stock way selects each song on the piano (protocol/songs.ts).
 // Delete is offered only where the piano's core deletes (5E 00 byte 31 bit 0, firmware recdel.c): the stock's own
 // InternalSongDelete re-writes the song from the last take - nothing deleted, and another song overwritten.
+// The parts: ui/recmodel.ts (what the piano says, the bar's view - no page), ui/recsend.ts (op 0x1E and the Kawai
+// bytes), ui/recsongs.ts (the song rows), ui/recusb.ts (the USB memory as the bar's other source); this file wires them
+// to the piano's notices and holds what a tap does.
 import { t } from "../i18n.ts";
-import { BUSY_RETRY } from "../protocol/fileaccess.ts";
 import { findParam, progress } from "../protocol/codecs.ts";
 import {
-  NgClient, ngHas, NgRecorder, parseRecorderNotice, REC_OVERWRITE, REC_PART_NOW, RecorderCmd, RecorderEvent, RecorderRc,
+  NgClient, ngHas, NgRecorder, parseRecorderNotice, REC_PART_NOW, RecorderCmd, RecorderEvent,
   type RecorderSong, type RecorderStatus,
 } from "../protocol/ngext.ts";
-import { InternalSongs, SONGS, type SongInfo } from "../protocol/songs.ts";
-import { CONFIRM, confirmTap } from "./confirm2.ts";
+import { SONGS } from "../protocol/songs.ts";
+import { CONFIRM } from "./confirm2.ts";
 import type { AppContext } from "./context.ts";
 import { h } from "./dom.ts";
 import { type FileLock, songCache, songInfoOf, usbPane } from "./files.ts";
 import { identifyShared } from "./identify.ts";
 import { whileShown } from "./screens/common.ts";
 import { songSelectData } from "./screens/music.ts";
-import { iconButton, isRecState, MUSIC_CMD, MUSIC_MODE, playerBar, playingMark, type PlayerView, STATE_TEXT } from "./screens/songctl.ts";
+import { isRecState, MUSIC_CMD, MUSIC_MODE, playerBar, type PlayerView, STATE_TEXT } from "./screens/songctl.ts";
 import { KsoError } from "../protocol/kso.ts";
 import { KSO_TEXT, midToKsoFile } from "./midikso.ts";
+import { type ListId, pianoModel, type PlayerSource, TABLE_TEXT } from "./recmodel.ts";
+import { PIANO_RC, type RecPart, recSender } from "./recsend.ts";
+import { songList } from "./recsongs.ts";
+import { usbSource } from "./recusb.ts";
 import { saveSheet } from "./savesheet.ts";
 import { KINDS, kindOf } from "./songkinds.ts";
-import { playerOf, usbAnyRunning, usbNow, usbPlayback } from "./usbplay.ts";
-
-/** Refusals of the piano's playback control (OpenGrand 0x7D op 0x1E rc - REMOTE_PROTOCOL.md section 10.9). The piano
- * judges every command the same way for the panel and this app; the panel shows the piano's own word. */
-const PIANO_RC: Record<number, string> = {
-  [RecorderRc.Busy]: "The piano is busy, try again in a moment.",
-  [RecorderRc.Recording]: "The piano is recording: playback waits until it stops.",
-  [RecorderRc.Pending]: "Wait for the previous command.",
-  [RecorderRc.NoData]: "Nothing recorded in this song.",
-  [RecorderRc.OtherPlayer]: "Another player mode is active on the piano.",
-  [RecorderRc.NotBound]: "The piano is controlled by another device.",
-  [RecorderRc.Wrong]: "The piano cannot do that in this state.",
-  [RecorderRc.Exists]: "This part already has a recording.",
-};
-/** Why nothing may be written to the piano's songs (op status byte 19): not checked yet / the check failed. */
-const TABLE_TEXT = {
-  unread: "The piano has not checked its song list yet.",
-  bad: "The piano's song list is not valid. Check it before switching the piano off.",
-} as const;
+import { usbAnyRunning, usbPlayback } from "./usbplay.ts";
 
 /** ● would record part 2 of a song that has no part 1 */
 const PART2_TEXT = "Song {n} has no part 1, and this take goes into part 2. Record into part 1 instead?";
@@ -119,9 +107,6 @@ export const RECORDER_STRINGS = [
   PART2_TEXT, "Record into part 1", "Record into part 2",
 ];
 
-type ListId = "internal" | "usb";
-/** the part a recording goes to: the piano's now, or part 1 */
-type RecPart = 0 | typeof REC_PART_NOW;
 /** The list last shown and what the bar last held, per context (the tab is rebuilt on every visit and language change). */
 const shownList = new WeakMap<AppContext, ListId>();
 const shownSource = new WeakMap<AppContext, ListId>();
@@ -131,51 +116,26 @@ const putInto = new WeakMap<AppContext, { session: unknown; at: Map<string, numb
 
 export function recorderScreen(ctx: AppContext): HTMLElement {
   const store = ctx.store;
-  const music = findParam("Music", 0x32)!;
   const partP = findParam("IntSongPart")!;
   const songP = findParam("SongSelect")!;
-  const modeP = findParam("MusicMode", 0x31)!;
-  const kawai = (v: number) => void store.command(music, 0x7f, [v]);
   const lock: FileLock = { busy: false };
   const cache = songCache(ctx);
   const songs = cache.songs;
   // the piano's MusicMode as it last said or this app set (ui/usbplay.ts), and the USB players
   const pb = usbPlayback(ctx);
 
-  // ---- model: what the piano says ----
-  // state: Music report 32 52 08 / op 1E status (STATE_TEXT index); null until the piano says something
-  let state: number | null = null;
-  // where the piano song is (bar, 1-based; 0 = not said) and - op status only - the bars of what is selected to play
-  let bar = 0;
-  let maxBars = 0;
-  // the song's own tempo (op status bytes 10-11; 0 = not known): the options sheet's song tempo reads a share of it
-  let tempoOrig = 0;
-  let ngMode: number | undefined;
-  // selected recorder song (0-based; -1 = not known)
+  // ---- model: what the piano says (ui/recmodel.ts) ----
   const stockSel = () => {
     const d = store.get(songP, 0x7f);
     return d && d[0] === 0 && d.length >= 3 ? (d[1] << 7) | d[2] : -1;
   };
-  let sel = stockSel();
-  // OpenGrand playback control (op 0x1E): null on the stock and on a payload without it
-  let rec: NgRecorder | null = null;
-  // the core's record control (feat3 0x01): standby / start / end as op 0x1E cmd 8 / 11 / 2
-  let recCtl = false;
-  // op status byte 19, the song table check: 0 OK, 0xFF not read yet, else broken; null = no status yet
-  let tableStore: number | null = null;
-  // op status byte 4: the part a recording goes to (0 part 1, 1 part 2); null = no status yet
-  let recPart: number | null = null;
-  let canDelete = false;
+  const m = pianoModel(songs, () => store.get(partP, 0x7f)?.[0], stockSel());
   // what the bar holds when no USB file plays: the piano song, or the file chosen in the USB list
   let src: ListId = shownSource.get(ctx) ?? "internal";
   const setSrc = (v: ListId) => {
     src = v;
     shownSource.set(ctx, v);
   };
-  /** The bar is the USB player's: a USB file plays (never while a recording runs or waits), or one was chosen last
-   *  and the piano song is at rest - a song that plays or is paused (started on the panel, the piano's buttons) is
-   *  what the bar must show and its ■ must stop. */
-  const usbView = () => (usbAnyRunning(pb) ? !isRecState(state) : src === "usb" && (state === null || state === 2));
 
   const usb = usbPane(ctx, lock, {
     intoPiano: (name, andPlay) => void intoPiano(name, andPlay),
@@ -185,9 +145,11 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       renderNow();
     },
   });
+  const usbSrc = usbSource(ctx, pb, usb, () => m.state, () => src);
+  const usbView = () => usbSrc.active();
 
   // ---- the player bar ----
-  const hintText = () => t(recCtl ? "Play a key or press Play to start recording." : "Play a key to start recording.");
+  const hintText = () => t(m.recCtl ? "Play a key or press Play to start recording." : "Play a key to start recording.");
   const hint = h("p", { class: "muted", id: "rec-hint", hidden: true }, hintText());
   const note = h("p", { class: "muted", id: "rec-note", role: "status" });
   const over = h("div", { class: "confirm-ask", id: "rec-overwrite", role: "alert", hidden: true });
@@ -196,85 +158,40 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     clearTimeout(overTimer);
     over.hidden = true;
   };
-  // a song in part 1 alone - the usual recording - says nothing of parts (owner 2026-11-23: 「파트」 meant nothing)
-  const partsText = (i: SongInfo) => (i.parts && i.parts[1] ? [i.parts[0] ? t("Part 1") : "", t("Part 2")].filter(Boolean).join(" + ") : "");
-  const songText = (i: SongInfo | null): string => {
-    if (!i) return rec && tableReason() ? t("Unknown") : t("not scanned");
-    if (!i.hasData) return t("Empty");
-    return [i.bars !== null ? t("{n} bars", { n: i.bars }) : "", partsText(i)].filter(Boolean).join(" · ");
+  const send = recSender(store, pb, m, (text) => (note.textContent = text));
+  const { kawai, ensureMode, op, standby } = send;
+  // the bar's two sources: the piano song (⏮ ⏭ = the neighbouring song number) and the USB file
+  const piano: PlayerSource = {
+    view: () => m.view(),
+    step: (d) => {
+      const n = m.sel < 0 ? 0 : m.sel + d;
+      if (n >= 0 && n < SONGS) void pick(n);
+    },
   };
-  /** The files the USB player plays itself - what ⏮ ⏭ step through (a KSO is played through a piano song). */
-  const direct = () => ctx.usbFiles.filter((f) => { const k = kindOf(f); return !k || KINDS[k].howPlayed === "direct"; });
-  /** The USB file the bar is about: the one that plays, else the one chosen in the list. */
-  const usbItem = () => (usbAnyRunning(pb) ? usbNow(pb)?.name ?? null : usb.selected());
-  const view = (): PlayerView => {
-    if (usbView()) {
-      const on = usbAnyRunning(pb);
-      const now = on ? usbNow(pb) : null;
-      const name = usbItem();
-      const files = direct();
-      const k = name === null ? -1 : files.indexOf(name);
-      const kind = name === null ? null : kindOf(name);
-      return {
-        state: on ? 1 : 2, stateText: on ? t("USB playing") : undefined,
-        // the whole name with its type; "USB" yields first when the name is long
-        title: name !== null ? name.slice(name.lastIndexOf("\\") + 1) : on ? t("USB memory") : t("Choose a song below."),
-        sub: name !== null ? "USB" : "",
-        // a file that does not play has no position; its kind says which unit will come
-        unit: now ? now.unit : name !== null && playerOf(name) === "smf" ? "bar" : "ms",
-        pos: now ? now.pos : null, total: now ? now.total : null,
-        seekable: false, main: on ? "stop" : "play",
-        prev: k > 0, next: files.length > 0 && k < files.length - 1,
-        part: kind ? KINDS[kind].parts : false,
-      };
-    }
-    const i = sel < 0 ? null : songs[sel];
-    const recording = isRecState(state);
-    const total = recording ? null : (rec && maxBars) || i?.bars || null;
-    const moving = state === 0 || state === 1;
-    return {
-      state,
-      title: sel < 0 ? t("Choose a song below.") : t("Song {n}", { n: sel + 1 }),
-      sub: sel < 0 ? "" : songText(i),
-      unit: "bar",
-      // stopped = at the first bar
-      pos: recording ? bar || null : moving && bar ? (total ? Math.min(bar, total) : bar) : total ? 1 : null,
-      total,
-      seekable: KINDS.piano.seek && !!rec && !recording && sel >= 0 && state !== null,
-      main: state === 1 || state === 4 || state === 6 ? (KINDS.piano.pause ? "pause" : "stop") : "play",
-      prev: !recording && sel > 0, next: !recording && sel < SONGS - 1,
-      part: KINDS.piano.parts,
-      tempoBase: rec && sel >= 0 ? tempoOrig : null,
-    };
-  };
+  const source = (): PlayerSource => (usbView() ? usbSrc : piano);
+  const view = (): PlayerView => source().view();
   // a recording that ran in a song (-1: none): when it stops, the sheet says where it is and offers the USB memory
   let recSong = -1;
   const renderNow = () => {
-    hint.hidden = state !== 3 && state !== 5;
+    hint.hidden = m.state !== 3 && m.state !== 5;
     const ht = hintText();
     if (hint.textContent !== ht) hint.textContent = ht;
     player.set(view());
-    if (state === 4) recSong = sel;
-    else if (recSong >= 0 && !isRecState(state)) {
+    if (m.state === 4) recSong = m.sel;
+    else if (recSong >= 0 && !isRecState(m.state)) {
       const n = recSong;
       recSong = -1;
-      if (state === 2 && typeof document !== "undefined" && el.isConnected) openSave(n, true);
+      if (m.state === 2 && typeof document !== "undefined" && el.isConnected) openSave(n, true);
     }
   };
-  /** Why the piano's songs must not be written now (null: they may): OpenGrand reports its song table check in the op
-   *  status (byte 19) - until it says 0 no song is known to be empty. The stock does not say (null). */
-  function tableReason(): string | null {
-    if (!rec || tableStore === 0) return null;
-    return t(tableStore === null || tableStore === 0xff ? TABLE_TEXT.unread : TABLE_TEXT.bad);
-  }
   /** true = refused (the reason is under the bar) */
   const refuseTable = (): boolean => {
-    const why = tableReason();
+    const why = m.tableReason();
     if (why) {
       hideOver();
       note.textContent = why;
       // ask again (a lost answer, a check not run yet, a recovery): a good status lifts the refusal
-      void rec?.status().then((st) => st && onStatusRef?.(st));
+      void m.rec?.status().then((st) => st && onStatusRef?.(st));
     }
     return !!why;
   };
@@ -284,26 +201,6 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     saved.open(n, recorded);
   };
 
-  /** MusicMode 2 (recorder) when the piano is - or may be - in another mode. */
-  const ensureMode = async () => {
-    if (pb.mode === MUSIC_MODE.Recorder || (pb.mode === undefined && ngMode === MUSIC_MODE.Recorder)) return;
-    pb.mode = MUSIC_MODE.Recorder;
-    ngMode = MUSIC_MODE.Recorder;
-    await store.command(modeP, 0x7f, [MUSIC_MODE.Recorder]);
-  };
-  /** One op 0x1E command; the piano's refusal (rc) is shown under the transport. */
-  // Busy (rc 3): the core's song-table write window is open (an import, a save, the end of a recording - REMOTE_PROTOCOL
-  // R3) and closes when the NOR write ends: asked again a few times (field 2026-11-24: Play right after a KSO import)
-  const op = async (opCmd: number, arg = 0): Promise<boolean> => {
-    let rc = await rec!.command(opCmd, arg);
-    for (let i = 0; rc === RecorderRc.Busy && i < BUSY_RETRY.tries; i++) {
-      await new Promise((r) => setTimeout(r, BUSY_RETRY.ms));
-      rc = await rec!.command(opCmd, arg);
-    }
-    note.textContent = rc === null ? t("No answer from the piano.")
-      : rc <= RecorderRc.Nop ? "" : t(PIANO_RC[rc] ?? "The piano rejected this value.");
-    return rc !== null && rc <= RecorderRc.Nop;
-  };
   // Play / pause / stop: op 0x1E where the piano has it (it answers why not); while a recording runs or waits the op only
   // with the record control (feat3 0x01), else - and on the stock - the Kawai Music bytes. A USB playback is stopped
   // first.
@@ -311,11 +208,11 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   const play = async (piano = false) => {
     hideOver();
     note.textContent = "";
-    if (isRecState(state)) {
-      if (state === 4) return; // records already
+    if (isRecState(m.state)) {
+      if (m.state === 4) return; // records already
       // standby / count-in: the core starts the recording (cmd 11). Never Music 4 (see the head of this file); Music 1
       // would play the song on the stock - there the first key starts the recording
-      if (recCtl) await op(RecorderCmd.RecStart);
+      if (m.recCtl) await op(RecorderCmd.RecStart);
       else note.textContent = t("Play a key to start recording.");
       return;
     }
@@ -328,11 +225,11 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     }
     if (usbAnyRunning(pb)) await usb.stop();
     await ensureMode();
-    if (rec) await op(RecorderCmd.Play);
+    if (m.rec) await op(RecorderCmd.Play);
     else kawai(MUSIC_CMD.Play);
   };
   // the op also while a recording runs or waits where the core controls recording (cmd 3 ends it, like the panel)
-  const opNow = () => !!rec && (!isRecState(state) || recCtl);
+  const opNow = () => !!m.rec && (!isRecState(m.state) || m.recCtl);
   const pause = () => {
     hideOver();
     if (opNow()) void op(RecorderCmd.Pause);
@@ -347,28 +244,18 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   };
   // the progress line's dot let go on a bar: op 0x1E cmd 7 (the only jump - see the head of this file)
   const seek = async (to: number) => {
-    if (!rec || isRecState(state)) return;
+    if (!m.rec || isRecState(m.state)) return;
     note.textContent = "";
-    const was = bar;
-    bar = to; // shown until the piano's next position notice
+    const was = m.bar;
+    m.bar = to; // shown until the piano's next position notice
     renderNow();
     await ensureMode();
     if (await op(RecorderCmd.Seek, to)) return;
-    bar = was; // refused: the dot goes back, the reason is under the buttons
+    m.bar = was; // refused: the dot goes back, the reason is under the buttons
     renderNow();
   };
   // ⏮ ⏭: the neighbouring song number, or the neighbouring USB file
-  const step = (d: -1 | 1) => {
-    if (usbView()) {
-      const name = usbItem() ?? usb.selected();
-      const files = direct();
-      const to = files[(name === null ? (d > 0 ? -1 : files.length) : files.indexOf(name)) + d];
-      if (to !== undefined) usb.pick(to, false); // plays only if a USB file plays now
-      return;
-    }
-    const n = sel < 0 ? 0 : sel + d;
-    if (n >= 0 && n < SONGS) void pick(n);
-  };
+  const step = (d: -1 | 1) => source().step(d);
   /** A question under the bar: its buttons, then Cancel. */
   const ask = (text: string, btns: { label: string; act: string; cls?: string; run: () => void }[]) => {
     over.replaceChildren(
@@ -382,10 +269,6 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   };
   /** A question under the bar with one red button (record over a song, replace a song with a file). */
   const askOver = (text: string, label: string, act: string, run: () => void) => ask(text, [{ label, act, cls: "danger", run }]);
-  /** The song a new recording or a file goes to without asking: the chosen one if it is empty, else the first empty
-   *  one; -1 = none is known to be empty. */
-  const emptySong = () => (tableReason() ? -1
-    : sel >= 0 && songs[sel] && !songs[sel]!.hasData ? sel : songs.findIndex((i) => i !== null && !i.hasData));
   /** The piano's word that a song choice (op 0x1E select) is finished - or 1.5 s. */
   const selectWaiters = new Set<() => void>();
   const selectDone = () => new Promise<void>((res) => {
@@ -401,7 +284,6 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   // only when none is empty, or the song table is not known (stock, not scanned), the chosen song is asked about first.
   // overwrite: the user agreed to record over what the song may hold (cmd 8 refuses a recorded part without it)
   // part: the part the piano records now (REC_PART_NOW), or part 1 chosen in the part question
-  const standby = (overwrite: boolean, part: RecPart = REC_PART_NOW) => (recCtl ? void op(RecorderCmd.RecStandby, part | (overwrite ? REC_OVERWRITE : 0)) : kawai(MUSIC_CMD.Rec));
   const startRec = async (overwrite = false, part: RecPart = REC_PART_NOW) => {
     hideOver();
     if (refuseTable()) return;
@@ -409,25 +291,13 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     await ensureMode();
     if (refuseTable()) return;
     // the stock (and a core without the record control): IntSongPart 0 sets the part Music 3 records into
-    if (part === 0 && !recCtl) await store.set(partP, 0x7f, [0]);
+    if (part === 0 && !m.recCtl) await send.partOne();
     standby(overwrite, part);
-  };
-  /** The part ● records into: the piano's (op status byte 4 - ● sends 「the part now」 and IntSongPart 7F leaves it as
-   *  it was), else IntSongPart 0 / 1 as last said; null = not known. */
-  const recPartNow = (): number | null => {
-    if (rec && recPart !== null) return recPart;
-    const v = store.get(partP, 0x7f)?.[0];
-    return v === 0 || v === 1 ? v : null;
-  };
-  /** Song n is known to hold no part 1: empty, or its tracks without part 1 (song list flag bit 0). */
-  const noPart1 = (n: number) => {
-    const i = songs[n];
-    return !!i && (!i.hasData || (!!i.parts && !i.parts[0]));
   };
   /** ● into song n: part 2 of a song with no part 1 is asked about first (see the head of this file), before anything
    *  is sent - go gets the part to record into. */
   const partGuard = (n: number, go: (part: RecPart) => void) => {
-    if (recPartNow() !== 1 || !noPart1(n)) return go(REC_PART_NOW);
+    if (m.recPartNow() !== 1 || !m.noPart1(n)) return go(REC_PART_NOW);
     ask(t(PART2_TEXT, { n: n + 1 }), [
       { label: `● ${t("Record into part 1")}`, act: "rec-part1", cls: "primary", run: () => go(0) },
       { label: t("Record into part 2"), act: "rec-part2", run: () => go(REC_PART_NOW) },
@@ -435,25 +305,26 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   };
   const recTap = () => {
     note.textContent = "";
-    if (isRecState(state)) return standby(false);
+    if (isRecState(m.state)) return standby(false);
     if (refuseTable()) return;
     // a recording goes to the piano song: the bar shows it from here on
     setSrc("internal");
     renderNow();
+    const sel = m.sel;
     const i = sel < 0 ? null : songs[sel];
     const part = store.get(partP, 0x7f)?.[0];
     // one part alone was chosen in the options and the chosen song has room in it: the second hand of that song
     if (i?.hasData && i.parts && (part === 0 || part === 1) && !i.parts[part]) return partGuard(sel, (p) => void startRec(false, p));
-    const to = emptySong();
+    const to = m.emptySong();
     if (to >= 0) return partGuard(to, (p) => void (async () => {
-      if (to !== sel) {
+      if (to !== m.sel) {
         // OpenGrand: the piano confirms one command at a time - Rec goes out when the song choice is done (panelsim
         // 2026-11-23: a Music 3 right behind the op select was dropped)
-        const done = rec ? selectDone() : null;
+        const done = m.rec ? selectDone() : null;
         if (!(await pick(to))) return;
         await done;
       }
-      if (sel === to) await startRec(false, p);
+      if (m.sel === to) await startRec(false, p);
     })());
     if (sel < 0) {
       note.textContent = songs.some((s) => s) ? t("All 10 piano songs are used. Choose the song to record over below, then press Rec.") : t("Choose a song first.");
@@ -475,13 +346,13 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     lock, formats: KINDS.piano.saveTo,
     quiet: async () => {
       if (usbAnyRunning(pb)) await usb.stop();
-      if (state === 0 || state === 1) {
-        if (rec) await op(RecorderCmd.Stop);
+      if (m.state === 0 || m.state === 1) {
+        if (m.rec) await op(RecorderCmd.Stop);
         else kawai(MUSIC_CMD.Stop);
       }
     },
     refresh: () => usb.reload(),
-    get out() { return songsStatus; },
+    get out() { return list.status; },
   });
   panel.append(saved.el);
 
@@ -497,63 +368,33 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     renderNow();
   }, 250);
 
-  // ---- the piano's ten songs ----
-  const recordedText = () => tableReason() ?? t("{n} of 10 songs recorded", { n: songs.filter((i) => i?.hasData).length });
-  const songsStatus = h("p", { class: "muted", id: "songs-status", role: "status" }, songs.some((i) => i) ? recordedText() : t("Not scanned yet."));
-  const songsHint = h("p", { class: "muted", id: "songs-hint", hidden: true }, t("The piano's recorder memory (10 songs). Scanning selects each song on the piano; song names are not sent by the piano and cannot be changed."));
-  const songList = h("div", { class: "list", id: "songs-list" });
-  // the song table failed its check (or is not checked yet): one line over the rows, which then say 「Unknown」
-  const tableWarn = h("p", { class: "songs-warn", id: "songs-table-warn", role: "alert", hidden: true });
-  const songRun = async (what: string, run: (c: InternalSongs) => Promise<unknown>): Promise<boolean> => {
-    const s = ctx.session();
-    if (!s) {
-      songsStatus.textContent = t("Connect to the piano first.");
-      return false;
-    }
-    lock.busy = true;
-    songsStatus.textContent = t("{op}…", { op: what });
-    try {
-      const r = await run(new InternalSongs(s));
-      if (r === false) throw new Error(t("no answer"));
-      songsStatus.textContent = t("{op}: done", { op: what });
-      return true;
-    } catch (e) {
-      songsStatus.textContent = t("{op} failed: {e}", { op: what, e: (e as Error).message });
-      return false;
-    } finally {
-      lock.busy = false;
-    }
-  };
-  const fillFromNg = (list: RecorderSong[]) => {
+  // ---- the piano's ten songs (ui/recsongs.ts) ----
+  const list = songList(ctx, lock, m, pb, {
+    tap: (n) => void tapSong(n),
+    save: (n) => openSave(n),
+    refuseTable,
+    readNg: () => readNg(),
+    restoreOf: () => ({ song: Math.max(0, stockSel()), part: store.get(partP, 0x7f)?.[0] }),
+  });
+  const renderSongs = list.render;
+  const fillFromNg = (rows: RecorderSong[]) => {
     // a zero-length entry is not known (songInfoOf -> null); with a bad table nothing is
-    const bad = !!tableReason();
+    const bad = !!m.tableReason();
     listStale = bad;
-    list.slice(0, SONGS).forEach((g, n) => (songs[n] = bad ? null : songInfoOf(g, n)));
-    songsStatus.textContent = recordedText();
+    rows.slice(0, SONGS).forEach((g, n) => (songs[n] = bad ? null : songInfoOf(g, n)));
+    list.status.textContent = list.recordedText();
     renderSongs();
     // entries that say nothing: ask the piano how its table is (the 5E 00 says why)
-    if (!bad && list.some((g) => g.unknown)) void rec?.status().then((st) => st && onStatusRef?.(st));
+    if (!bad && rows.some((g) => g.unknown)) void m.rec?.status().then((st) => st && onStatusRef?.(st));
   };
   let onStatusRef: ((st: RecorderStatus) => void) | null = null;
   // the list was taken while the table was not known to be good (rows blank): read it again once it is
   let listStale = false;
   const readNg = async (): Promise<boolean> => {
-    const list = await rec?.songs();
-    if (!list) return false;
-    fillFromNg(list);
+    const rows = await m.rec?.songs();
+    if (!rows) return false;
+    fillFromNg(rows);
     return true;
-  };
-  const restoreOf = () => ({ song: Math.max(0, stockSel()), part: store.get(partP, 0x7f)?.[0] });
-  const rescanOne = (n: number) => songRun(t("Read song {n}", { n: n + 1 }), async (c) => {
-    if (rec && (await readNg())) return;
-    if (tableReason()) return;
-    songs[n] = await c.info(n);
-    renderSongs();
-  });
-  const delSong = (n: number, part: 0 | 1 | 0x7f, btn: EventTarget | null) => {
-    if (!canDelete || refuseTable()) return;
-    const msg = part === 0x7f ? t("Delete song {n} on the piano?", { n: n + 1 }) : t("Delete part {p} of song {n} on the piano?", { p: part + 1, n: n + 1 });
-    confirmTap(btn, msg, () => void songRun(t("Delete"), (c) => c.delete(n, part)).then((ok) => ok && rescanOne(n)));
   };
   // the stock tells a selected song's length with MaxTime (10 52 18) right after the SongSelect: this app's own choice
   // is noted here so that answer fills the row (a scan's answers are not this)
@@ -561,29 +402,29 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   let expectTimer: ReturnType<typeof setTimeout> | undefined;
   // a tap on a row (or ⏮ ⏭): that song is the piano's selected song and what the bar holds
   const pick = async (n: number, again = false) => {
-    if (n === sel && !again) {
+    if (n === m.sel && !again) {
       if (src !== "internal") {
         setSrc("internal");
         renderNow();
       }
       return;
     }
-    if (isRecState(state)) {
+    if (isRecState(m.state)) {
       note.textContent = t("Stop the recording before choosing another song.");
       return;
     }
     hideOver();
     note.textContent = "";
-    const before = sel;
-    sel = n;
-    bar = 0;
+    const before = m.sel;
+    m.sel = n;
+    m.bar = 0;
     setSrc("internal");
     renderSongs();
     renderNow();
     await ensureMode();
-    if (rec) {
-      if ((await op(RecorderCmd.Select, n)) || sel !== n) return true;
-      sel = before; // refused: the piano's song did not change
+    if (m.rec) {
+      if ((await op(RecorderCmd.Select, n)) || m.sel !== n) return true;
+      m.sel = before; // refused: the piano's song did not change
       renderSongs();
       renderNow();
     } else {
@@ -592,14 +433,14 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       expectTimer = setTimeout(() => (expectMax = -1), 2000);
       void store.set(songP, 0x7f, songSelectData(n));
     }
-    return sel === n;
+    return m.sel === n;
   };
   // A file the piano takes into a recorder song (a KSO; rule 1): into an empty piano song - asked only when none is
   // empty - with 24 09 <song> 03, and for a row's tap played there: the bar then shows that piano song.
   const intoPiano = async (name: string, andPlay: boolean) => {
     hideOver();
     note.textContent = "";
-    if (isRecState(state)) {
+    if (isRecState(m.state)) {
       note.textContent = t("Stop the recording first.");
       return;
     }
@@ -613,8 +454,8 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     const go = async (n: number) => {
       if (refuseTable()) return; // asked again: the table may have failed while the question was shown
       if (usbAnyRunning(pb)) await usb.stop();
-      if (state === 0 || state === 1) {
-        if (rec) await op(RecorderCmd.Stop);
+      if (m.state === 0 || m.state === 1) {
+        if (m.rec) await op(RecorderCmd.Stop);
         else kawai(MUSIC_CMD.Stop);
       }
       // a MID becomes a KSO file next to it first (ui/midikso.ts); what the converter had to leave out is counted
@@ -640,7 +481,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       put().set(name, n);
       // the song now holds the file: the song table says so on OpenGrand; on the stock it is noted here (its length
       // comes with the select)
-      if (!(rec && (await readNg()))) {
+      if (!(m.rec && (await readNg()))) {
         songs[n] = { n, hasData: true, bars: null, parts: null };
         renderSongs();
       }
@@ -662,102 +503,26 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       note.textContent = t("Playing {name} from piano song {n}.", { name: leaf, n: was + 1 });
       return;
     }
-    const to = emptySong();
+    const to = m.emptySong();
     if (to >= 0) return go(to);
-    const n = sel >= 0 ? sel : SONGS - 1;
+    const n = m.sel >= 0 ? m.sel : SONGS - 1;
     // the stock before a scan: the songs are not known - say that, not that none is empty
     const why = songs.some((i) => i) ? t("No piano song is empty.") : t("The piano's songs have not been read yet (Scan reads them).");
-    const ask = andPlay ? "Playing {name} puts it into song {n} and replaces what is there." : "{name} goes into song {n} and replaces what is there.";
-    askOver(`${why} ${t(ask, { name: leaf, n: n + 1 })}`, t("Replace song {n}", { n: n + 1 }), "into-confirm", () => void go(n));
+    const q = andPlay ? "Playing {name} puts it into song {n} and replaces what is there." : "{name} goes into song {n} and replaces what is there.";
+    askOver(`${why} ${t(q, { name: leaf, n: n + 1 })}`, t("Replace song {n}", { n: n + 1 }), "into-confirm", () => void go(n));
   };
   // a tap on a song row: choose it and - when it holds a recording - play it, as a media player does (owner 2026-11-23:
   // a tap that only chose read as 「재생이 안 된다」). An empty song is only chosen: it is where Rec records. The
   // playing song's row does nothing; during a recording the choice is refused (pick says why).
   const tapSong = async (n: number) => {
-    if (n === sel && (state === 1 || isRecState(state)) && !usbAnyRunning(pb)) return;
-    const before = sel;
+    if (n === m.sel && (m.state === 1 || isRecState(m.state)) && !usbAnyRunning(pb)) return;
+    const before = m.sel;
     await pick(n);
-    if (sel !== n || isRecState(state)) return; // refused
+    if (m.sel !== n || isRecState(m.state)) return; // refused
     if (!songs[n]?.hasData) return;
-    if (n === before && state === 1 && !usbAnyRunning(pb)) return;
+    if (n === before && m.state === 1 && !usbAnyRunning(pb)) return;
     await play(true);
   };
-  // the song whose other buttons (export, delete) are shown: one at a time
-  let openSong = -1;
-  // rows are replaced only when what they show changes: a notice while a finger is on a row must not replace it
-  const rowKeys: string[] = [];
-  const rowEls: HTMLElement[] = [];
-  const playsNow = (n: number) => n === sel && state === 1 && !usbAnyRunning(pb);
-  const songRow = (n: number): HTMLElement => {
-    const i = songs[n];
-    const on = n === sel;
-    const empty = i !== null && !i.hasData;
-    const both = !!i?.parts && i.parts[0] && i.parts[1];
-    const isOpen = openSong === n && !empty;
-    const acts: (HTMLElement | null)[] = empty ? [] : [
-      // one way out, one format list (ui/savesheet.ts): MID, KSO (the piano's own format - a lossless backup that
-      // loads back with 24 09), MP3, WAV
-      KINDS.piano.saveTo.length ? h("button", { "data-act": "song-save", onclick: () => openSave(n) }, t("Save to USB")) : null,
-      canDelete && both ? h("button", { class: "danger", "data-act": "song-delete-p1", onclick: (e: Event) => delSong(n, 0, e.currentTarget) }, t("Delete part 1")) : null,
-      canDelete && both ? h("button", { class: "danger", "data-act": "song-delete-p2", onclick: (e: Event) => delSong(n, 1, e.currentTarget) }, t("Delete part 2")) : null,
-      canDelete && i?.hasData ? h("button", { class: "danger", "data-act": "song-delete", onclick: (e: Event) => delSong(n, 0x7f, e.currentTarget) }, t("Delete")) : null,
-    ];
-    return h(
-      "div",
-      { class: "song-row", "data-song": String(n + 1), "data-state": i === null ? "unknown" : i.hasData ? "data" : "empty", "data-on": on ? "1" : undefined, "data-open": isOpen ? "1" : undefined, "data-playing": playsNow(n) ? "1" : undefined },
-      h("div", { class: "file-main" },
-        // owner 2026-11-24: the list's own heading says these are the piano's songs (no 「피아노」 badge), and the number
-        // is the song's name (no 「곡 N」 next to the same number) - the row reads number + what it holds
-        h("button", { class: "song-pick", "data-act": "song-pick", "aria-pressed": String(on), "aria-label": `${t("Song {n}", { n: n + 1 })} · ${songText(i)}`, onclick: () => void tapSong(n) },
-          h("span", { class: "song-num" }, n + 1),
-          h("span", { class: "song-txt" }, h("span", { class: "song-info" }, songText(i))),
-          playsNow(n) ? playingMark() : null),
-        empty ? null : iconButton("more", t("More"), { class: "row-more", "data-act": "song-more", "aria-expanded": String(isOpen), onclick: () => { openSong = isOpen ? -1 : n; renderSongs(); } })),
-      acts.length ? h("div", { class: "row-acts", hidden: !isOpen }, ...acts) : null,
-      // the stock's own delete does not remove the song: say why there is no Delete
-      isOpen && i?.hasData && !canDelete ? h("p", { class: "muted row-note" }, t("Needs OpenGrand song delete: the piano's own delete does not remove the song.")) : null,
-    );
-  };
-  const renderSongs = () => {
-    for (let n = 0; n < SONGS; n++) {
-      const i = songs[n];
-      const key = [n === sel, playsNow(n), openSong === n, canDelete, i ? `${i.hasData}|${i.bars}|${i.parts}` : rec && tableReason() ? "x" : "?"].join("/");
-      if (rowKeys[n] === key && rowEls[n]) continue;
-      const row = songRow(n);
-      if (rowEls[n]?.parentElement === songList) rowEls[n].replaceWith(row);
-      else songList.append(row);
-      rowEls[n] = row;
-      rowKeys[n] = key;
-    }
-    songsHint.hidden = !!rec || songs.every((i) => i);
-    const why = tableReason();
-    tableWarn.hidden = !why;
-    if (why && tableWarn.textContent !== why) tableWarn.textContent = why;
-  };
-  const scanSongs = async () => {
-    // OpenGrand: the song table; the stock way below only when the op does not answer
-    if (rec) {
-      songsStatus.textContent = t("{op}…", { op: t("Scan") });
-      if (await readNg()) return;
-      if (refuseTable()) return; // the stock scan selects every song: not on a table that failed its check
-    }
-    const ok = await songRun(t("Scan"), async (c) => {
-      songs.fill(null);
-      renderSongs();
-      await c.scan(restoreOf(), (i) => {
-        songs[i.n] = i;
-        renderSongs();
-      });
-    });
-    if (ok) songsStatus.textContent = recordedText();
-  };
-  const songsPane = h("div", { class: "pane", id: "songs-pane", "data-title": t("Piano songs") },
-    h("div", { class: "pane-head" },
-      songsStatus,
-      h("div", { class: "pane-btns" }, h("button", { "data-act": "songs-scan", onclick: () => void scanSongs() }, `↻ ${t("Scan")}`))),
-    songsHint,
-    tableWarn,
-    songList);
 
   // ---- [Piano songs | USB memory] ----
   let shown: ListId = shownList.get(ctx) ?? "internal";
@@ -766,49 +531,49 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       h("button", { "data-list": id, onclick: () => { shown = id; shownList.set(ctx, id); showList(); } }, t(label))));
   const showList = () => {
     listBar.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.getAttribute("data-list") === shown));
-    songsPane.hidden = shown !== "internal";
+    list.pane.hidden = shown !== "internal";
     usb.el.hidden = shown !== "usb";
   };
   usb.el.setAttribute("data-title", t("USB memory")); // the list's heading where both lists show (styles.css)
   const el = h("div", { class: "screen recorder" }, panel,
-    h("section", { class: "card", id: "rec-files" }, listBar, songsPane, usb.el));
+    h("section", { class: "card", id: "rec-files" }, listBar, list.pane, usb.el));
 
   // ---- the piano's word: the parameter mirror, the Music state report, the song length after a select ----
   whileShown(el, store, (k) => {
     if (k === "IntSongPart@127") player.syncPart();
-    else if (k === "SongSelect@127" && !rec) {
+    else if (k === "SongSelect@127" && !m.rec) {
       const n = stockSel();
-      if (n < 0 || n === sel) return;
-      sel = n;
-      bar = 0;
+      if (n < 0 || n === m.sel) return;
+      m.sel = n;
+      m.bar = 0;
       renderSongs();
       renderNow();
     }
   });
   const recorderMode = () => pb.mode === undefined || pb.mode === MUSIC_MODE.Recorder;
   let seen = false;
-  const offMsg = store.onMessage((m) => {
+  const offMsg = store.onMessage((msg) => {
     if (el.isConnected) seen = true;
     else if (seen) return void offMsg(); // the screen was replaced
-    if (m.v1 !== 0x52) return;
+    if (msg.v1 !== 0x52) return;
     // field 2026-11-23: right after a USB stop the bar said 「재생 중 · 곡 2 · 13/13마디」 for a second or two - the USB
     // player's last words taken as the piano song's. While MusicMode is 3 or a USB stop runs they are not ours.
     if (pb.stopping || pb.recording) return;
-    if (m.v2 === 0x08 && (m.fn === 0x10 || m.fn === 0x32) && m.data[0] !== undefined && m.data[0] <= 6 && !rec && recorderMode()) {
+    if (msg.v2 === 0x08 && (msg.fn === 0x10 || msg.fn === 0x32) && msg.data[0] !== undefined && msg.data[0] <= 6 && !m.rec && recorderMode()) {
       // the Music report is the recorder's only in the recorder mode (MusicMode 3: a USB player's - ui/usbplay.ts)
-      state = m.data[0];
-      if (state === 2) bar = 0;
+      m.state = msg.data[0];
+      if (m.state === 2) m.bar = 0;
       renderSongs();
       renderNow();
-    } else if (m.v2 === 0x03 && (m.fn === 0x10 || m.fn === 0x32) && m.data.length >= 4 && !rec && pb.mode === MUSIC_MODE.Recorder) {
+    } else if (msg.v2 === 0x03 && (msg.fn === 0x10 || msg.fn === 0x32) && msg.data.length >= 4 && !m.rec && pb.mode === MUSIC_MODE.Recorder) {
       // MusicProgress in the recorder mode, bar form: where the piano song is (the op's status says it on OpenGrand)
-      const at = progress.decode(m.data);
-      if ("bar" in at) bar = at.bar;
-    } else if (m.v2 === 0x18 && m.fn === 0x10 && m.data.length >= 3 && expectMax >= 0 && expectMax === sel && !lock.busy && store.get(partP, 0x7f)?.[0] === 0x7f) {
+      const at = progress.decode(msg.data);
+      if ("bar" in at) m.bar = at.bar;
+    } else if (msg.v2 === 0x18 && msg.fn === 0x10 && msg.data.length >= 3 && expectMax >= 0 && expectMax === m.sel && !lock.busy && store.get(partP, 0x7f)?.[0] === 0x7f) {
       // MaxTime after this app's SongSelect with both parts on = bars of that song (0: empty) - protocol/songs.ts
-      const bars = (m.data[1] << 7) | m.data[2];
-      const old = songs[sel];
-      songs[sel] = { n: sel, hasData: bars !== 0, bars, parts: old && old.hasData && bars !== 0 ? old.parts : null };
+      const bars = (msg.data[1] << 7) | msg.data[2];
+      const old = songs[m.sel];
+      songs[m.sel] = { n: m.sel, hasData: bars !== 0, bars, parts: old && old.hasData && bars !== 0 ? old.parts : null };
       expectMax = -1;
       renderSongs();
       renderNow();
@@ -831,17 +596,17 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   const s = ctx.session();
   if (s && s.state === "ready") { // main.ts draws the tab again when the session becomes ready
     const onStatus = (st: RecorderStatus) => {
-      ngMode = st.musicMode;
+      m.ngMode = st.musicMode;
       // the op status says the piano's MusicMode: the USB players' tracker (ui/usbplay.ts) takes it too - field
       // 2026-11-24: right after the app started the mode was not known, a piano song played by op 0x1E sends no
       // MusicMode, its bars were taken for the SMF player and the bar said 「USB 재생 중」 (■ only tried USB stops)
       if (st.musicMode !== undefined && pb.mode !== st.musicMode) pb.mode = st.musicMode;
-      canDelete = st.deletes;
-      tempoOrig = st.tempoOrig;
-      recPart = st.recPart;
+      m.canDelete = st.deletes;
+      m.tempoOrig = st.tempoOrig;
+      m.recPart = st.recPart;
       // the song table check: anything but 0 = no song's state is known (the list reads zero then); back to 0 = read
       // the list again
-      tableStore = st.store;
+      m.tableStore = st.store;
       if (st.store !== 0) {
         songs.fill(null);
         listStale = true;
@@ -849,21 +614,21 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
         listStale = false;
         void readNg();
       }
-      songsStatus.textContent = songs.some((i) => i) || tableReason() ? recordedText() : songsStatus.textContent;
+      list.status.textContent = songs.some((i) => i) || m.tableReason() ? list.recordedText() : list.status.textContent;
       // in MusicMode 3, and while a USB stop runs, the state and the position are a USB player's (or the audio
       // recorder's), not the piano song's (field 2026-11-23, see the Kawai path above): the song is at rest
       const usbs = st.musicMode === MUSIC_MODE.UsbMemory || pb.stopping || pb.recording;
       if (usbs) {
-        if (!isRecState(state) || st.musicMode === MUSIC_MODE.UsbMemory) state = 2;
-        bar = 0;
+        if (!isRecState(m.state) || st.musicMode === MUSIC_MODE.UsbMemory) m.state = 2;
+        m.bar = 0;
       } else {
-        if (st.state <= 6) state = st.state;
-        bar = st.bar;
-        maxBars = st.maxBars;
+        if (st.state <= 6) m.state = st.state;
+        m.bar = st.bar;
+        m.maxBars = st.maxBars;
       }
-      if (st.song < SONGS && st.song !== sel) {
+      if (st.song < SONGS && st.song !== m.sel) {
         hideOver();
-        sel = st.song;
+        m.sel = st.song;
       }
     };
     onStatusRef = (st) => {
@@ -872,11 +637,11 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       renderNow();
     };
     let on = false;
-    const off = s.onMidi((m) => {
+    const off = s.onMidi((msg) => {
       if (el.isConnected) on = true;
       else if (on) return void off(); // the screen was replaced
-      const n = parseRecorderNotice(m);
-      if (!n || !rec) return;
+      const n = parseRecorderNotice(msg);
+      if (!n || !m.rec) return;
       if (n.status) onStatus(n.status);
       if (n.songs) fillFromNg(n.songs);
       if (n.event && n.event.cmd === RecorderCmd.Select) for (const w of [...selectWaiters]) w();
@@ -887,14 +652,15 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     void (async () => {
       const id = await identifyShared(s);
       if (!ngHas(id, "recorder") || ctx.session() !== s) return void off(); // stock or a payload without the feature
-      rec = new NgRecorder(new NgClient(s));
-      recCtl = ngHas(id, "recordctl");
-      if (!songs.some((i) => i)) songsStatus.textContent = t("{op}…", { op: t("Scan") });
+      const rec = new NgRecorder(new NgClient(s));
+      m.rec = rec;
+      m.recCtl = ngHas(id, "recordctl");
+      if (!songs.some((i) => i)) list.status.textContent = t("{op}…", { op: t("Scan") });
       // the status first: its table check (byte 19) says whether the list can be trusted at all. A 1E request also
       // subscribes this controller to 5E 00 / 01 while it stays bound
       const st = await rec.status();
       if (st && ctx.session() === s) onStatus(st);
-      if (!(await readNg()) && !songs.some((i) => i) && !tableReason()) songsStatus.textContent = t("Not scanned yet.");
+      if (!(await readNg()) && !songs.some((i) => i) && !m.tableReason()) list.status.textContent = t("Not scanned yet.");
       renderSongs();
       renderNow();
     })();
