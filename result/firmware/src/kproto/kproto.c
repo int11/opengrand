@@ -96,10 +96,11 @@ static void port_leave(kproto_t *kp, midi_port_t port, bool invite_home);
 static bool q_push(kproto_t *kp, midi_port_t port, uint8_t kind, uint8_t a, uint8_t b, uint8_t c)
 {
     kp_port_t *s = &kp->port[port];
-    /* a value already waiting is sent with the newest store contents: no second copy */
+    /* a value already waiting is sent with the newest store contents: no second copy
+     * (c = band + 1 of a banded key: each band is a value of its own) */
     for (unsigned i = 0; kind == KP_Q_PARAM && i < s->qn; i++) {
         const kp_qitem_t *q = &s->q[(s->qhead + i) % KP_TXQ_LEN];
-        if (q->kind == KP_Q_PARAM && q->a == a && q->b == b)
+        if (q->kind == KP_Q_PARAM && q->a == a && q->b == b && q->c == c)
             return true;
     }
     if (s->qn >= KP_TXQ_LEN) {
@@ -165,8 +166,9 @@ static bool req_match(const kp_port_t *s, const param_desc_t *d)
     return s->req_v2 == 0x7F || s->req_v2 == 0x00 || s->req_v2 == d->v2;
 }
 
-/* next (id, slot) of the request in progress; part 7F = every stored part */
-static bool req_next(kproto_t *kp, kp_port_t *s, int *id_out, int *slot_out)
+/* next (id, slot, band) of the request in progress; part 7F = every stored part. A banded key (User EQ)
+ * answers one frame per stored band, lowest first, like the stock walk (band -1 = not banded). */
+static bool req_next(kproto_t *kp, kp_port_t *s, int *id_out, int *slot_out, int *band_out)
 {
     int want = s->req_part == 0x7F ? -1 : param_slot_from_part(s->req_part);
     if (s->req_part != 0x7F && want < 0)
@@ -182,8 +184,21 @@ static bool req_next(kproto_t *kp, kp_port_t *s, int *id_out, int *slot_out)
              * only from the one a set to that part lands in (param_find), once */
             if ((kp->store->valid[s->req_id] & (1u << s->req_slot)) &&
                 param_find(d->fn, d->v1, d->v2, param_part_from_slot(s->req_slot)) == (int)s->req_id) {
+                int k = param_banded((param_id_t)s->req_id, s->req_slot);
                 *id_out = s->req_id;
-                *slot_out = s->req_slot++;
+                *slot_out = s->req_slot;
+                *band_out = -1;
+                if (k >= 0 && kp->store->band_valid[k]) {
+                    while (s->req_band < PARAM_BANDS && !(kp->store->band_valid[k] & (1u << s->req_band)))
+                        s->req_band++;
+                    if (s->req_band < PARAM_BANDS) {
+                        *band_out = s->req_band++;
+                        return true;
+                    }
+                    s->req_band = 0;
+                    continue;
+                }
+                s->req_slot++;
                 return true;
             }
         }
@@ -211,7 +226,8 @@ static bool q_load(kproto_t *kp, midi_port_t port)
             s->qn--;
             if (it.kind == KP_Q_PARAM) {
                 uint8_t v[4];
-                if (!param_get(kp->store, (param_id_t)it.a, it.b, v))
+                if (!(it.c ? param_get_band(kp->store, (param_id_t)it.a, it.b, (uint8_t)(it.c - 1), v)
+                           : param_get(kp->store, (param_id_t)it.a, it.b, v)))
                     continue;
                 const param_desc_t *d = &PARAM_DESC[it.a];
                 if (d->len > 4)
@@ -226,10 +242,13 @@ static bool q_load(kproto_t *kp, midi_port_t port)
                 l = build_packed(kp, s->frame, sizeof s->frame, it.a);
             }
         } else {
-            int id, slot;
-            if (req_next(kp, s, &id, &slot)) {
+            int id, slot, band;
+            if (req_next(kp, s, &id, &slot, &band)) {
                 uint8_t v[4];
-                param_get(kp->store, (param_id_t)id, slot, v);
+                if (band >= 0)
+                    param_get_band(kp->store, (param_id_t)id, slot, (uint8_t)band, v);
+                else
+                    param_get(kp->store, (param_id_t)id, slot, v);
                 const param_desc_t *d = &PARAM_DESC[id];
                 body[0] = d->v1; body[1] = d->v2; body[2] = param_part_from_slot(slot);
                 memcpy(body + 3, v, d->len);
@@ -290,25 +309,36 @@ static void q_retry(kproto_t *kp, midi_port_t port)
 
 static bool key_is(const kp_port_t *s, const uint8_t *m) { return s->len && memcmp(s->key, m + 6, 3) == 0; }
 
-void kp_send_param(kproto_t *kp, midi_port_t port, param_id_t id, int slot)
+/* c = band + 1 of a banded key's value (0 = the store's value as param_get reads it) */
+static void send_param(kproto_t *kp, midi_port_t port, param_id_t id, int slot, uint8_t c)
 {
     if (port >= MIDI_PORT_COUNT || !kp->connected[port] || (unsigned)id >= PRM_COUNT || slot < 0 || slot >= PARAM_SLOT_COUNT)
         return;
-    if (q_push(kp, port, KP_Q_PARAM, (uint8_t)id, (uint8_t)slot, 0))
+    if (q_push(kp, port, KP_Q_PARAM, (uint8_t)id, (uint8_t)slot, c))
         q_pump(kp, port);
 }
 
-void kp_notify(kproto_t *kp, param_id_t id, int slot, midi_port_t except)
+static void notify(kproto_t *kp, param_id_t id, int slot, uint8_t c, midi_port_t except)
 {
     for (int p = 0; p < MIDI_PORT_COUNT; p++)
         if (kp->connected[p] && p != (int)except)
-            kp_send_param(kp, (midi_port_t)p, id, slot);
+            send_param(kp, (midi_port_t)p, id, slot, c);
 }
+
+/* the queue tag of a value just stored: its band for a banded key */
+static uint8_t band_tag(param_id_t id, int slot, const uint8_t *data, uint8_t len)
+{
+    return param_banded(id, slot) >= 0 && len && data[0] < PARAM_BANDS ? (uint8_t)(data[0] + 1) : 0;
+}
+
+void kp_send_param(kproto_t *kp, midi_port_t port, param_id_t id, int slot) { send_param(kp, port, id, slot, 0); }
+
+void kp_notify(kproto_t *kp, param_id_t id, int slot, midi_port_t except) { notify(kp, id, slot, 0, except); }
 
 void kp_local_set(kproto_t *kp, param_id_t id, int slot, const uint8_t *data, uint8_t len)
 {
     if (param_put(kp->store, id, slot, data, len))
-        kp_notify(kp, id, slot, MIDI_PORT_COUNT);
+        notify(kp, id, slot, band_tag(id, slot, data, len), MIDI_PORT_COUNT);
 }
 
 static void start_request(kproto_t *kp, midi_port_t port, uint8_t v1, uint8_t v2, uint8_t part)
@@ -318,6 +348,7 @@ static void start_request(kproto_t *kp, midi_port_t port, uint8_t v1, uint8_t v2
     s->req_v1 = v1; s->req_v2 = v2; s->req_part = part;
     s->req_id = 0;
     s->req_slot = 0;
+    s->req_band = 0;
     q_pump(kp, port);
 }
 
@@ -492,7 +523,7 @@ static bool apply_param(kproto_t *kp, midi_port_t port, uint8_t fn, uint8_t v1, 
             kp->port[port].remote_changed = true;
         bool changed = param_put(kp->store, (param_id_t)id, slot, data, len);
         if (changed)
-            kp_notify(kp, (param_id_t)id, slot, port);
+            notify(kp, (param_id_t)id, slot, band_tag((param_id_t)id, slot, data, len), port);
         if (kp->staging) { /* stock FUN_4015C410: kept in the settings block, applied at fn 0x03 */
             kp->staged[id] |= 1u << slot;
             return true;

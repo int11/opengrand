@@ -35,9 +35,16 @@
 #include "ca79ng/params_gen.h"
 
 /* ---------------- parameter store ---------------- */
+/* User EQ (UserEqGain 51 1A 7F, UserEqFreq 51 1B 7F): the first data byte is a band and the stock keeps a
+ * value per band under the one address (dump: 51 1A 7F x4 bands 0-3, 51 1B 7F x2 bands 1-2). v / valid keep
+ * the last band written, as for every key; band / band_valid keep each band of the System slot. */
+#define PARAM_BANDED 2  /* UserEqGain, UserEqFreq */
+#define PARAM_BANDS 4
 typedef struct {
     uint8_t v[PRM_COUNT][PARAM_SLOT_COUNT][4];
     uint32_t valid[PRM_COUNT]; /* bit per slot */
+    uint8_t band[PARAM_BANDED][PARAM_BANDS][4];
+    uint8_t band_valid[PARAM_BANDED]; /* bit per band */
 } param_store_t;
 
 void param_store_defaults(param_store_t *s);
@@ -47,6 +54,9 @@ bool param_get(const param_store_t *s, param_id_t id, int slot, uint8_t out[4]);
 uint8_t param_get1(const param_store_t *s, param_id_t id, int slot, uint8_t fallback);
 /* returns true if the value changed */
 bool param_put(param_store_t *s, param_id_t id, int slot, const uint8_t *data, uint8_t len);
+/* banded keys (User EQ, System slot): one value per band - param_banded is -1 for every other (id, slot) */
+int param_banded(param_id_t id, int slot);
+bool param_get_band(const param_store_t *s, param_id_t id, int slot, uint8_t band, uint8_t out[4]);
 int param_find(uint8_t fn, uint8_t v1, uint8_t v2, uint8_t part); /* -1 if unknown */
 bool param_validate(param_id_t id, const uint8_t *data, uint8_t len);
 
@@ -187,6 +197,7 @@ typedef struct {
     uint8_t req_active, req_v1, req_v2, req_part;
     uint16_t req_id;
     uint8_t req_slot;
+    uint8_t req_band;             /* banded key (User EQ): next band of req_id / req_slot */
     bool remote_changed;          /* stock 0x413CA3B0[port]: Sound changed from this port */
     uint32_t dropped, failed;
 } kp_port_t;

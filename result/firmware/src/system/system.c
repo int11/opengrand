@@ -3,6 +3,23 @@
 #include <string.h>
 
 /* record: param u8 | slot u8 | len u8 | data[len] */
+static bool put_record(kvstore_t *kv, uint8_t *buf, uint16_t *used, int *key, int id, int slot, uint8_t len,
+                       const uint8_t *v)
+{
+    if (*used + 3u + len > KV_MAX_VALUE) {
+        if (*key >= SETTINGS_KEYS || !kv_put(kv, (uint16_t)(KV_KEY_STARTUP_SETTINGS + 0x100 + *key), buf, *used))
+            return false;
+        (*key)++;
+        *used = 0;
+    }
+    buf[(*used)++] = (uint8_t)id;
+    buf[(*used)++] = (uint8_t)slot;
+    buf[(*used)++] = len;
+    memcpy(buf + *used, v, len);
+    *used = (uint16_t)(*used + len);
+    return true;
+}
+
 int settings_save(const param_store_t *s, kvstore_t *kv)
 {
     static param_store_t def;
@@ -17,20 +34,23 @@ int settings_save(const param_store_t *s, kvstore_t *kv)
         for (int slot = 0; slot < PARAM_SLOT_COUNT; slot++) {
             if (!(s->valid[id] & (1u << slot)))
                 continue;
+            int k = param_banded((param_id_t)id, slot);
+            if (k >= 0 && s->band_valid[k]) { /* User EQ: a record per band (load puts each back) */
+                for (int b = 0; b < PARAM_BANDS; b++) {
+                    if (!(s->band_valid[k] & (1u << b)) ||
+                        ((def.band_valid[k] & (1u << b)) && memcmp(def.band[k][b], s->band[k][b], d->len) == 0))
+                        continue;
+                    if (!put_record(kv, buf, &used, &key, id, slot, d->len, s->band[k][b]))
+                        return -1;
+                    records++;
+                }
+                continue;
+            }
             bool same = (def.valid[id] & (1u << slot)) && memcmp(def.v[id][slot], s->v[id][slot], d->len) == 0;
             if (same)
                 continue;
-            if (used + 3u + d->len > sizeof buf) {
-                if (key >= SETTINGS_KEYS || !kv_put(kv, (uint16_t)(KV_KEY_STARTUP_SETTINGS + 0x100 + key), buf, used))
-                    return -1;
-                key++;
-                used = 0;
-            }
-            buf[used++] = (uint8_t)id;
-            buf[used++] = (uint8_t)slot;
-            buf[used++] = d->len;
-            memcpy(buf + used, s->v[id][slot], d->len);
-            used = (uint16_t)(used + d->len);
+            if (!put_record(kv, buf, &used, &key, id, slot, d->len, s->v[id][slot]))
+                return -1;
             records++;
         }
     }

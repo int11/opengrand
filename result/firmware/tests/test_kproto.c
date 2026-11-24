@@ -544,6 +544,73 @@ TEST(test_blemidi_module_commands)
     CHECK(strcmp(b.fw_version, "2.1") == 0);
 }
 
+/* User EQ: the first data byte is a band, one value per band under one address (stock dump 51 1A 7F x4
+ * bands 0-3, 51 1B 7F x2 bands 1-2, captures 261031) */
+TEST(test_user_eq_bands)
+{
+    setup();
+    uint8_t v[4];
+    CHECK(param_get_band(&store, PRM_USER_EQ_GAIN, SLOT_SYSTEM, 0, v) && v[0] == 0 && v[1] == 0x40);
+    CHECK(param_get_band(&store, PRM_USER_EQ_FREQ, SLOT_SYSTEM, 1, v) && v[1] == 0x3D && v[2] == 0x56);
+    CHECK(!param_get_band(&store, PRM_USER_EQ_FREQ, SLOT_SYSTEM, 0, v)); /* only the mid bands have a frequency */
+    CHECK(!param_get_band(&store, PRM_USER_EQ_GAIN, SLOT_MAIN1, 0, v));
+    CHECK(!param_get_band(&store, PRM_REVERB_TYPE, SLOT_SYSTEM, 0, v));
+    CHECK(param_get(&store, PRM_USER_EQ_GAIN, SLOT_SYSTEM, v) && v[0] == 3); /* param_get: the last band, as before */
+    bind(MIDI_PORT_PANEL);
+    bind(MIDI_PORT_BLE);
+    /* the phone sets bands 0 and 2 while the panel has not ACKed: each band reaches the panel */
+    sink.n = 0;
+    CX(MIDI_PORT_BLE, 0x10, 0x51, 0x1A, 0x7F, 0x00, 0x46, 0x00);
+    CX(MIDI_PORT_BLE, 0x10, 0x51, 0x1A, 0x7F, 0x02, 0x3A, 0x00);
+    CX(MIDI_PORT_BLE, 0x10, 0x51, 0x1A, 0x7F, 0x00, 0x47, 0x00); /* band 0 again: one copy, newest value */
+    CHECK(IS(1, MIDI_PORT_PANEL, 0x10, 0x51, 0x1A, 0x7F, 0x00, 0x46, 0x00));
+    ack_last(MIDI_PORT_PANEL);
+    CHECK(IS(sink.n - 1, MIDI_PORT_PANEL, 0x10, 0x51, 0x1A, 0x7F, 0x02, 0x3A, 0x00));
+    ack_last(MIDI_PORT_PANEL);
+    CHECK(IS(sink.n - 1, MIDI_PORT_PANEL, 0x10, 0x51, 0x1A, 0x7F, 0x00, 0x47, 0x00));
+    ack_last(MIDI_PORT_PANEL);
+    CHECK(kp_tx_idle(&kp, MIDI_PORT_PANEL));
+    /* the same band value again: not a change (another band in between does not make it one) */
+    int n = sink.n;
+    CX(MIDI_PORT_BLE, 0x10, 0x51, 0x1A, 0x7F, 0x02, 0x3A, 0x00);
+    CHECK_EQ(sink.n, n + 1); /* the ACK only */
+    CHECK(kp_tx_idle(&kp, MIDI_PORT_PANEL));
+    /* a get answers every band, lowest first, then the end */
+    sink.n = 0;
+    CX(MIDI_PORT_BLE, 0x02, 0x51, 0x1A, 0x7F);
+    for (int guard = 0; guard < 20 && sink.msg[sink.n - 1][3] != 0x03; guard++)
+        ack_last(MIDI_PORT_BLE);
+    CHECK_EQ(sink.n, 5);
+    CHECK(IS(0, MIDI_PORT_BLE, 0x10, 0x51, 0x1A, 0x7F, 0x00, 0x47, 0x00));
+    CHECK(IS(1, MIDI_PORT_BLE, 0x10, 0x51, 0x1A, 0x7F, 0x01, 0x40, 0x00));
+    CHECK(IS(2, MIDI_PORT_BLE, 0x10, 0x51, 0x1A, 0x7F, 0x02, 0x3A, 0x00));
+    CHECK(IS(3, MIDI_PORT_BLE, 0x10, 0x51, 0x1A, 0x7F, 0x03, 0x40, 0x00));
+    CHECK(IS(4, MIDI_PORT_BLE, 0x03, 0x51, 0x1A, 0x7F));
+    ack_last(MIDI_PORT_BLE);
+    /* the full dump: 51 1A 7F x4 (bands 0-3), 51 1B 7F x2 (bands 1-2) */
+    sink.n = 0;
+    CX(MIDI_PORT_BLE, 0x02, 0x5F, 0x7F, 0x7F);
+    for (int guard = 0; guard < 1000 && sink.msg[sink.n - 1][3] != 0x03; guard++)
+        ack_last(MIDI_PORT_BLE);
+    int gain = 0, freq = 0;
+    uint8_t gain_bands = 0, freq_bands = 0;
+    for (int i = 0; i < sink.n; i++) {
+        const uint8_t *m = sink.msg[i];
+        if (m[3] != 0x10 || m[6] != 0x51 || m[8] != 0x7F)
+            continue;
+        if (m[7] == 0x1A) { gain++; gain_bands |= (uint8_t)(1u << m[9]); }
+        if (m[7] == 0x1B) { freq++; freq_bands |= (uint8_t)(1u << m[9]); }
+    }
+    CHECK_EQ(gain, 4);
+    CHECK_EQ(gain_bands, 0x0F);
+    CHECK_EQ(freq, 2);
+    CHECK_EQ(freq_bands, 0x06);
+    /* a band byte past the four bands: kept as the key's value only, no band */
+    CHECK(param_put(&store, PRM_USER_EQ_GAIN, SLOT_SYSTEM, (const uint8_t[]){0x05, 0x40, 0x00}, 3));
+    CHECK(param_get(&store, PRM_USER_EQ_GAIN, SLOT_SYSTEM, v) && v[0] == 5);
+    CHECK_EQ(store.band_valid[0], 0x0F);
+}
+
 void suite_kproto(void)
 {
     puts("kproto:");
@@ -563,4 +630,5 @@ void suite_kproto(void)
     RUN(test_staging_fn09_fn03);
     RUN(test_exclusive_operations);
     RUN(test_pack87_roundtrip_and_file_transfer);
+    RUN(test_user_eq_bands);
 }

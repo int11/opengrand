@@ -380,6 +380,28 @@ TEST(test_startup_settings_and_factory_reset)
     CHECK_EQ(param_get1(&P.store, PRM_REVERB_TYPE, SLOT_MAIN1, 0), 2);
 }
 
+/* User EQ startup settings: every band is saved and comes back (one record per band) */
+TEST(test_startup_settings_keep_user_eq_bands)
+{
+    boot(true);
+    const uint8_t g0[] = {0xF0, 0x40, 0x00, 0x10, 0x08, 0x02, 0x51, 0x1A, 0x7F, 0x00, 0x48, 0x00, 0xF7};
+    const uint8_t g2[] = {0xF0, 0x40, 0x00, 0x10, 0x08, 0x02, 0x51, 0x1A, 0x7F, 0x02, 0x38, 0x00, 0xF7};
+    const uint8_t f1[] = {0xF0, 0x40, 0x00, 0x10, 0x08, 0x02, 0x51, 0x1B, 0x7F, 0x01, 0x30, 0x40, 0xF7};
+    const uint8_t save[] = {0xF0, 0x40, 0x00, 0x32, 0x08, 0x02, 0x51, 0x34, 0x7F, 0x07, 0x00, 0x7F, 0x7F, 0xF7};
+    sx(MIDI_PORT_PANEL, g0, sizeof g0);
+    sx(MIDI_PORT_PANEL, g2, sizeof g2);
+    sx(MIDI_PORT_PANEL, f1, sizeof f1);
+    sx(MIDI_PORT_PANEL, save, sizeof save);
+    boot(false);
+    uint8_t v[4];
+    CHECK(param_get_band(&P.store, PRM_USER_EQ_GAIN, SLOT_SYSTEM, 0, v) && v[1] == 0x48);
+    CHECK(param_get_band(&P.store, PRM_USER_EQ_GAIN, SLOT_SYSTEM, 1, v) && v[1] == 0x40);
+    CHECK(param_get_band(&P.store, PRM_USER_EQ_GAIN, SLOT_SYSTEM, 2, v) && v[1] == 0x38);
+    CHECK(param_get_band(&P.store, PRM_USER_EQ_GAIN, SLOT_SYSTEM, 3, v) && v[1] == 0x40);
+    CHECK(param_get_band(&P.store, PRM_USER_EQ_FREQ, SLOT_SYSTEM, 1, v) && v[1] == 0x30 && v[2] == 0x40);
+    CHECK(param_get_band(&P.store, PRM_USER_EQ_FREQ, SLOT_SYSTEM, 2, v) && v[1] == 0x4B && v[2] == 0x4A);
+}
+
 TEST(test_auto_power_off)
 {
     boot(true);
@@ -411,5 +433,6 @@ void suite_system(void)
     RUN(test_recorder_record_play_and_smf);
     RUN(test_overdub_second_part);
     RUN(test_startup_settings_and_factory_reset);
+    RUN(test_startup_settings_keep_user_eq_bands);
     RUN(test_auto_power_off);
 }

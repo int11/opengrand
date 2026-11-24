@@ -17,13 +17,35 @@ uint8_t param_part_from_slot(int slot)
     return (slot >= 0 && slot < PARAM_SLOT_COUNT) ? PARAM_SLOT_PART[slot] : 0x7F;
 }
 
+int param_banded(param_id_t id, int slot)
+{
+    if (slot != SLOT_SYSTEM)
+        return -1;
+    return id == PRM_USER_EQ_GAIN ? 0 : id == PRM_USER_EQ_FREQ ? 1 : -1;
+}
+
+/* the band entry a value of a banded key goes to (0 = not banded, or a band byte out of range) */
+static uint8_t *band_entry(param_store_t *s, param_id_t id, int slot, const uint8_t *data, uint8_t len, int *k)
+{
+    *k = param_banded(id, slot);
+    if (*k < 0 || len < 1 || data[0] >= PARAM_BANDS)
+        return 0;
+    return s->band[*k][data[0]];
+}
+
 void param_store_defaults(param_store_t *s)
 {
     memset(s, 0, sizeof *s);
     for (unsigned i = 0; i < PARAM_DEFAULT_COUNT; i++) {
         const param_default_t *d = &PARAM_DEFAULTS[i];
+        int k;
+        uint8_t *b = band_entry(s, (param_id_t)d->param, d->slot, d->data, d->len, &k);
         memcpy(s->v[d->param][d->slot], d->data, d->len);
         s->valid[d->param] |= 1u << d->slot;
+        if (b) {
+            memcpy(b, d->data, d->len);
+            s->band_valid[k] |= (uint8_t)(1u << d->data[0]);
+        }
     }
 }
 
@@ -32,6 +54,15 @@ bool param_get(const param_store_t *s, param_id_t id, int slot, uint8_t out[4])
     if ((unsigned)id >= PRM_COUNT || slot < 0 || slot >= PARAM_SLOT_COUNT || !(s->valid[id] & (1u << slot)))
         return false;
     memcpy(out, s->v[id][slot], 4);
+    return true;
+}
+
+bool param_get_band(const param_store_t *s, param_id_t id, int slot, uint8_t band, uint8_t out[4])
+{
+    int k = param_banded(id, slot);
+    if (k < 0 || band >= PARAM_BANDS || !(s->band_valid[k] & (1u << band)))
+        return false;
+    memcpy(out, s->band[k][band], 4);
     return true;
 }
 
@@ -78,8 +109,15 @@ bool param_put(param_store_t *s, param_id_t id, int slot, const uint8_t *data, u
         return false;
     uint8_t n = CA_MIN(len, d->len);
     bool changed = !(s->valid[id] & (1u << slot)) || memcmp(s->v[id][slot], data, n) != 0;
+    int k;
+    uint8_t *b = band_entry(s, id, slot, data, n, &k);
     memcpy(s->v[id][slot], data, n);
     s->valid[id] |= 1u << slot;
+    if (b) { /* changed = this band changed (v holds whichever band came last) */
+        changed = !(s->band_valid[k] & (1u << data[0])) || memcmp(b, data, n) != 0;
+        memcpy(b, data, n);
+        s->band_valid[k] |= (uint8_t)(1u << data[0]);
+    }
     return changed;
 }
 

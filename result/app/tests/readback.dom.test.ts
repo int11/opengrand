@@ -293,15 +293,14 @@ test("OpenGrand firmware simulator: sync + read-back, the remaining unknowns are
     assert.deepEqual(store.missing().sort(), FW_GAP, `not readable from our firmware: ${store.missing().join(", ")}`);
     assert.equal(store.readbackStats.requests, FW_GAP.length);
     assert.equal(store.readbackStats.answered, FW_GAP.length, "every get ends with 03 v1 v2 7F");
-    // Firmware gap 2: User EQ bands. The stock dump sends one frame per band under one address (captures 261031:
-    // `51 1A 7F` x4 for bands 0-3, `51 1B 7F` x2 for bands 1-2; the stock request walk repeats those descriptors
-    // per band), and the app keeps each band (store.getBand). Our core's param store holds one value per
-    // (parameter, part), so its dump brings only the last band of each - bands 0-2 of the level and band 1 of
-    // the frequency stay unknown. A store with a band index in result/firmware fixes it (the cave image changes).
-    const FW_EQ_GAP = ["Low band", "Mid-high band", "Mid-low band", "Mid-low frequency"];
+    // User EQ: the dump brings every band under its one address like the stock (captures 261031: `51 1A 7F` x4 for
+    // bands 0-3, `51 1B 7F` x2 for bands 1-2), so each band row has its value (store.getBand)
+    const { findParam } = await import("../src/protocol/codecs.ts");
+    for (const b of [0, 1, 2, 3]) assert.ok(store.getBand(findParam("UserEqGain"), 0x7f, b), `UserEqGain band ${b}`);
+    for (const b of [1, 2]) assert.ok(store.getBand(findParam("UserEqFreq"), 0x7f, b), `UserEqFreq band ${b}`);
     // everything else the screens show came with the dump
     const unknown = screens.flatMap((s) => [...s.querySelectorAll(".row.unknown")].map((r) => r.querySelector("span")!.textContent));
-    assert.deepEqual(unknown.sort(), ["Play mode", "Preview volume", "Repeat", "Song transpose", ...FW_EQ_GAP].sort());
+    assert.deepEqual(unknown.sort(), ["Play mode", "Preview volume", "Repeat", "Song transpose"].sort());
   } finally {
     link.close();
   }
