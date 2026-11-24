@@ -2,7 +2,7 @@
 // the sound list (Piano category first and open by default, then the other categories, favorites, recent, user
 // sounds) with the chosen part's sound shown as selected, ☆ and "Save this sound"; then everything choosing a
 // sound changes right below it — SK-EX Rendering (character, resonance, ambience) for Rendering, the Virtual
-// Technician preset for piano sounds, Effect, Reverb (not for Rendering); keyboard mode and parts last.
+// Technician preset for piano sounds or "Other sound settings" (that sound's own VT rows) for the others, Effect, Reverb (not for Rendering); keyboard mode and parts last.
 // Tuning and Transpose are global, not per sound: they are on the Settings tab.
 // Stock behaviour and evidence:
 import { t, tl } from "../../i18n.ts";
@@ -28,6 +28,7 @@ import type { AppContext } from "../context.ts";
 import { control } from "../controls.ts";
 import { h, section } from "../dom.ts";
 import { ctxFor, PART, PART_LABEL, selectSound, soundParam, whileShown } from "./common.ts";
+import { otherSoundSettings, vtRows } from "./technician.ts";
 
 const USER_VT = "user";
 
@@ -156,6 +157,10 @@ export function soundScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   });
   const vtNote = h("p", { class: "muted" });
   const vtSection = section(t("Virtual Technician"), h("label", { class: "row" }, h("span", {}, t("Virtual Technician preset")), vtSelect), vtNote);
+  // a sound outside the Piano category: the stock replaces the VT card with "Other sound settings", the
+  // same VT rows that sound has (manual p.34 (8); stock index.html other-sound-settings → the VT editor)
+  const otherVt = vtRows(store);
+  const otherSection = section(t("Other sound settings"), ...otherVt.rows.values());
   const renderingSection = section(
     t("SK-EX Rendering"),
     control(store, "RenderingCharacter", { label: t("Character") }),
@@ -165,7 +170,7 @@ export function soundScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   );
   const effectSection = section(t("Effect"), control(store, "Effect", { label: t("Effect") }), control(store, "EffectType", { label: t("Type") }), control(store, "EffectSetting1", { label: t("Setting 1") }), control(store, "EffectSetting2", { label: t("Setting 2") }));
   const reverbSection = section(t("Reverb"), control(store, "Reverb", { label: t("Reverb") }), control(store, "ReverbType", { label: t("Type") }), control(store, "ReverbDepth", { label: t("Depth") }), control(store, "ReverbTime", { label: t("Time") }));
-  for (const s of [vtSection, renderingSection, effectSection, reverbSection]) s.classList.add("sound-dep");
+  for (const s of [vtSection, otherSection, renderingSection, effectSection, reverbSection]) s.classList.add("sound-dep");
 
   function refresh(): void {
     markSelected();
@@ -183,6 +188,8 @@ export function soundScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     renderingSection.hidden = !!main && !rendering;
     reverbSection.hidden = rendering;
     vtSection.hidden = rendering || (!!main && !isPiano(main));
+    otherSection.hidden = !otherSoundSettings(store);
+    otherVt.refresh();
     const st = trackVt(store, lib);
     vtSelect.value = st.kind === "preset" ? String(st.index) : st.kind === "user" ? USER_VT : "";
     (vtSelect.querySelector(`option[value="${USER_VT}"]`) as HTMLOptionElement).disabled = st.kind !== "user" && !lib.userVt;
@@ -200,6 +207,7 @@ export function soundScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     section(t("Sound select"), partBar, now, h("div", { class: "transport" }, star, save), saved, catBar, listEl),
     renderingSection,
     vtSection,
+    otherSection,
     effectSection,
     reverbSection,
     section(t("Keyboard mode"), control(store, "KeyboardMode", { label: t("Mode"), part: 0x0f }), control(store, "SplitPoint", { part: PART.Lower, label: t("Split point") }), control(store, "Balance", { part: PART.Layer, label: t("Balance") }), control(store, "LowerPedal", { part: 0x0f, label: t("Lower pedal") })),

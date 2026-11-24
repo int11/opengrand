@@ -90,7 +90,7 @@ export const STRINGS: Record<"ja" | "ko", Record<string, string>> = {
     "Virtual Technician": "バーチャル・テクニシャン", "Reading the current sound…": "現在の音色を読み込み中…", "Selected: {name}": "選択中: {name}",
     "Edited values: the preset shows User.": "値を変更したためプリセットはユーザーになります。", "Reading the Virtual Technician values…": "バーチャル・テクニシャンの値を読み込み中…",
     // technician
-    "Preview": "試聴", "Stop": "停止", "Start": "スタート", "Advanced": "詳細設定", "Preset": "プリセット",
+    "Preview": "試聴", "Stop": "停止", "Start": "スタート", "Advanced": "詳細設定", "Other sound settings": "その他の音色設定", "Preset": "プリセット",
     "Virtual Technician preset": "バーチャル・テクニシャン プリセット", "Sound preview": "サウンドプレビュー", "Parameter": "パラメーター",
     "Preview volume": "プレビュー音量",
     // metronome
@@ -684,7 +684,7 @@ export const STRINGS: Record<"ja" | "ko", Record<string, string>> = {
     "Save this sound": "현재 음색 저장", "Saved as user sound “{name}”.": "사용자 음색 「{name}」(으)로 저장했습니다.",
     "Virtual Technician": "버추얼 테크니션", "Reading the current sound…": "현재 음색을 읽는 중…", "Selected: {name}": "선택됨: {name}",
     "Edited values: the preset shows User.": "값을 바꿔 프리셋이 「사용자」로 바뀌었습니다.", "Reading the Virtual Technician values…": "버추얼 테크니션 값을 읽는 중…",
-    "Preview": "미리 듣기", "Stop": "정지", "Start": "시작", "Advanced": "고급 설정", "Preset": "프리셋",
+    "Preview": "미리 듣기", "Stop": "정지", "Start": "시작", "Advanced": "고급 설정", "Other sound settings": "기타 음색 설정", "Preset": "프리셋",
     "Virtual Technician preset": "버추얼 테크니션 프리셋", "Sound preview": "소리 미리 듣기", "Parameter": "파라미터",
     "Preview volume": "미리 듣기 음량",
     "Time signature": "박자", "Rhythm": "리듬", "Volume": "음량",
