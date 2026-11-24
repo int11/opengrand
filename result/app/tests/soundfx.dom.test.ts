@@ -180,6 +180,20 @@ test("technician: one line for every VT term, translated", () => {
   for (const p of ko.querySelectorAll(".vt-param > p.row-note")) assert.match(p.textContent!, /[가-힣]/);
 });
 
+test("technician: the notes and the temperament type + key follow the Main sound's rows", async () => {
+  const { store, ctx, notify } = await setup();
+  const el = S.vtScreen(store, ctx);
+  document.body.append(el);
+  const organ = (await import("../src/protocol/params.gen.ts")).SOUNDS.find((s) => s.name === "Jazz Organ")!;
+  notify([0x55, 0x00, 0x00, organ.msb, organ.lsb, organ.pc]);
+  await tick();
+  const wrap = (txt: string) => [...el.querySelectorAll<HTMLElement>(".vt-param")].find((w) => w.querySelector(".row span")?.textContent === txt)!;
+  assert.equal(wrap("Damper Resonance").hidden, true, "a row the organ has not hides with its note");
+  assert.equal(wrap("Temperament").hidden, false);
+  assert.ok(wrap("Temperament").querySelector("select") && field(wrap("Temperament"), "Temperament key"));
+  el.remove();
+});
+
 test("tone control: Brilliance level only for Brilliance (+1 dB = 50 14 7F 41), User EQ only for User", async () => {
   const { store, ctx, sent, notify } = await setup();
   const el = S.settingsScreen(store, ctx);
