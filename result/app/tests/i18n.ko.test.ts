@@ -20,13 +20,15 @@ const PROPER = new Set<string>([
   "MIDI", "Bluetooth", "Bluetooth MIDI",
 ]);
 const RHYTHM_NAMES = new Set(RHYTHMS.map((r) => r.name));
+/** a number with its unit (User EQ frequencies "560 Hz", "1.25 kHz") */
+const UNIT = /^\d[\d.]* k?Hz$/;
 
 /** Labels, options and chips that still read English and are not a proper name. */
 function english(el: Element): string[] {
   const out = new Set<string>();
   const texts = [...el.querySelectorAll("option, .row > span:first-child, button.chip, h3")].map((e) => e.textContent!.trim());
   for (const s of texts) {
-    if (!/[A-Za-z]{2,}/.test(s) || HANGUL.test(s) || PROPER.has(s)) continue;
+    if (!/[A-Za-z]{2,}/.test(s) || HANGUL.test(s) || PROPER.has(s) || UNIT.test(s)) continue;
     out.add(s);
   }
   return [...out];

@@ -48,11 +48,11 @@ test("all screens render without throwing", () => {
   }
 });
 
-test("VT screen exposes the 22 technician controls bound to parameters", () => {
+test("VT screen exposes the 22 technician parameters bound to parameters (Temperament as type + key: 23 rows)", () => {
   const { store } = setup();
   const el = S.vtScreen(store);
   const rows = el.querySelectorAll("section:nth-of-type(2) .row");
-  assert.equal(rows.length, 22);
+  assert.equal(rows.length, 23);
   assert.equal(el.querySelectorAll(".row.muted").length, 0, "every VT parameter exists in the protocol table");
 });
 

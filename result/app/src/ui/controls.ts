@@ -16,6 +16,8 @@ export interface ControlOptions {
   toRaw?: (v: number) => number[];
   fromRaw?: (d: number[]) => number;
   format?: (v: number) => string;
+  /** after the user picked a value in this control and the piano took it (never on a value the piano reports) */
+  onPick?: (data: number[]) => void;
 }
 
 const refreshers = new Map<string, Set<() => void>>();
@@ -88,7 +90,9 @@ export function control(store: ParamStore, name: string, opts: ControlOptions = 
       row.classList.toggle("unknown", !d);
     };
     sel.addEventListener("change", () => {
-      if (sel.selectedIndex >= 0) void store.set(p, part, options[Number(sel.value)].data);
+      if (sel.selectedIndex < 0) return;
+      const data = options[Number(sel.value)].data;
+      void store.set(p, part, data).then((ok) => ok && opts.onPick?.(data));
     });
     onKey(key, sync);
     sync();

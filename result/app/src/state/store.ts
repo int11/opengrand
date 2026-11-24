@@ -12,6 +12,14 @@ export function keyOf(p: ParamDef, part: number): string {
   return `${p.name}@${part}`;
 }
 
+/** Parameters whose first data byte is a band: one address carries one frame per band (the stock dump sends
+ * `51 1A 7F` four times and `51 1B 7F` twice, captures 261031), so each band is also kept under its own key. */
+const BANDED = new Set(["UserEqGain", "UserEqFreq"]);
+
+export function bandKey(p: ParamDef, part: number, band: number): string {
+  return `${keyOf(p, part)}#${band}`;
+}
+
 export class ParamStore {
   private values = new Map<string, number[]>();
   private listeners = new Set<Listener>();
@@ -149,6 +157,11 @@ export class ParamStore {
     return p ? this.values.get(keyOf(p, part)) : undefined;
   }
 
+  /** The last frame of one band of a banded parameter (UserEqGain / UserEqFreq). */
+  getBand(p: ParamDef | undefined, part: number, band: number): number[] | undefined {
+    return p ? this.values.get(bandKey(p, part, band)) : undefined;
+  }
+
   subscribe(l: Listener): () => void {
     this.listeners.add(l);
     return () => this.listeners.delete(l);
@@ -156,7 +169,7 @@ export class ParamStore {
 
   /** Apply a value locally and send it. Resolves false (and rolls back) on failure. */
   async set(p: ParamDef, part: number, data: number[]): Promise<boolean> {
-    const key = keyOf(p, part);
+    const key = BANDED.has(p.name) && data.length ? bandKey(p, part, data[0]) : keyOf(p, part);
     const before = this.values.get(key);
     this.put(key, data);
     if (!this.session) return true;
@@ -178,6 +191,7 @@ export class ParamStore {
     const p = paramByWire(m.fn, m.v1, m.v2, m.part);
     if (!p) return;
     this.put(keyOf(p, m.part), m.data);
+    if (BANDED.has(p.name) && m.data.length) this.put(bandKey(p, m.part, m.data[0]), m.data);
   }
 
   private put(key: string, data: number[]): void {

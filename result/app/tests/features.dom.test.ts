@@ -113,8 +113,8 @@ test("sound preview: start/stop for the edited VT parameter, preview volume (fea
   change(vol, "90", "input");
   await tick(30);
   assert.ok(sent.includes("F0 40 7F 10 08 02 50 1F 7F 5A F7"), "SoundPreviewVolume 90");
-  // the 22 technician rows are unchanged
-  assert.equal(el.querySelectorAll("section:nth-of-type(2) .row").length, 22);
+  // the technician rows are unchanged (22 parameters, Temperament as type + key)
+  assert.equal(el.querySelectorAll("section:nth-of-type(2) .row").length, 23);
   el.remove();
 });
 
