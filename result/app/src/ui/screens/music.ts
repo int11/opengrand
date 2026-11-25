@@ -18,17 +18,16 @@
 // right hand first (channel 1), left hand second (channel 2). A new selectSmf starts with nothing muted, so the choice
 // is sent again after each select. (2026-11-24 on the panel: Volume 10 55 01 on parts Global / MIDI2ch - what the
 // original app's balance slider sends - made no audible difference to the shell's playback.)
-// As far as the firmware's note routing shows, the piano does not apply per-channel part settings to these notes: with
-// Multi-timbral mode Off (the CA79 default) a note from the panel plays on the keyboard's own parts whatever its
-// channel. So a hand is not made quieter on the piano (the original app's balance and song volume are Volume 10 55 01
-// on Global / MIDI2ch, unheard on the panel) - it is only left out here, and there is no song volume slider.
+// The original app's balance and song volume are Volume 10 55 01 on Global / MIDI2ch (CC7 on channels 1 / 2 when the
+// piano has no MIDI2ch Volume); the shell itself has no volume for its player. Those Volume frames were unheard on the
+// panel (why is not known), so a hand is only left out here and there is no song volume slider.
 // Lesson metronome volume (manual p.39): the shell's player sends a click per beat of the piece (MIDI 99 22 vv on the
 // first beat, 99 21 vv on the others, vv = its metronome volume 0..1 x 127) while its metronome is unmuted. As the
 // original app: enableMetronome {on: false} (the shell then has the callback that rings the clicks) and
 // setMetronomeNativeAudio {on: false} (clicks as MIDI, not panel audio) once; for a lesson piece muteMetronome
 // {on: false} + setMetronomeVolume {volume: slider 0..127 in 0.1 steps}, for anything else muteMetronome {on: true}. The
-// original also writes the slider to the piano's MetronomeVolume (10 56 03) - so do we, and put the piano's own value
-// back when the lesson piece ends (the original's metronome screen restored it only on its next start).
+// original also writes the slider to the piano's own MetronomeVolume (10 56 03) and restores it from its metronome
+// screen; we leave the player's metronome setting alone (no restore point when a piece ends by itself or the page goes).
 // Lesson tempo (manual p.39 「Tempo」): the shell's player speed, setSmfRelativeTempo {tempo: 0.5..2} - the original
 // app's lesson slider (0..100, middle = 1×: 0.5..1 on the left half, 1..2 on the right). Like the original it is sent
 // again after each selectSmf: the lesson's speed in Lesson, 1× for anything else.
@@ -124,7 +123,6 @@ const live = {
   metroVol: 0, // the lesson metronome slider 0..127 (the original's default 0 = silent), kept across pieces
   metroInit: false, // enableMetronome / setMetronomeNativeAudio sent to this shell
   metroLesson: false, // the shell's clicks are unmuted for a lesson piece
-  metroSaved: null as number | null, // the piano's MetronomeVolume before a lesson piece changed it
   view: MUSIC_MODE.Lesson as number,
   redraw: null as (() => void) | null, // the newest screen's
 };
@@ -158,7 +156,6 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   // the CA79's EU and US lists differ (Concert Magic, Piano Music, hymns): the piano's destination picks one
   const region = regionOf(ctx?.session()?.identity?.destination);
   const modeP = findParam("MusicMode", 0x31)!;
-  const metP = findParam("MetronomeVolume")!;
   const keyOf = (m: number) => MODES.find(([, v]) => v === m)![2];
 
   const redraw = () => live.redraw?.();
@@ -186,26 +183,13 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
       callNative("setMetronomeNativeAudio", { on: false });
     }
     live.metroLesson = lesson;
-    if (lesson) {
-      callNative("setMetronomeVolume", { volume: metroVolume(live.metroVol) });
-      callNative("muteMetronome", { on: false });
-      if (live.metroSaved === null) live.metroSaved = store.get(metP, 0x7f)?.[0] ?? null;
-      void store.set(metP, 0x7f, [live.metroVol]);
-    } else {
-      callNative("muteMetronome", { on: true });
-      metroRestore();
-    }
-  };
-  const metroRestore = () => {
-    if (live.metroSaved === null) return;
-    void store.set(metP, 0x7f, [live.metroSaved]);
-    live.metroSaved = null;
+    if (lesson) callNative("setMetronomeVolume", { volume: metroVolume(live.metroVol) });
+    callNative("muteMetronome", { on: !lesson });
   };
   const stop = () => {
     // the shell may play a piece started from an earlier screen: always stop it, end Concert Magic, both hands again
     if (canPlay) callNative("playStopSmf");
     endMagic();
-    metroRestore();
     if (live.cur) live.status = "idle";
     redraw();
   };
@@ -323,7 +307,7 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   speedIn.addEventListener("input", speedSet);
   speedIn.addEventListener("change", speedSet);
 
-  // lesson metronome volume: the shell's clicks (and the piano's MetronomeVolume, as the original) for the lesson piece
+  // lesson metronome volume: the shell's beat clicks for the lesson piece
   const metroIn = h("input", { type: "range", min: 0, max: 127, step: 1, value: String(live.metroVol) }) as HTMLInputElement;
   const metroOut = h("output", {}, String(live.metroVol));
   const metroRow = h("label", { class: "row slider", id: "lesson-metronome" }, h("span", {}, t("Metronome volume")), metroIn, metroOut);
@@ -332,7 +316,6 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     metroOut.textContent = String(live.metroVol);
     if (live.metroLesson && live.cur?.mode === MUSIC_MODE.Lesson && (live.status === "playing" || live.status === "paused")) {
       callNative("setMetronomeVolume", { volume: metroVolume(live.metroVol) });
-      void store.set(metP, 0x7f, [live.metroVol]);
     }
   };
   metroIn.addEventListener("input", metroSet);

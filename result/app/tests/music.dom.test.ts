@@ -328,15 +328,13 @@ test("music tab on the panel: Stop on a new screen ends Concert Magic started fr
   b.remove();
 });
 
-test("music tab on the panel: lesson metronome volume is the shell's beat clicks (unmuted only for a lesson piece) and the piano's MetronomeVolume, put back after the lesson", async () => {
+test("music tab on the panel: lesson metronome volume is the shell's beat clicks, unmuted only for a lesson piece; the piano's own metronome setting is left alone", async () => {
   const { metroVolume } = await import("../src/ui/screens/music.ts");
-  const { findParam } = await import("../src/protocol/codecs.ts");
   assert.deepEqual([0, 6, 7, 64, 100, 127].map(metroVolume), [0, 0, 0.1, 0.5, 0.8, 1], "0..127 as 0..1 in 0.1 steps");
   const inv = bookOf(LESSON_BOOKS, "inventions");
   const files = [stub(inv, 3, "T-A.mid"), stub(bookOf(PIANO_MUSIC, "piano"), 13, "T-C.mid")];
   const calls = fakeShell({ files });
   const { store, sent } = await setup();
-  await store.set(findParam("MetronomeVolume")!, 0x7f, [74]); // the player's own metronome volume
   const el = S.musicScreen(store);
   document.body.append(el);
   const vol = el.querySelector("#lesson-metronome input") as HTMLInputElement;
@@ -355,32 +353,27 @@ test("music tab on the panel: lesson metronome volume is the shell's beat clicks
     { cmd: "setMetronomeVolume", obj: { volume: 0.5 } },
     { cmd: "muteMetronome", obj: { on: false } },
   ], "booleans and a number, as the shell reads them");
-  assert.ok(sent.slice(from).some((m) => m.endsWith(" 56 03 7F 40 F7")), "the piano's MetronomeVolume = the slider");
+  assert.ok(!sent.slice(from).some((m) => m.includes(" 56 03 ")), "no MetronomeVolume frames to the piano");
   assert.equal(calls.at(-1)!.cmd, "playStartSmf");
   // moved while the lesson piece plays: at once
   change(vol, "127");
   assert.deepEqual(metro.at(-1), { cmd: "setMetronomeVolume", obj: { volume: 1 } });
-  await tick();
-  assert.ok(sent.some((m) => m.endsWith(" 56 03 7F 7F F7")));
-  // Piano Music: clicks muted, the piano's own value back; setup is not sent again
-  const j = sent.length;
+  // Piano Music: clicks muted; setup is not sent again
   byText(el, "button", "Piano Music").click();
   (rows(el)[13].querySelector("button") as HTMLButtonElement).click();
   await tick(30);
   assert.deepEqual(metro.slice(5), [{ cmd: "muteMetronome", obj: { on: true } }]);
-  assert.ok(sent.slice(j).some((m) => m.endsWith(" 56 03 7F 4A F7")), "74 again");
   const n = metro.length;
   change(vol, "10");
   assert.equal(metro.length, n, "not a lesson piece: the slider waits for the next one");
-  // a lesson piece then Stop: the value goes back on Stop too
+  // the next lesson piece at the moved slider
   byText(el, "button", "Lesson").click();
   (rows(el)[3].querySelector("button") as HTMLButtonElement).click();
   await tick(30);
   assert.deepEqual(metro.at(-2), { cmd: "setMetronomeVolume", obj: { volume: 0.1 } });
-  const k = sent.length;
+  assert.deepEqual(metro.at(-1), { cmd: "muteMetronome", obj: { on: false } });
   (el.querySelector('#music-player [data-act="stop"]') as HTMLElement).click();
   await tick();
-  assert.ok(sent.slice(k).some((m) => m.endsWith(" 56 03 7F 4A F7")), "Stop puts the piano's value back");
-  assert.ok(!sent.some((m) => m.includes(" 55 01 ")), "no Volume frames");
+  assert.ok(!sent.slice(from).some((m) => m.includes(" 56 03 ") || m.includes(" 55 01 ")), "no MetronomeVolume / Volume frames");
   el.remove();
 });
