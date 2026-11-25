@@ -18,6 +18,17 @@
 // right hand first (channel 1), left hand second (channel 2). A new selectSmf starts with nothing muted, so the choice
 // is sent again after each select. (2026-11-24 on the panel: Volume 10 55 01 on parts Global / MIDI2ch - what the
 // original app's balance slider sends - made no audible difference to the shell's playback.)
+// As far as the firmware's note routing shows, the piano does not apply per-channel part settings to these notes: with
+// Multi-timbral mode Off (the CA79 default) a note from the panel plays on the keyboard's own parts whatever its
+// channel. So a hand is not made quieter on the piano (the original app's balance and song volume are Volume 10 55 01
+// on Global / MIDI2ch, unheard on the panel) - it is only left out here, and there is no song volume slider.
+// Lesson metronome volume (manual p.39): the shell's player sends a click per beat of the piece (MIDI 99 22 vv on the
+// first beat, 99 21 vv on the others, vv = its metronome volume 0..1 x 127) while its metronome is unmuted. As the
+// original app: enableMetronome {on: false} (the shell then has the callback that rings the clicks) and
+// setMetronomeNativeAudio {on: false} (clicks as MIDI, not panel audio) once; for a lesson piece muteMetronome
+// {on: false} + setMetronomeVolume {volume: slider 0..127 in 0.1 steps}, for anything else muteMetronome {on: true}. The
+// original also writes the slider to the piano's MetronomeVolume (10 56 03) - so do we, and put the piano's own value
+// back when the lesson piece ends (the original's metronome screen restored it only on its next start).
 // Lesson tempo (manual p.39 「Tempo」): the shell's player speed, setSmfRelativeTempo {tempo: 0.5..2} - the original
 // app's lesson slider (0..100, middle = 1×: 0.5..1 on the left half, 1..2 on the right). Like the original it is sent
 // again after each selectSmf: the lesson's speed in Lesson, 1× for anything else.
@@ -69,6 +80,18 @@ const MODES: [label: string, mode: number, key: BuiltinMode, line: string][] = [
   ["Piano Music", MUSIC_MODE.PianoMusic, "piano", "Listen to the built-in piano pieces."],
 ];
 
+/**
+ * Concert Magic as the panel's original app starts it: setConcertMagicMode {mode 1, smooth 0, triggerTrack 0}. In the
+ * shell mode 1 advances one beat per tap (0 = every note of any part, 2 / 3 = the trigger part's notes), and every tap
+ * turns smoothing on regardless of `smooth`; the original app has no settings for it, so neither do we.
+ */
+export const CM_SETUP = { mode: 1, smooth: 0, triggerTrack: 0 } as const;
+
+/** The lesson metronome slider (0..127) as the shell's metronome volume: 0..1 in 0.1 steps, as the original app rounds it. */
+export function metroVolume(v: number): number {
+  return Math.round((Math.max(0, Math.min(127, v)) * 10) / 127) / 10;
+}
+
 /** The lesson tempo slider (0..100, 50 = 1×) as the shell's relative speed 0.5..2. */
 export function relativeSpeed(v: number): number {
   const x = Math.max(0, Math.min(100, v));
@@ -96,9 +119,12 @@ const live = {
   hands: "both" as Hands,
   handsSent: "both" as Hands, // what the shell's player has muted for the loaded piece
   parts: [0, 1] as [number, number], // the loaded piece's right / left hand parts (setSmfTrack indexes)
-  cmCfg: { mode: 1, smooth: 0, track: 0 }, // Ensemble, no smoothing, trigger part 1 (the original app's start)
   interval: 480,
   speed: 50, // the lesson tempo slider (relativeSpeed), kept across pieces as the original app keeps it
+  metroVol: 0, // the lesson metronome slider 0..127 (the original's default 0 = silent), kept across pieces
+  metroInit: false, // enableMetronome / setMetronomeNativeAudio sent to this shell
+  metroLesson: false, // the shell's clicks are unmuted for a lesson piece
+  metroSaved: null as number | null, // the piano's MetronomeVolume before a lesson piece changed it
   view: MUSIC_MODE.Lesson as number,
   redraw: null as (() => void) | null, // the newest screen's
 };
@@ -132,6 +158,7 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   // the CA79's EU and US lists differ (Concert Magic, Piano Music, hymns): the piano's destination picks one
   const region = regionOf(ctx?.session()?.identity?.destination);
   const modeP = findParam("MusicMode", 0x31)!;
+  const metP = findParam("MetronomeVolume")!;
   const keyOf = (m: number) => MODES.find(([, v]) => v === m)![2];
 
   const redraw = () => live.redraw?.();
@@ -150,10 +177,35 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     callNative("setConcertMagicNativeTrigger", { isNative: false });
     void store.command(modeP, 0x7f, [MUSIC_MODE.Exit]);
   };
+  // the shell's beat clicks: unmuted at the slider's volume for a lesson piece, muted for anything else
+  const metroFor = (lesson: boolean) => {
+    if (!canPlay) return;
+    if (!live.metroInit) {
+      live.metroInit = true;
+      callNative("enableMetronome", { on: false });
+      callNative("setMetronomeNativeAudio", { on: false });
+    }
+    live.metroLesson = lesson;
+    if (lesson) {
+      callNative("setMetronomeVolume", { volume: metroVolume(live.metroVol) });
+      callNative("muteMetronome", { on: false });
+      if (live.metroSaved === null) live.metroSaved = store.get(metP, 0x7f)?.[0] ?? null;
+      void store.set(metP, 0x7f, [live.metroVol]);
+    } else {
+      callNative("muteMetronome", { on: true });
+      metroRestore();
+    }
+  };
+  const metroRestore = () => {
+    if (live.metroSaved === null) return;
+    void store.set(metP, 0x7f, [live.metroSaved]);
+    live.metroSaved = null;
+  };
   const stop = () => {
     // the shell may play a piece started from an earlier screen: always stop it, end Concert Magic, both hands again
     if (canPlay) callNative("playStopSmf");
     endMagic();
+    metroRestore();
     if (live.cur) live.status = "idle";
     redraw();
   };
@@ -183,8 +235,9 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     live.handsSent = "both";
     sendHands(handsFor(live.cur));
     callNative("setSmfRelativeTempo", { tempo: mode === MUSIC_MODE.Lesson ? relativeSpeed(live.speed) : 1 });
+    metroFor(mode === MUSIC_MODE.Lesson);
     if (mode === MUSIC_MODE.ConcertMagic) {
-      await callPromise("setConcertMagicMode", { mode: live.cmCfg.mode, smooth: live.cmCfg.smooth, triggerTrack: live.cmCfg.track }, 3000).catch(() => {});
+      await callPromise("setConcertMagicMode", { ...CM_SETUP }, 3000).catch(() => {});
       callNative("setConcertMagicNativeTrigger", { isNative: true });
       if (!live.magicOn) void store.command(modeP, 0x7f, [MUSIC_MODE.ConcertMagic]);
       live.magicOn = true;
@@ -270,17 +323,23 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   speedIn.addEventListener("input", speedSet);
   speedIn.addEventListener("change", speedSet);
 
-  // Concert Magic settings: the panel shell's (setConcertMagicMode), and the last tap's result
-  const cmMode = h("select", {}, h("option", { value: "0" }, t("Melody")), h("option", { value: "1" }, t("Ensemble"))) as HTMLSelectElement;
-  const cmSmooth = h("input", { type: "checkbox", role: "switch" }) as HTMLInputElement;
-  const cmTrig = h("select", {}, h("option", { value: "0" }, t("Part 1 (right hand)")), h("option", { value: "1" }, t("Part 2 (left hand)"))) as HTMLSelectElement;
-  const cmResult = h("div", { class: "cm-result", id: "cm-result" }, "–");
-  const cmChange = () => {
-    live.cmCfg = { mode: Number(cmMode.value), smooth: cmSmooth.checked ? 1 : 0, track: Number(cmTrig.value) };
-    if (live.magicOn) void callPromise("setConcertMagicMode", { mode: live.cmCfg.mode, smooth: live.cmCfg.smooth, triggerTrack: live.cmCfg.track }, 3000).catch(() => {});
+  // lesson metronome volume: the shell's clicks (and the piano's MetronomeVolume, as the original) for the lesson piece
+  const metroIn = h("input", { type: "range", min: 0, max: 127, step: 1, value: String(live.metroVol) }) as HTMLInputElement;
+  const metroOut = h("output", {}, String(live.metroVol));
+  const metroRow = h("label", { class: "row slider", id: "lesson-metronome" }, h("span", {}, t("Metronome volume")), metroIn, metroOut);
+  const metroSet = () => {
+    live.metroVol = Number(metroIn.value);
+    metroOut.textContent = String(live.metroVol);
+    if (live.metroLesson && live.cur?.mode === MUSIC_MODE.Lesson && (live.status === "playing" || live.status === "paused")) {
+      callNative("setMetronomeVolume", { volume: metroVolume(live.metroVol) });
+      void store.set(metP, 0x7f, [live.metroVol]);
+    }
   };
-  cmMode.value = String(live.cmCfg.mode);
-  for (const c of [cmMode, cmSmooth, cmTrig]) c.addEventListener("change", cmChange);
+  metroIn.addEventListener("input", metroSet);
+  metroIn.addEventListener("change", metroSet);
+
+  // Concert Magic: the last tap's result (the shell's own settings stay as the original app sets them, CM_SETUP)
+  const cmResult = h("div", { class: "cm-result", id: "cm-result" }, "–");
   if (canPlay) {
     const k = kwm();
     // the shell: KWM.donePlayConcertMagic(noteno, velocity, sec, success, cmr)
@@ -293,11 +352,8 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
 
   const sections: Record<number, HTMLElement> = {
     // hand practice above the list (a book can be 126 pieces long)
-    [MUSIC_MODE.Lesson]: ((pick, rows) => section(t("Lesson"), pick, speedRow, handRow, rows))(...listFor(MUSIC_MODE.Lesson)),
+    [MUSIC_MODE.Lesson]: ((pick, rows) => section(t("Lesson"), pick, speedRow, metroRow, handRow, rows))(...listFor(MUSIC_MODE.Lesson)),
     [MUSIC_MODE.ConcertMagic]: section(t("Concert Magic"), ...listFor(MUSIC_MODE.ConcertMagic),
-      h("label", { class: "row" }, h("span", {}, t("Concert Magic mode")), cmMode),
-      h("label", { class: "row" }, h("span", {}, t("Smooth tempo")), cmSmooth),
-      h("label", { class: "row" }, h("span", {}, t("Trigger part")), cmTrig),
       h("label", { class: "row" }, h("span", {}, t("Last tap")), cmResult)),
     [MUSIC_MODE.PianoMusic]: section(t("Piano Music"), ...listFor(MUSIC_MODE.PianoMusic)),
   };
@@ -315,6 +371,9 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     for (const [m, sec] of Object.entries(sections)) sec.hidden = Number(m) !== live.view;
     handRow.hidden = !(canPlay && lists[MUSIC_MODE.Lesson].book().hands);
     speedRow.hidden = !canPlay;
+    metroRow.hidden = !canPlay;
+    if (metroIn.value !== String(live.metroVol)) metroIn.value = String(live.metroVol);
+    metroOut.textContent = String(live.metroVol);
     if (speedIn.value !== String(live.speed)) speedIn.value = String(live.speed);
     speedOut.textContent = `${relativeSpeed(live.speed).toFixed(2)}×`;
     handSeg.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.getAttribute("data-hand") === live.hands));
