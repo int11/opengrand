@@ -8,9 +8,8 @@ const ERR: Record<string, string> = {
   offline: "No internet connection. The app checks again later.",
   ratelimit: "GitHub is busy (request limit). The app checks again later.",
   norelease: "No release has been published yet.",
-  signature: "Update refused: its signature does not match.",
-  sha256: "Update refused: the download does not match its signed checksum.",
-  size: "Update refused: the download does not match its signed checksum.",
+  sha256: "Update refused: the download does not match its checksum.",
+  size: "Update refused: the download does not match its checksum.",
   apk: "Update refused: the download is not this app.",
 };
 const MANUAL: Record<string, string> = {

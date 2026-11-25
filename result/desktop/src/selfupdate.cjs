@@ -1,6 +1,6 @@
-// Online self-update of the desktop app: check the latest GitHub release, verify its signed update.json, download and
+// Online self-update of the desktop app: check the latest GitHub release, check its update.json, download and
 // verify the Windows zip, extract it next to the install folder, and on restart (or quit) let a detached helper swap the
-// folders. Format, key and swap rules: ./updatepolicy.cjs. Electron objects come in as arguments (fetch, spawn, quit),
+// folders. Format and swap rules: ./updatepolicy.cjs. Electron objects come in as arguments (fetch, spawn, quit),
 // so tests/updater.test.cjs drives this module under plain Node with fakes.
 "use strict";
 
@@ -20,7 +20,6 @@ const HEADERS = { accept: "application/vnd.github+json", "user-agent": "OpenGran
  *   dir                     folder for downloads, markers and the helper (userData/update)
  *   spawnHelper(script, env, cwd)   start the swap helper detached
  *   quit()                  quit the app (after the helper is started)
- *   pubKey                  base64 raw Ed25519 key (default P.UPDATE_PUBKEY; tests pass their own)
  *   log(...)
  */
 function createUpdater(o) {
@@ -167,7 +166,7 @@ function createUpdater(o) {
     const mf = assets.get(P.MANIFEST_NAME);
     if (!mf) throw fail("norelease", "the latest release has no update.json");
     const text = await (await get(mf.url, "application/octet-stream")).text();
-    const m = P.verifyManifest(text, o.pubKey || P.UPDATE_PUBKEY);
+    const m = P.verifyManifest(text);
     const d = m.desktop;
     if (!d || P.compareVersions(d.version, o.currentVersion) <= 0) return set({ phase: "uptodate", available: undefined, action: undefined, page, checkedAt: Date.now() });
     set({ available: d.version, page });

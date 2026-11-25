@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Build a GitHub release for the online self-update: the phone APK, the Windows desktop zip and the signed update.json,
+// Build a GitHub release for the online self-update: the phone APK, the Windows desktop zip and update.json,
 // in one output folder, then PRINT the `gh release create` command (it does not run it, and does not push or tag).
 //
 //   node scripts/release_build.mjs [--tag r20261125] [--out DIR] [--skip-build] [--allow-dirty]
 //                                  [--key PATH] [--sys PATH]
 //
-// Steps (any failure stops before anything is signed):
+// Steps (any failure stops before update.json is written):
 //   1. versions: result/app/android/app/build.gradle.kts (versionName / versionCode), result/desktop/package.json
 //   2. git: a clean working tree (--allow-dirty to build anyway; the release should match a pushed commit)
 //   3. builds: result/app `npm run build`, Android `./gradlew assemblePhoneDebug` (the debug signing key of this machine:
@@ -13,15 +13,16 @@
 //      result/desktop `npm run dist:win` (portable + zip + dir; the zip is what the desktop updater installs)
 //   4. checks: scripts/leakcheck.py on the repository with the stock-overlap scan (--sys is required, never skipped);
 //      scripts/release_scan.py on the APK and the zip (no Kawai material, no secrets, only our own files);
-//      aapt2: package dev.ca79ng.shell at the gradle version; the signing key matches the embedded public key in both apps
-//   5. update.json: { schema, android, desktop } signed with the update key (Ed25519, canonical JSON:
-//      result/desktop/src/updatepolicy.cjs), verified back with the embedded public key
+//      aapt2: package dev.ca79ng.shell at the gradle version
+//   5. update.json: { schema, android, desktop } (format: result/desktop/src/updatepolicy.cjs), checked back with it.
+//      Bridge: apps up to Android 1.2.0 / desktop 0.3.0 still require an Ed25519 "sig" over the canonical JSON
+//      (below). While the old update key file exists it is added; without the key, those apps need one manual install.
 // Outputs: <out>/OpenGrand-<a>-phone.apk, <out>/OpenGrand-<d>-win-x64.zip, <out>/update.json, <out>/NOTES.md
 // Default out: dist-release/<tag>/ in this checkout (git-ignored).
-// Key: <main checkout>/result/stockfw/secrets/update_ed25519.pem (-> the private notes repository's secrets/), or
-// CA79_UPDATE_KEY / --key. Stock file: <main checkout>/target/CAx9_P06.SYS, or --sys.
+// Old update key (optional): <main checkout>/result/stockfw/secrets/update_ed25519.pem, or CA79_UPDATE_KEY / --key.
+// Stock file: <main checkout>/target/CAx9_P06.SYS, or --sys.
 import { execFileSync } from "node:child_process";
-import { createHash, createPrivateKey } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, sign } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
@@ -79,14 +80,16 @@ const head = out_("git", ["rev-parse", "HEAD"]);
 if (dirty && !flag("--allow-dirty")) die(`working tree has changes (commit first, or --allow-dirty):\n${dirty}`);
 console.log(`HEAD ${head}${dirty ? " (dirty)" : ""}`);
 
-// ---- key (fail early, before the long builds)
-if (!existsSync(keyPath)) die(`no update signing key at ${keyPath}`);
-const priv = createPrivateKey(readFileSync(keyPath, "utf8"));
-if (priv.asymmetricKeyType !== "ed25519") die(`${keyPath}: not an Ed25519 key`);
-const pub = P.rawPublicKey(priv);
-const kt = readFileSync(join(ROOT, "result/app/android/app/src/main/java/dev/ca79ng/shell/SelfUpdate.kt"), "utf8");
-const ktPub = /const val PUBKEY = "([^"]+)"/.exec(kt)?.[1];
-if (pub !== P.UPDATE_PUBKEY || pub !== ktPub) die(`the signing key's public half ${pub} is not the one in updatepolicy.cjs (${P.UPDATE_PUBKEY}) and SelfUpdate.kt (${ktPub})`);
+// ---- bridge key (optional; see step 5)
+const LEGACY_PUBKEY = "aP4AAJVD+jKhxbtW90VHNM7khSMV3jhgHTfHFh8DAl4=";
+let priv = null;
+if (existsSync(keyPath)) {
+  priv = createPrivateKey(readFileSync(keyPath, "utf8"));
+  const pub = priv.asymmetricKeyType === "ed25519" ? Buffer.from(createPublicKey(priv).export({ format: "jwk" }).x, "base64url").toString("base64") : "?";
+  if (pub !== LEGACY_PUBKEY) die(`${keyPath} is not the old update key (public ${pub}, expected ${LEGACY_PUBKEY})`);
+} else {
+  console.log(`(no old update key at ${keyPath}: update.json without "sig"; apps up to Android 1.2.0 / desktop 0.3.0 will not take it)`);
+}
 if (!existsSync(sysPath)) die(`stock system file ${sysPath} not found - the stock-overlap scan is required for a release (--sys PATH)`);
 
 // ---- 3. builds
@@ -136,9 +139,12 @@ const zipName = `OpenGrand-${dVersion}-win-x64.zip`;
 copyFileSync(apkBuilt, join(out, apkName));
 copyFileSync(zipBuilt, join(out, zipName));
 const entry = (name, extra) => ({ ...extra, file: name, sha256: sha256(join(out, name)), size: statSync(join(out, name)).size });
-const manifest = P.signManifest({ schema: 1, android: entry(apkName, { version: aVersion, versionCode: aCode }), desktop: entry(zipName, { version: dVersion }) }, priv);
+const manifest = { schema: 1, android: entry(apkName, { version: aVersion, versionCode: aCode }), desktop: entry(zipName, { version: dVersion }) };
+// canonical JSON for the bridge signature: sorted keys, no white space (only plain strings and integers occur here)
+const canonical = (v) => (typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `"${k}":${canonical(v[k])}`).join(",")}}` : JSON.stringify(v));
+if (priv) manifest.sig = sign(null, Buffer.from(canonical(manifest), "ascii"), priv).toString("base64");
 const text = JSON.stringify(manifest, null, 2) + "\n";
-P.verifyManifest(text); // round trip with the key the apps carry
+P.verifyManifest(text); // round trip with the apps' own check
 writeFileSync(join(out, "update.json"), text);
 const title = `OpenGrand ${today.slice(0, 4)}-${today.slice(4, 6)}-${today.slice(6)} (Android ${aVersion}, Windows ${dVersion})`;
 writeFileSync(join(out, "NOTES.md"), [

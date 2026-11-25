@@ -12,7 +12,7 @@ const P = require("../src/updatepolicy.cjs");
 const { listZip, extractZip } = require("../src/unzip.cjs");
 const { createUpdater } = require("../src/selfupdate.cjs");
 
-const FIX = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "update-signed.json"), "utf8"));
+const FIX = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "update.json"), "utf8"));
 const sha256 = (b) => crypto.createHash("sha256").update(b).digest("hex");
 
 /** A zip of [name, content, deflate?] entries (local headers + central directory, no zip64). */
@@ -63,53 +63,17 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "og-upd-"));
 
 // ---------------------------------------------------------------- format
 
-test("canonical JSON: sorted keys, no white space, integers and plain strings only", () => {
-  assert.equal(P.canonicalJson({ b: 1, a: { d: "x", c: 2 } }), '{"a":{"c":2,"d":"x"},"b":1}');
-  for (const bad of [{ a: 1.5 }, { a: -1 }, { a: [1] }, { a: true }, { a: null }, { a: 'q"' }, { a: "b\\s" }, { a: "\u00e9" }, { a: "\n" }, { "a-b": 1 }]) {
-    assert.throws(() => P.canonicalJson(bad), JSON.stringify(bad));
-  }
-});
-
-test("the shared fixture: canonical bytes and signature as the Android shell expects them", () => {
-  const m = JSON.parse(FIX.manifest);
-  assert.equal(P.signedBytes(m).toString("ascii"), FIX.canonical);
-  const v = P.verifyManifest(FIX.manifest, FIX.pub);
+test("the shared fixture parses; a \"sig\" from older releases is ignored", () => {
+  const v = P.verifyManifest(FIX.manifest);
   assert.equal(v.desktop.version, "0.3.0");
   assert.equal(v.android.versionCode, 14);
   assert.equal(v.sig, undefined);
-});
-
-test("signature: tampered, missing, foreign key and the release key all refuse the fixture", () => {
   const m = JSON.parse(FIX.manifest);
-  const tamper = (f) => {
-    const c = JSON.parse(JSON.stringify(m));
-    f(c);
-    return JSON.stringify(c);
-  };
-  const code = (text, pub = FIX.pub) => {
-    try {
-      P.verifyManifest(text, pub);
-      return "ok";
-    } catch (e) {
-      return e.code;
-    }
-  };
-  assert.equal(code(FIX.manifest), "ok");
-  assert.equal(code(tamper((c) => (c.desktop.version = "9.0.0"))), "signature");
-  assert.equal(code(tamper((c) => (c.android.sha256 = "0".repeat(64)))), "signature");
-  assert.equal(code(tamper((c) => (c.extra = 1))), "signature");
-  assert.equal(code(tamper((c) => delete c.android)), "signature");
-  assert.equal(code(tamper((c) => delete c.sig)), "signature");
-  assert.equal(code(tamper((c) => (c.sig = c.sig.slice(0, 10) + (c.sig[10] === "A" ? "B" : "A") + c.sig.slice(11)))), "signature");
-  assert.equal(code(FIX.manifest, P.UPDATE_PUBKEY), "signature"); // test key != release key
-  assert.equal(code("not json"), "manifest");
-  assert.equal(code(tamper((c) => (c.desktop.size = 1.5))), "manifest"); // cannot even be canonicalised
-  assert.equal(code("x".repeat(P.MAX_MANIFEST + 1)), "manifest");
+  delete m.sig;
+  assert.equal(P.verifyManifest(JSON.stringify(m)).desktop.version, "0.3.0");
 });
 
-test("a correctly signed manifest with bad contents is still refused", () => {
-  const { privateKey } = crypto.generateKeyPairSync("ed25519");
-  const pub = P.rawPublicKey(privateKey);
+test("bad contents are refused as \"manifest\"", () => {
   const ok = { version: "1.0.0", file: "a.zip", sha256: "a".repeat(64), size: 10 };
   const bad = [
     { schema: 2, desktop: ok },
@@ -117,11 +81,13 @@ test("a correctly signed manifest with bad contents is still refused", () => {
     { schema: 1, desktop: { ...ok, file: "update.json" } },
     { schema: 1, desktop: { ...ok, sha256: "A".repeat(64) } },
     { schema: 1, desktop: { ...ok, size: 0 } },
+    { schema: 1, desktop: { ...ok, size: 1.5 } },
     { schema: 1, desktop: { ...ok, version: "1.0.0-beta" } },
     { schema: 1, android: ok }, // no versionCode
   ];
-  for (const m of bad) assert.throws(() => P.verifyManifest(JSON.stringify(P.signManifest(m, privateKey)), pub), (e) => e.code === "manifest", JSON.stringify(m));
-  assert.equal(P.verifyManifest(JSON.stringify(P.signManifest({ schema: 1, desktop: ok }, privateKey)), pub).desktop.size, 10);
+  for (const m of bad) assert.throws(() => P.verifyManifest(JSON.stringify(m)), (e) => e.code === "manifest", JSON.stringify(m));
+  for (const t of ["not json", "[]", "x".repeat(P.MAX_MANIFEST + 1)]) assert.throws(() => P.verifyManifest(t), (e) => e.code === "manifest");
+  assert.equal(P.verifyManifest(JSON.stringify({ schema: 1, desktop: ok })).desktop.size, 10);
 });
 
 test("version compare", () => {
@@ -248,11 +214,10 @@ function setup(over = {}) {
   const root = tmp();
   const plan = { kind: "dir", installDir: path.join(root, "OpenGrand"), exe: path.join(root, "OpenGrand", "OpenGrand.exe"), newDir: path.join(root, "OpenGrand.new"), oldDir: path.join(root, "OpenGrand.old"), args: ["--cdp=9222"] };
   fs.mkdirSync(plan.installDir);
-  const { privateKey } = crypto.generateKeyPairSync("ed25519");
   const zip = makeZip([["OpenGrand.exe", "new exe", false], ["resources/app/index.html", "new app", true]]);
   const zipText = zip.toString("latin1");
   const entry = { version: "0.3.0", file: "OpenGrand-0.3.0-win-x64.zip", sha256: sha256(zip), size: zip.length, ...over.entry };
-  const manifest = JSON.stringify(P.signManifest({ schema: 1, desktop: entry }, privateKey));
+  const manifest = JSON.stringify({ schema: 1, desktop: entry });
   const spawned = [];
   let quits = 0;
   const gh = fakeGithub({ manifest, files: { [entry.file]: over.zipText ?? zipText }, ...over.gh });
@@ -270,7 +235,6 @@ function setup(over = {}) {
     currentVersion: "0.2.0",
     plan,
     dir: path.join(root, "userData", "update"),
-    pubKey: P.rawPublicKey(privateKey),
     spawnHelper: (script, env, cwd) => spawned.push({ script, env, cwd }),
     quit: () => quits++,
     ...extra,
@@ -336,10 +300,10 @@ test("updater: a download longer than update.json says is cut off", async () => 
   fs.rmSync(s.root, { recursive: true, force: true });
 });
 
-test("updater: a manifest signed with another key is refused before any download", async () => {
-  const s = setup();
-  const st = await s.mk({ pubKey: FIX.pub }).check();
-  assert.equal(st.error, "signature");
+test("updater: a malformed update.json is refused before any download", async () => {
+  const s = setup({ gh: { manifest: '{"schema":2}' } });
+  const st = await s.mk().check();
+  assert.equal(st.error, "manifest");
   assert.ok(!s.calls.some((u) => u.endsWith(".zip")));
   fs.rmSync(s.root, { recursive: true, force: true });
 });

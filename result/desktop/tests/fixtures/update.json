@@ -1,0 +1,4 @@
+{
+  "note": "update.json as a release carries it; sha256 fields = sha256(\"abc\"), size 3. The \"sig\" is what older releases add (ignored by current apps). Shared by tests/updater.test.cjs and the Android SelfUpdateTest.",
+  "manifest": "{\n  \"schema\": 1,\n  \"android\": {\n    \"version\": \"1.2.0\",\n    \"versionCode\": 14,\n    \"file\": \"OpenGrand-1.2.0-phone.apk\",\n    \"sha256\": \"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\n    \"size\": 3\n  },\n  \"desktop\": {\n    \"version\": \"0.3.0\",\n    \"file\": \"OpenGrand-0.3.0-win-x64.zip\",\n    \"sha256\": \"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\n    \"size\": 3\n  },\n  \"sig\": \"iXwuogCusBSpUFS2Yim3OdOY8krluyW3HQ8vZ30TMkCuTd1Ae7kTM9eVtIgIhkXwzcw2aJBiuWy7qt40lCV2AA==\"\n}"
+}

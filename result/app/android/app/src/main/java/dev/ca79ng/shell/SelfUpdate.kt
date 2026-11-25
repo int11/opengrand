@@ -13,12 +13,11 @@ import java.security.MessageDigest
 /**
  * Online self-update of the phone app (phone flavor only; the panel updates from USB, UpdateManager).
  *
- * Source: the latest GitHub release of int11/opengrand. Its asset update.json is signed with the update-signing key
- * (Ed25519; not the OTA or panel UI key). Format and canonical form: result/desktop/src/updatepolicy.cjs — the same
- * rules are implemented here (canonical()) and both are tested on result/desktop/tests/fixtures/update-signed.json.
- * Order of checks: signature over the canonical JSON -> contents -> versionCode strictly greater than the installed one
- * (a replayed older manifest cannot downgrade) -> download capped at `size` -> sha256 -> the APK's package name and
- * versionCode -> the system installer (the user confirms; Android also refuses an APK signed by another key).
+ * Source: the latest GitHub release of int11/opengrand, asset update.json (format: result/desktop/src/updatepolicy.cjs;
+ * both read result/desktop/tests/fixtures/update.json in their tests). No signature: trust is HTTPS to GitHub; a "sig"
+ * that older releases carry is ignored. Order of checks: contents -> versionCode strictly greater than the installed one
+ * -> download capped at `size` -> sha256 -> the APK's package name and versionCode -> the system installer (the user
+ * confirms; Android refuses an APK signed by another certificate than the installed app).
  *
  * The page (src/features/selfupdate.ts) decides when to check (setting, startup, every 24 h, online) and shows the
  * state; this class reports it through `emit` (ca79ngNative.onSelfUpdate).
@@ -79,7 +78,7 @@ class SelfUpdate(private val activity: Activity, private val emit: (String) -> U
         set("phase" to "checking", "error" to null, "message" to null, "progress" to null)
         val rel = Release.parse(String(fetch(LATEST_URL, MAX_RELEASE_JSON), Charsets.UTF_8))
         val mfUrl = rel.assets[MANIFEST_NAME] ?: throw UpdateError("norelease", "the latest release has no update.json")
-        val m = verifyManifest(String(fetch(mfUrl, MAX_MANIFEST.toLong()), Charsets.UTF_8), PUBKEY)
+        val m = verifyManifest(String(fetch(mfUrl, MAX_MANIFEST.toLong()), Charsets.UTF_8))
         val a = m.android
         if (a == null || a.versionCode <= BuildConfig.VERSION_CODE.toLong()) {
             return set("phase" to "uptodate", "available" to null, "action" to null, "page" to rel.page, "checkedAt" to System.currentTimeMillis())
@@ -214,18 +213,13 @@ class SelfUpdate(private val activity: Activity, private val emit: (String) -> U
     companion object {
         const val LATEST_URL = "https://api.github.com/repos/int11/opengrand/releases/latest"
         const val RELEASES_PAGE = "https://github.com/int11/opengrand/releases/latest"
-        /** Ed25519 public key (raw, base64) of the update-signing key. Same value in updatepolicy.cjs UPDATE_PUBKEY. */
-        const val PUBKEY = "aP4AAJVD+jKhxbtW90VHNM7khSMV3jhgHTfHFh8DAl4="
         const val MANIFEST_NAME = "update.json"
         const val MAX_MANIFEST = 64 * 1024
         private const val MAX_RELEASE_JSON = 1024L * 1024
         private const val MAX_ASSET = 1024L * 1024 * 1024
-        private val RE_KEY = Regex("^[A-Za-z0-9_]+$")
-        private val RE_STR = Regex("^[\\x20-\\x21\\x23-\\x5b\\x5d-\\x7e]*$")
         private val RE_VERSION = Regex("^\\d+(\\.\\d+){0,3}$")
         private val RE_FILE = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
         private val RE_SHA = Regex("^[0-9a-f]{64}$")
-        private val RE_SIG = Regex("^[A-Za-z0-9+/]{86}==$")
 
         /** Same as updatepolicy.cjs httpProblem: offline / ratelimit / norelease are quiet. */
         fun httpProblem(status: Int): String? = when {
@@ -235,36 +229,17 @@ class SelfUpdate(private val activity: Activity, private val emit: (String) -> U
             else -> "http"
         }
 
-        /** Canonical JSON (see the class comment): sorted keys, no white space, plain ASCII strings, non-negative integers. */
-        fun canonical(v: Any?): String = when (v) {
-            is String -> { if (!RE_STR.matches(v)) throw UpdateError("manifest", "canonical: bad string"); "\"$v\"" }
-            is Int, is Long -> { val n = (v as Number).toLong(); if (n < 0) throw UpdateError("manifest", "canonical: negative"); n.toString() }
-            is JSONObject -> {
-                val keys = v.keys().asSequence().toList().sorted()
-                keys.joinToString(",", "{", "}") { k ->
-                    if (!RE_KEY.matches(k)) throw UpdateError("manifest", "canonical: bad key")
-                    "\"$k\":" + canonical(v.get(k))
-                }
-            }
-            else -> throw UpdateError("manifest", "canonical: ${v?.javaClass?.simpleName} not allowed")
-        }
-
-        /** Parse update.json, check the signature with `pubB64`, then the android entry. Throws UpdateError. */
-        fun verifyManifest(text: String, pubB64: String): Manifest {
+        /** Parse update.json and check its android entry. Throws UpdateError("manifest"). */
+        fun verifyManifest(text: String): Manifest {
             if (text.length > MAX_MANIFEST) throw UpdateError("manifest", "update.json too large")
             val o = try { JSONObject(text) } catch (e: Exception) { throw UpdateError("manifest", "update.json is not JSON") }
-            val sig = o.opt("sig") as? String
-            if (sig == null || !RE_SIG.matches(sig)) throw UpdateError("signature", "update.json: no signature")
-            o.remove("sig")
-            val msg = canonical(o).toByteArray(Charsets.US_ASCII)
-            if (!Ed25519.verify(base64(pubB64), msg, base64(sig))) throw UpdateError("signature", "update.json: bad signature")
             if (o.opt("schema") != 1) throw UpdateError("manifest", "update.json: bad schema")
             val a = o.optJSONObject("android") ?: return Manifest(null)
             val version = a.opt("version") as? String
-            val code = (a.opt("versionCode") as? Number)?.toLong()
+            val code = intOf(a.opt("versionCode"))
             val file = a.opt("file") as? String
             val sha = a.opt("sha256") as? String
-            val size = (a.opt("size") as? Number)?.toLong()
+            val size = intOf(a.opt("size"))
             if (version == null || !RE_VERSION.matches(version) || code == null || code <= 0 ||
                 file == null || !RE_FILE.matches(file) || file.contains("..") || file == MANIFEST_NAME ||
                 sha == null || !RE_SHA.matches(sha) || size == null || size <= 0 || size > MAX_ASSET) {
@@ -273,23 +248,8 @@ class SelfUpdate(private val activity: Activity, private val emit: (String) -> U
             return Manifest(Entry(version, code, file, sha, size))
         }
 
-        private const val B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
-        /** Standard base64 with padding (java.util.Base64 needs API 26; android.util.Base64 is not in JVM tests). */
-        fun base64(s: String): ByteArray {
-            if (s.length % 4 != 0) throw UpdateError("manifest", "bad base64")
-            val out = java.io.ByteArrayOutputStream()
-            var i = 0
-            while (i < s.length) {
-                val v = IntArray(4) { k -> val ch = s[i + k]; if (ch == '=') -1 else B64.indexOf(ch).also { if (it < 0) throw UpdateError("manifest", "bad base64") } }
-                if (v[0] < 0 || v[1] < 0 || (v[2] < 0 && v[3] >= 0) || ((v[2] < 0 || v[3] < 0) && i + 4 != s.length)) throw UpdateError("manifest", "bad base64")
-                out.write((v[0] shl 2) or (v[1] shr 4))
-                if (v[2] >= 0) out.write(((v[1] and 15) shl 4) or (v[2] shr 2))
-                if (v[3] >= 0) out.write(((v[2] and 3) shl 6) or v[3])
-                i += 4
-            }
-            return out.toByteArray()
-        }
+        /** A JSON integer (not 1.5, not "1"), as Long. */
+        private fun intOf(v: Any?): Long? = if (v is Int || v is Long) (v as Number).toLong() else null
 
         fun hex(b: ByteArray): String = b.joinToString("") { "%02x".format(it) }
     }

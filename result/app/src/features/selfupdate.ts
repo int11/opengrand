@@ -1,5 +1,5 @@
 // Online self-update, page side. The shells do the work (Android phone: SelfUpdate.kt; Windows desktop:
-// result/desktop/src/selfupdate.cjs): fetch the latest GitHub release, check the Ed25519 signature of its update.json,
+// result/desktop/src/selfupdate.cjs): fetch the latest GitHub release and its update.json,
 // download, check size + sha256, and install (Android: the system installer, the user confirms) or stage and swap
 // (desktop: on restart / quit). This side only decides WHEN to check — the on/off setting (default on), shortly after
 // start, every 24 h while running, only while online — and keeps the latest state for the banner and the Info screen.
@@ -18,7 +18,7 @@ export interface SelfUpdateState {
   available?: string;
   /** 0..100 while downloading */
   progress?: number;
-  /** offline | ratelimit | norelease | http | manifest | signature | sha256 | size | apk | extract | write | install | error */
+  /** offline | ratelimit | norelease | http | manifest | sha256 | size | apk | extract | write | install | error */
   error?: string;
   message?: string;
   /** what the ready button does: Android "install" (system installer), desktop "restart" (swap + relaunch),

@@ -149,14 +149,16 @@ Point Gradle at your SDK with `ANDROID_HOME` or `android/local.properties` (`sdk
 ## 8. Releases and the in-app update (maintainers)
 
 The phone app and the Windows desktop app check the latest GitHub release of this repository (at start, then every
-24 h while online; on/off and "Check now" under Information › Automatic updates). Each release carries `update.json`,
-signed with the project's update key (Ed25519; format in `result/desktop/src/updatepolicy.cjs`), plus the files it
-names. The apps install only what verifies: signature, then size and SHA-256; Android also refuses an APK signed by
-another key, so a fork has to ship its own key and builds.
+24 h while online; on/off and "Check now" under Information › Automatic updates). Each release carries `update.json`
+(format in `result/desktop/src/updatepolicy.cjs`) plus the files it names. There is no extra signing key: the apps
+trust HTTPS to GitHub and this repository's releases, and check size and SHA-256 of the download. Android also refuses
+an APK signed with another certificate than the installed app (the release APK uses the debug key of the build
+machine, `~/.android/debug.keystore`; a build from another machine needs an uninstall first).
 
 ```bash
-node scripts/release_build.mjs            # builds the APK + Windows zip, runs the leak checks, signs update.json
+node scripts/release_build.mjs            # builds the APK + Windows zip, runs the leak checks, writes update.json
                                           # into dist-release/<tag>/ and prints the gh release command
 ```
 
-The update key (`result/stockfw/secrets/update_ed25519.pem`) is the maintainer's; it never goes into the repository.
+Apps up to Android 1.2.0 / desktop 0.3.0 still require a signature in `update.json`; the script adds it while the old
+key file (`result/stockfw/secrets/update_ed25519.pem`, never in the repository) exists.
