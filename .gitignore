@@ -7,6 +7,8 @@ result/app/android/**/build/
 result/app/android/local.properties
 result/desktop/node_modules/
 result/desktop/dist-electron/
+# scripts/release_build.mjs output (APK, desktop zip, signed update.json): published as a GitHub release, not in git
+/dist-release/
 result/firmware/build/
 result/stockfw/.venv/
 result/stockfw/.toolchain
