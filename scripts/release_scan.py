@@ -38,6 +38,7 @@ RE_BAD_NAME = re.compile(
     re.I)
 RE_WEB = re.compile(r"^(index\.html|app-[A-Z0-9]+\.js(\.map)?|styles-[A-Z0-9]+\.css|icon-[a-z0-9-]+\.png|manifest\.webmanifest|sw\.js)$")
 RE_ASAR_FILE = re.compile(r"^(package\.json|src/[A-Za-z0-9_.-]+\.(cjs|html|js))$")
+TRIVIAL_MAX = 96
 TEXT_EXT = (".js", ".map", ".html", ".css", ".json", ".webmanifest", ".cjs", ".txt")
 
 
@@ -74,7 +75,10 @@ class Scan:
 def trivial(run: bytes) -> bool:
     """A shared binary run with no vendor content in it: mostly 00 / FF padding, or a table whose every 2nd or 4th byte
     is one constant (UTF-16 text, counting u16 / u32 tables). Such runs turn up in any large binary (seen in classes.dex,
-    resources.arsc and a PNG); leakcheck.py proper would need a byte-exact allowlist entry, which changes every build."""
+    resources.arsc and a PNG, all <= 69 bytes); leakcheck.py proper would need a byte-exact allowlist entry, which changes
+    every build. Runs longer than TRIVIAL_MAX always count: a long shared pointer or data table is vendor content."""
+    if len(run) > TRIVIAL_MAX:
+        return False
     if sum(1 for c in run if c in (0x00, 0xFF)) * 2 >= len(run):
         return True
     for k in (2, 4):

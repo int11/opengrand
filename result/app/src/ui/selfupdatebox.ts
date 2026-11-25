@@ -16,6 +16,7 @@ const ERR: Record<string, string> = {
 const MANUAL: Record<string, string> = {
   portable: "The portable build cannot replace itself. Download the new version from the release page.",
   dev: "Development run: updates are not installed.",
+  readonly: "This app's folder cannot be written. Download the new version from the release page.",
 };
 const BTN: Record<string, string> = { install: "Install", restart: "Restart to update", manual: "Open the release page" };
 

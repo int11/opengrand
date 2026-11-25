@@ -130,6 +130,18 @@ function createUpdater(o) {
     return part;
   }
 
+  function canStage() {
+    const probe = `${o.plan.newDir}.probe`;
+    try {
+      fs.mkdirSync(probe);
+      fs.rmdirSync(probe);
+      return true;
+    } catch (e) {
+      log(`update: cannot write next to the install folder (${e.code || e.message})`);
+      return false;
+    }
+  }
+
   async function stage(zipFile, entry) {
     const plan = o.plan;
     fs.rmSync(plan.newDir, { recursive: true, force: true });
@@ -161,6 +173,9 @@ function createUpdater(o) {
     set({ available: d.version, page });
     if (o.plan.kind !== "dir") return set({ phase: "ready", action: "manual", checkedAt: Date.now() });
     if (stagedReady(d.version)) return set({ phase: "ready", action: "restart", checkedAt: Date.now() });
+    // the staged copy goes next to the install folder: if that is not writable (e.g. under Program Files), do not
+    // download at all - every start would fetch the whole zip again just to fail at extraction
+    if (!canStage()) return set({ phase: "ready", action: "manual", reason: "readonly", checkedAt: Date.now() });
     const asset = assets.get(d.file);
     if (!asset) throw fail("manifest", `the release has no ${d.file}`);
     set({ phase: "downloading", progress: 0 });

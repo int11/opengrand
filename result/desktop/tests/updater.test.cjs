@@ -354,6 +354,22 @@ test("updater: same or older version is up to date; portable / dev only tell the
   fs.rmSync(s.root, { recursive: true, force: true });
 });
 
+test("updater: an install folder that cannot be written next to is told to the user, nothing downloaded", { skip: process.getuid && process.getuid() === 0 }, async () => {
+  const s = setup();
+  const parent = path.dirname(s.plan.newDir);
+  fs.chmodSync(parent, 0o555);
+  try {
+    const st = await s.mk().check();
+    assert.equal(st.phase, "ready");
+    assert.equal(st.action, "manual");
+    assert.equal(st.reason, "readonly");
+    assert.ok(!s.calls.some((u) => u.endsWith(".zip")));
+  } finally {
+    fs.chmodSync(parent, 0o755);
+    fs.rmSync(s.root, { recursive: true, force: true });
+  }
+});
+
 test("updater: after the swap the new version reads the helper's result and drops the staged copy", async () => {
   const s = setup();
   await s.mk().check();
