@@ -5,10 +5,13 @@
 // Pure decisions: ./policy.cjs.
 "use strict";
 
-const { app, BrowserWindow, dialog, ipcMain, protocol, session, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } = require("electron");
+const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const policy = require("./policy.cjs");
+const updatePolicy = require("./updatepolicy.cjs");
+const { createUpdater } = require("./selfupdate.cjs");
 
 const log = (...a) => console.log("[ca79-desktop]", ...a);
 
@@ -341,6 +344,55 @@ function guardNavigation(win) {
   });
 }
 
+// ---- online self-update (./selfupdate.cjs; format and key: ./updatepolicy.cjs) ----
+// The page (result/app/src/features/selfupdate.ts) decides when to check (setting, 24 h, online) and shows the result;
+// this side fetches, verifies, downloads, stages and runs the swap helper. Automation and dev runs never check on their own
+// (noAuto; 「지금 확인」 still works).
+let updater = null;
+function startUpdater() {
+  const plan = updatePolicy.updatePlan({
+    platform: process.platform,
+    packaged: app.isPackaged,
+    execPath: process.execPath,
+    argv: process.argv,
+    portableFile: process.env.PORTABLE_EXECUTABLE_FILE,
+  });
+  const ps = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  updater = createUpdater({
+    fetch: (url, init) => net.fetch(url, init),
+    currentVersion: app.getVersion(),
+    plan,
+    dir: path.join(app.getPath("userData"), "update"),
+    log,
+    spawnHelper: (script, env, cwd) => {
+      const child = spawn(ps, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script], {
+        cwd, env: { ...process.env, ...env }, detached: true, stdio: "ignore", windowsHide: true,
+      });
+      child.unref();
+    },
+    quit: () => app.quit(),
+  });
+  updater.onChange((st) => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("upd:changed", { ...st, noAuto: noAuto() });
+  });
+  log(`self-update: ${plan.kind}${plan.reason ? ` (${plan.reason})` : ""}, version ${app.getVersion()}`);
+}
+const noAuto = () => opt.automation || !app.isPackaged;
+const updState = () => ({ ...updater.state(), noAuto: noAuto() });
+ipcMain.handle("upd:state", (e) => (fromApp(e) && updater ? updState() : null));
+ipcMain.handle("upd:check", async (e) => {
+  if (!fromApp(e) || !updater) return null;
+  await updater.check();
+  return updState();
+});
+ipcMain.handle("upd:apply", (e) => (fromApp(e) && updater ? updater.apply({ relaunch: true }) : false));
+ipcMain.handle("upd:open", (e) => {
+  if (!fromApp(e)) return false;
+  const page = updater && updater.state().page;
+  void shell.openExternal(typeof page === "string" && page.startsWith("https://github.com/") ? page : updatePolicy.RELEASES_PAGE);
+  return true;
+});
+
 let mainWindow = null;
 
 // Window bounds survive restarts; the default is wide enough for the desktop layout (side nav at >= 900 px).
@@ -409,7 +461,13 @@ if (!app.requestSingleInstanceLock()) {
     const ses = session.defaultSession;
     guardPermissions(ses);
     handleUsb(ses);
+    startUpdater();
     createWindow(root);
   });
   app.on("window-all-closed", () => app.quit());
+  // a staged update not applied by 「다시 시작해서 업데이트」 is swapped in when the app quits (no relaunch); not in
+  // automation runs, whose test tool may start the exe again right away
+  app.on("will-quit", () => {
+    if (updater && !opt.automation) updater.apply({ relaunch: false });
+  });
 }

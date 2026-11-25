@@ -27,7 +27,7 @@ test("every callback the shell evaluates exists on ca79ngNative", () => {
   const names = new Set<string>();
   for (const m of all.matchAll(/ca79ngNative\.(\w+)\(/g)) names.add(m[1]!);
   for (const m of all.matchAll(/callback\("(\w+)"/g)) names.add(m[1]!);
-  assert.deepEqual([...names].sort(), ["onDetached", "onDevices", "onDfu", "onLifecycle", "onMidi", "onUpdate"]);
+  assert.deepEqual([...names].sort(), ["onDetached", "onDevices", "onDfu", "onLifecycle", "onMidi", "onSelfUpdate", "onUpdate"]);
   for (const n of names) assert.equal(typeof native[n], "function", n);
 });
 

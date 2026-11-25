@@ -19,6 +19,14 @@ export interface DesktopBridge {
     /** answer the running requestDevice(): a deviceId from the list, "" = cancel */
     choose?(id: string): void;
   };
+  /** online self-update (shells from 0.3.0; result/desktop/src/selfupdate.cjs). State shape: features/selfupdate.ts */
+  update?: {
+    state(): Promise<import("../features/selfupdate.ts").SelfUpdateState | null>;
+    check(): Promise<unknown>;
+    apply(): Promise<boolean>;
+    openPage(): Promise<boolean>;
+    onChange(cb: (s: import("../features/selfupdate.ts").SelfUpdateState) => void): () => void;
+  };
 }
 
 /** One Bluetooth device the shell found (deviceId = the shell's id, not the page's BluetoothDevice.id). */

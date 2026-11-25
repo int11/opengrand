@@ -1,4 +1,4 @@
-// App window preload (sandboxed). Exposes who the host is (logs, automation checks) and two desktop-only
+// App window preload (sandboxed). Exposes who the host is (logs, automation checks), the online self-update and two desktop-only
 // services (the app's side: result/app/src/transport/desktop.ts): reconnect to the Bluetooth piano the user last
 // chose (Electron has no getDevices()), and the Bluetooth device list of a running requestDevice() for the app's own
 // connection dialog (onDevices / choose - no separate chooser window). The app works without them, like in Chrome.
@@ -22,6 +22,12 @@ ipcRenderer.on("bt:devices", (_e, list) => {
 });
 ipcRenderer.send("bt:unlisten");
 
+// Online self-update (main: selfupdate.cjs): state pushes while a check / download runs
+const updListeners = new Set();
+ipcRenderer.on("upd:changed", (_e, st) => {
+  for (const cb of [...updListeners]) cb(st);
+});
+
 contextBridge.exposeInMainWorld("ca79Desktop", Object.freeze({
   shell: "electron",
   platform: process.platform,
@@ -44,5 +50,17 @@ contextBridge.exposeInMainWorld("ca79Desktop", Object.freeze({
     },
     // answer the running request: a deviceId from the list, or "" to cancel it
     choose: (id) => ipcRenderer.send("bt:choose", String(id ?? "")),
+  }),
+  // online self-update (the app's side: result/app/src/features/selfupdate.ts)
+  update: Object.freeze({
+    state: () => ipcRenderer.invoke("upd:state"),
+    check: () => ipcRenderer.invoke("upd:check"),
+    apply: () => ipcRenderer.invoke("upd:apply"),
+    openPage: () => ipcRenderer.invoke("upd:open"),
+    onChange: (cb) => {
+      if (typeof cb !== "function") return () => {};
+      updListeners.add(cb);
+      return () => updListeners.delete(cb);
+    },
   }),
 }));

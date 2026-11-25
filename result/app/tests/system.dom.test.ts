@@ -15,6 +15,7 @@ const { STARTUP_STRINGS } = await import("../src/ui/startup.ts");
 const { RECORDER_STRINGS } = await import("../src/ui/recorder.ts");
 const { SAVE_SHEET_STRINGS } = await import("../src/ui/savesheet.ts");
 const { OTA_LOADER_STRINGS } = await import("../src/ui/otaloader.ts");
+const { SELF_UPDATE_STRINGS } = await import("../src/ui/selfupdatebox.ts");
 
 beforeEach(() => {
   localStorage.clear();
@@ -165,6 +166,8 @@ const DYNAMIC = [
   ...SAVE_SHEET_STRINGS,
   // OTA loader v4 rows, refusals and confirm (ui/otaloader.ts): shown only with an ota_loader_v4 piano
   ...OTA_LOADER_STRINGS,
+  // online self-update (ui/selfupdatebox.ts): only with the phone / desktop shell's updater
+  ...SELF_UPDATE_STRINGS,
   "Writes a signed cave payload into the free NOR slot; the piano starts it at the next power-on and falls back to the previous one if it fails. Hold A0, A#0 and B0 while switching on to start the built-in cave.", "Key {id} imported.", "No key imported.", "empty", "confirmed", "unconfirmed", "rejected", "failed check", "That is not a 32-byte key.", "{n} bytes, features {f0}/{f1}, key {id}.", "Not a OpenGrand payload file (.c79).", "Import the key first.", "Pick a payload file first.", "Uploading… {a}/{b} bytes", "Writing to the slot… ({s})", "Written to {slot}. Turn the piano off and on to start it.", "The built-in cave is running: nothing to roll back.", "Slot rejected. Turn the piano off and on to go back.",
   "Not connected", "Connecting to {name}…", "Disconnected", "Connection failed: {e}", "{model}{version} · {link}",
   "Paused while the app is in the background", "Syncing with {name}…", "Connecting…", "Connected", "Waking the piano…", "Another device (the panel or another app) took control", "The piano's panel took control as it started up — this firmware lets one device control the piano at a time.", "Use this app", "The connection to {name} was lost.", "Reconnect", "Try again", "Disconnect", "Connect another device…", "in use", "Now: {state}", "Standby · Bluetooth audio listening (sound wakes the piano)", "Standby · Bluetooth audio off", "Bluetooth audio playing · keeps the piano on", "Bluetooth audio playing", "Bluetooth audio connected · keeps the piano on", "Bluetooth audio connected", "Bluetooth audio: no device", "To switch the audio source (phone ↔ TV): disconnect Bluetooth on the device playing now, then connect the other one to the piano.",

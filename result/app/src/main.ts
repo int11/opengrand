@@ -41,6 +41,8 @@ import { NOT_FOUND_TEXT, devSimulator, dropStoredSim, openPicker, reopenRemember
 import { installHandoff } from "./state/handoff.ts";
 import { installTapGuard } from "./ui/tapguard.ts";
 import { TAB_TITLES, metronomeScreen, musicScreen, settingsScreen, soundScreen, vtScreen } from "./ui/screens.ts";
+import { selfUpdateHub } from "./features/selfupdate.ts";
+import { selfUpdateBanner } from "./ui/selfupdatebox.ts";
 
 const store = new ParamStore();
 bindStore(store);
@@ -246,7 +248,9 @@ ctx.rerender = () => {
 // Language, MIDI log, and inside the original shell the stock
 // Kawai UI (../ui/html) and the chooser (../index.html) are in the Settings tab's 「앱 · 화면」 card (ctx.app).
 const header = h("header", {}, h("strong", { class: "brand" }, "OpenGrand"), h("div", { class: "hinfo" }, status, coBound.el), btAudio.el, power.el, ...(kwmShell ? [] : [connectBtn]));
-root.append(header, takeover.el, wakeNote, powerNote, reconnectNote, loaderNote, nav, main, updScreen.el);
+// online self-update (phone app, Windows desktop app): checks on its own schedule, banner once a new version is ready
+const upHub = selfUpdateHub();
+root.append(header, takeover.el, ...(upHub ? [selfUpdateBanner(upHub)] : []), wakeNote, powerNote, reconnectNote, loaderNote, nav, main, updScreen.el);
 if (embedded) document.body.classList.add("panel");
 if (kwmShell) document.body.classList.add("kwm");
 

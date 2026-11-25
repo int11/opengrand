@@ -35,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var midi: MidiBridge
     private lateinit var updates: UpdateManager
     private lateinit var dfu: BleDfu
+    private var selfUpdate: SelfUpdate? = null
     private var fileCallback: ValueCallback<Array<Uri>>? = null
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -56,6 +57,8 @@ class MainActivity : Activity() {
         midi = MidiBridge(this, ::emit) { js("window.ca79ngNative && ca79ngNative.onDevices && ca79ngNative.onDevices()") }
         updates = UpdateManager(this, ::usbPath) { json -> callback("onUpdate", json) }
         dfu = BleDfu(this, ::usbPath) { json -> callback("onDfu", json) }
+        // online self-update from GitHub releases: phone only (the panel updates from USB)
+        if (!BuildConfig.PANEL) selfUpdate = SelfUpdate(this) { json -> callback("onSelfUpdate", json) }
         if (!BuildConfig.PANEL) ensureBlePermissions()
         // debug APK: chrome://inspect on the PC sees the page (console, network) over adb
         if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
@@ -200,6 +203,11 @@ class MainActivity : Activity() {
         /** Feature 86: <usb>/CA79NG/manifest.json + app.apk (sha256-verified) */
         @JavascriptInterface fun checkUpdate(): String = updates.check()
         @JavascriptInterface fun installUpdate(): Boolean = updates.install()
+
+        /** Online self-update (phone): state JSON ("" on the panel), check + download, open the installer */
+        @JavascriptInterface fun selfUpdateState(): String = selfUpdate?.state() ?: ""
+        @JavascriptInterface fun selfUpdateCheck(): Boolean = selfUpdate?.check() ?: false
+        @JavascriptInterface fun selfUpdateApply(): Boolean = selfUpdate?.apply() ?: false
 
         /** Feature 87: BLE-MIDI module DFU (Nordic) */
         @JavascriptInterface fun findDfuPackage(): String = try { dfu.findPackage() } catch (e: Exception) { "{}" }

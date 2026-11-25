@@ -145,3 +145,18 @@ cd android
 ```
 
 Point Gradle at your SDK with `ANDROID_HOME` or `android/local.properties` (`sdk.dir=...`, git-ignored).
+
+## 8. Releases and the in-app update (maintainers)
+
+The phone app and the Windows desktop app check the latest GitHub release of this repository (at start, then every
+24 h while online; on/off and "Check now" under Information › Automatic updates). Each release carries `update.json`,
+signed with the project's update key (Ed25519; format in `result/desktop/src/updatepolicy.cjs`), plus the files it
+names. The apps install only what verifies: signature, then size and SHA-256; Android also refuses an APK signed by
+another key, so a fork has to ship its own key and builds.
+
+```bash
+node scripts/release_build.mjs            # builds the APK + Windows zip, runs the leak checks, signs update.json
+                                          # into dist-release/<tag>/ and prints the gh release command
+```
+
+The update key (`result/stockfw/secrets/update_ed25519.pem`) is the maintainer's; it never goes into the repository.

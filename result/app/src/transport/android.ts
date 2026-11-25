@@ -13,8 +13,11 @@
 //   ca79ng.findDfuPackage(): string         JSON {path, version?, source} or {} (BLE module DFU zip)
 //   ca79ng.startDfu(path): boolean          scan bootloader + Nordic DFU; progress via onDfu
 //   ca79ng.abortDfu(): void
+//   ca79ng.selfUpdateState(): string        JSON SelfUpdateState of the online self-update ("" on the panel build)
+//   ca79ng.selfUpdateCheck(): boolean       check the latest GitHub release, download when newer; state via onSelfUpdate
+//   ca79ng.selfUpdateApply(): boolean       hand the verified APK to the system installer
 // and calls back into `window.ca79ngNative.onMidi(id, hex)` / `.onDetached(id)` / `.onDevices()`
-// / `.onUpdate(json)` / `.onDfu(json)` / `.onLifecycle("background" | "foreground")` (activity
+// / `.onUpdate(json)` / `.onSelfUpdate(json)` / `.onDfu(json)` / `.onLifecycle("background" | "foreground")` (activity
 // stopped for a while / back in front: the app lets the piano go and takes it back).
 //
 // Compared with the original 122-command `kwmcore` bridge
@@ -39,6 +42,9 @@ interface NativeBridge {
   findDfuPackage?(): string;
   startDfu?(path: string): boolean;
   abortDfu?(): void;
+  selfUpdateState?(): string;
+  selfUpdateCheck?(): boolean;
+  selfUpdateApply?(): boolean;
 }
 
 type Listener = (hex: string) => void;
@@ -46,6 +52,7 @@ const listeners = new Map<string, Listener>();
 const closers = new Map<string, () => void>();
 const deviceListeners = new Set<() => void>();
 const updateListeners = new Set<(status: Record<string, unknown>) => void>();
+const selfUpdateListeners = new Set<(status: Record<string, unknown>) => void>();
 const dfuListeners = new Set<(status: Record<string, unknown>) => void>();
 const lifecycleListeners = new Set<(state: "background" | "foreground") => void>();
 
@@ -67,6 +74,10 @@ export function bridge(): NativeBridge | null {
   onUpdate(json: string) {
     const st = parseJson(json);
     for (const l of updateListeners) l(st);
+  },
+  onSelfUpdate(json: string) {
+    const st = parseJson(json);
+    for (const l of selfUpdateListeners) l(st);
   },
   onDfu(json: string) {
     const st = parseJson(json);
@@ -94,6 +105,12 @@ function parseJson(json: string): Record<string, unknown> {
 export function onUpdateStatus(l: (s: Record<string, unknown>) => void): () => void {
   updateListeners.add(l);
   return () => updateListeners.delete(l);
+}
+
+/** Online self-update state pushes (ca79ngNative.onSelfUpdate). */
+export function onSelfUpdateStatus(l: (s: Record<string, unknown>) => void): () => void {
+  selfUpdateListeners.add(l);
+  return () => selfUpdateListeners.delete(l);
 }
 
 export function onDfuStatus(l: (s: Record<string, unknown>) => void): () => void {
