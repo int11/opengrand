@@ -271,13 +271,27 @@ test("updater: newer release is downloaded, verified, staged; restart starts the
   assert.equal(s.calls.length, n);
   // a new start offers the staged copy at once
   assert.equal(s.mk().state().phase, "ready");
-  assert.equal(u.apply({ relaunch: true }), true);
+  assert.equal(await u.apply({ relaunch: true }), true);
   assert.equal(u.apply({ relaunch: false }), false); // once
   assert.equal(s.spawned.length, 1);
   assert.equal(s.spawned[0].env.OG_ARG0, "--cdp=9222");
   assert.equal(s.spawned[0].env.OG_NEW, s.plan.newDir);
   assert.equal(s.quits(), 1);
   assert.ok(fs.readFileSync(s.spawned[0].script, "utf8").includes("Rename-Item"));
+  fs.rmSync(s.root, { recursive: true, force: true });
+});
+
+test("updater: restart quits only after spawnHelper's promise settles", async () => {
+  const s = setup();
+  let release;
+  const u = s.mk({ spawnHelper: () => new Promise((r) => (release = r)) });
+  assert.equal((await u.check()).phase, "ready");
+  const p = u.apply({ relaunch: true });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(s.quits(), 0);
+  release();
+  assert.equal(await p, true);
+  assert.equal(s.quits(), 1);
   fs.rmSync(s.root, { recursive: true, force: true });
 });
 

@@ -18,7 +18,7 @@ const HEADERS = { accept: "application/vnd.github+json", "user-agent": "OpenGran
  *   currentVersion          app.getVersion()
  *   plan                    P.updatePlan(...)
  *   dir                     folder for downloads, markers and the helper (userData/update)
- *   spawnHelper(script, env, cwd)   start the swap helper detached
+ *   spawnHelper(script, env, cwd)   start the swap helper so it outlives the app (may return a promise: done starting)
  *   quit()                  quit the app (after the helper is started)
  *   log(...)
  */
@@ -201,17 +201,23 @@ function createUpdater(o) {
   }
 
   let applied = false;
-  /** Start the swap helper; with `relaunch` it starts the new version and the app quits now. Returns false when nothing is staged. */
+  /**
+   * Start the swap helper; with `relaunch` the app quits once the helper runs on its own (spawnHelper may return a
+   * promise for that moment). Returns false when nothing is staged, else a promise of true.
+   */
   function apply({ relaunch }) {
     if (applied || st.phase !== "ready" || st.action !== "restart" || o.plan.kind !== "dir") return false;
     applied = true;
     const script = path.join(dir, "apply.ps1");
     fs.writeFileSync(script, "﻿" + P.HELPER_PS1); // BOM: Windows PowerShell 5.1 reads a BOM-less script as ANSI
     const env = P.helperEnv(o.plan, { pid: process.pid, log: path.join(dir, "apply.log"), result: resultFile, relaunch });
-    o.spawnHelper(script, env, dir);
-    log(`update helper started (${relaunch ? "restart" : "on quit"})`);
-    if (relaunch) o.quit();
-    return true;
+    const started = Promise.resolve()
+      .then(() => o.spawnHelper(script, env, dir))
+      .then(() => log(`update helper started (${relaunch ? "restart" : "on quit"})`), (e) => log(`update helper: ${e && e.message}`));
+    return started.then(() => {
+      if (relaunch) o.quit();
+      return true;
+    });
   }
 
   init();

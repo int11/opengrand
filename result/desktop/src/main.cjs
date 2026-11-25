@@ -364,12 +364,25 @@ function startUpdater() {
     plan,
     dir: path.join(app.getPath("userData"), "update"),
     log,
-    spawnHelper: (script, env, cwd) => {
-      const child = spawn(ps, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", script], {
-        cwd, env: { ...process.env, ...env }, detached: true, stdio: "ignore", windowsHide: true,
+    // A detached Windows PowerShell (DETACHED_PROCESS) does not run at all, and a plain child is killed with the app
+    // (libuv puts children in a kill-on-close job). So a short launcher starts the helper with Start-Process, which
+    // leaves that job; the app waits for the launcher to finish before it quits.
+    spawnHelper: (script, env, cwd) => new Promise((resolve) => {
+      const launch = "Start-Process -FilePath $env:OG_PS -WindowStyle Hidden -ArgumentList @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',('\"' + $env:OG_SCRIPT + '\"'))";
+      const child = spawn(ps, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(launch, "utf16le").toString("base64")], {
+        cwd, env: { ...process.env, ...env, OG_PS: ps, OG_SCRIPT: script }, stdio: "ignore", windowsHide: true,
       });
-      child.unref();
-    },
+      const done = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(done, 15000);
+      child.on("exit", done);
+      child.on("error", (e) => {
+        log(`update launcher: ${e.message}`);
+        done();
+      });
+    }),
     quit: () => app.quit(),
   });
   updater.onChange((st) => {
@@ -467,7 +480,13 @@ if (!app.requestSingleInstanceLock()) {
   app.on("window-all-closed", () => app.quit());
   // a staged update not applied by 「다시 시작해서 업데이트」 is swapped in when the app quits (no relaunch); not in
   // automation runs, whose test tool may start the exe again right away
-  app.on("will-quit", () => {
-    if (updater && !opt.automation) updater.apply({ relaunch: false });
+  let helperPending = false;
+  app.on("will-quit", (e) => {
+    if (helperPending || !updater || opt.automation) return;
+    const started = updater.apply({ relaunch: false });
+    if (!started) return;
+    helperPending = true;
+    e.preventDefault();
+    started.then(() => app.quit());
   });
 }
