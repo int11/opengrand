@@ -10,8 +10,8 @@ android {
         applicationId = "dev.ca79ng.shell"
         minSdk = 23 // same floor as the original app
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.2.0"
+        versionCode = 15
+        versionName = "1.2.1"
     }
     // "panel": built-in LCD (system app, HOME launcher, USB-MIDI to the main board)
     // "phone": PianoRemote-style companion (BLE-MIDI / USB-MIDI)

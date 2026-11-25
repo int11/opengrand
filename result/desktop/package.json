@@ -1,7 +1,7 @@
 {
   "name": "ca79ng-desktop",
   "productName": "OpenGrand",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "OpenGrand desktop app: Electron shell around the built web app (result/app/dist)",
   "author": "OpenGrand",
