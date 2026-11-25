@@ -1,7 +1,7 @@
 {
   "name": "ca79ng-desktop",
   "productName": "OpenGrand",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "OpenGrand desktop app: Electron shell around the built web app (result/app/dist)",
   "author": "OpenGrand",
@@ -10,9 +10,9 @@
     "app:build": "npm --prefix ../app run build",
     "desktop": "npm run app:build && node scripts/run.mjs",
     "desktop:auto": "npm run app:build && node scripts/run.mjs --cdp=9222 --automation --query=log",
-    "test": "node --test tests/policy.test.cjs",
+    "test": "node --test tests/policy.test.cjs tests/updater.test.cjs",
     "smoke": "npm run app:build && node tests/smoke.mjs",
-    "dist:win": "npm run app:build && electron-builder --win portable dir --x64 --publish never",
+    "dist:win": "npm run app:build && electron-builder --win portable zip dir --x64 --publish never",
     "install:win": "node scripts/install-win.mjs"
   },
   "build": {
@@ -22,7 +22,7 @@
     "files": ["src/**", "package.json"],
     "extraResources": [{ "from": "../app/dist", "to": "app", "filter": ["**/*", "!*.map"] }],
     "copyright": "OpenGrand",
-    "win": { "icon": "../app/dist/icon-512.png", "signExecutable": false },
+    "win": { "icon": "../app/dist/icon-512.png", "signExecutable": false, "artifactName": "${productName}-${version}-win-${arch}.${ext}" },
     "portable": { "artifactName": "${productName}-${version}-portable.exe" }
   },
   "devDependencies": {
