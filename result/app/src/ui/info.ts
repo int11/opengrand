@@ -18,6 +18,8 @@ import {
   confirmLoader, LS, loadOtaKey, loaderSlotText, loaderUnconfirmed, pendingLoader, rcText, refusalText, rememberLoaderUpload, stage0Text,
 } from "./otaloader.ts";
 import { type UpdateCheck, checkApkUpdate, installApkUpdate } from "../features/update.ts";
+import { selfUpdateHub } from "../features/selfupdate.ts";
+import { selfUpdateBox } from "./selfupdatebox.ts";
 import { t } from "../i18n.ts";
 import { shellInfo } from "../transport/android.ts";
 import type { AppContext } from "./context.ts";
@@ -55,6 +57,7 @@ export function infoScreen(ctx: AppContext): HTMLElement {
   const s = ctx.session();
   const id = s?.identity ?? null;
   const shell = shellInfo();
+  const upHub = selfUpdateHub();
   const bleOut = h("output", { id: "ble-version" }, "–");
 
   const checkBle = async () => {
@@ -634,6 +637,9 @@ export function infoScreen(ctx: AppContext): HTMLElement {
     kwmcoreAvailable() ? null : section(t("Panel UI update"), panelUiBox(ctx)),
     section(
       t("App and BLE-MIDI module update"),
+      // online self-update from GitHub releases (phone app, Windows desktop app); absent in a browser and on the panel
+      upHub ? h("h4", {}, t("Automatic updates")) : null,
+      upHub ? selfUpdateBox(upHub) : null,
       h("h4", {}, t("App update")),
       updBox,
       h("h4", {}, t("BLE-MIDI module update")),

@@ -122,18 +122,28 @@ class UpdateManager(
 
     /** Phone: hand the verified copy to the system package installer UI. */
     private fun installViaViewer(apk: File) {
-        val dir = File(activity.cacheDir, "updates").apply { mkdirs() }
-        val copy = File(dir, "app.apk")
-        apk.inputStream().use { input -> copy.outputStream().use { input.copyTo(it) } }
-        val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.files", copy)
-        val view = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uri, "application/vnd.android.package-archive")
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        activity.runOnUiThread { activity.startActivity(view) }
+        openSystemInstaller(activity, apk)
         status("done", "handed to the system installer")
     }
 
     companion object {
+        /**
+         * Copy a verified APK into the FileProvider's cache path and open the system installer on it (the user confirms;
+         * Android refuses an APK signed by another key). Used by the USB update and the online self-update (SelfUpdate).
+         * `apk` must not be the copy itself (cacheDir/updates/app.apk).
+         */
+        fun openSystemInstaller(activity: Activity, apk: File) {
+            val dir = File(activity.cacheDir, "updates").apply { mkdirs() }
+            val copy = File(dir, "app.apk")
+            require(apk.canonicalPath != copy.canonicalPath) { "installer copy would overwrite its source" }
+            apk.inputStream().use { input -> copy.outputStream().use { input.copyTo(it) } }
+            val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.files", copy)
+            val view = Intent(Intent.ACTION_VIEW)
+                .setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.runOnUiThread { activity.startActivity(view) }
+        }
+
         private val VERSION = Regex("^\\d+(\\.\\d+)*$")
         private val SHA = Regex("^[0-9a-fA-F]{64}$")
 
