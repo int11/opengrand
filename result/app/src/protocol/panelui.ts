@@ -8,6 +8,7 @@
 // packer (scripts/panelpkg.ts); the panel side is the ES5 loader, cross-checked in tests.
 import { encodeBlePackets } from "./blemidi.ts";
 import { crc32, NG_ID, NG_TAG, pack7, unpack7 } from "./ngext.ts";
+import { withXferLock } from "./xferlock.ts";
 
 export const PanelUiOp = { Status: 0x30, Begin: 0x31, Data: 0x32, Commit: 0x33, Control: 0x34 } as const;
 /** Ops 0x30-0x3F (replies 0x70-0x7F) are the panel-UI family the piano relays to port 3. */
@@ -262,7 +263,16 @@ export class PanelUiClient {
    * the length and shows only as rc 10 at Commit (the loader then drops its copy), which also sends it again. Newer
    * loaders check each frame themselves (exact length; CRC-32 when they offer PUI_CAP_CRC) and answer rc 7 = resend.
    */
-  async upload(file: Uint8Array, opt: UploadOptions = {}): Promise<UploadProgress> {
+  upload(file: Uint8Array, opt: UploadOptions = {}): Promise<UploadProgress> {
+    // one panel UI job per link (src/protocol/xferlock.ts): Data acks carry no tag
+    return withXferLock(this.port, "panelui", "upload", () => this.uploadNow(file, opt), () => {
+      const p: UploadProgress = { phase: "error", sent: 0, total: 0, retries: 0, rc: 3, message: PUI_RC[3] };
+      opt.onProgress?.(p);
+      return p;
+    });
+  }
+
+  private async uploadNow(file: Uint8Array, opt: UploadOptions): Promise<UploadProgress> {
     const W = Math.max(1, opt.window ?? 2);
     const ackMs = opt.ackTimeoutMs ?? 3000;
     const maxRetries = opt.maxRetries ?? 8;

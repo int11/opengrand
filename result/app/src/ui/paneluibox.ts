@@ -2,6 +2,7 @@
 // (.c79u, `npm run panelui:pack`) through the piano's relay to the built-in panel
 // (src/protocol/panelui.ts, REMOTE_PROTOCOL.md section 10.7). Not shown on the panel itself.
 import { keyIdHex, PanelUiClient, type PanelUiStatus, parsePackage, PUI_RUNNING, PuiControl } from "../protocol/panelui.ts";
+import { xferLock } from "../protocol/xferlock.ts";
 import { t } from "../i18n.ts";
 import type { AppContext } from "./context.ts";
 import { h } from "./dom.ts";
@@ -75,27 +76,46 @@ export function panelUiBox(ctx: AppContext): HTMLElement {
   const rollback = h("button", {
     id: "pui-rollback",
     onclick: async () => {
-      const c = client();
-      if (!c) return;
-      const rc = await c.control(PuiControl.Rollback);
-      if (rc !== 0) {
-        msg.textContent = t("Failed: {e}", { e: rc === null ? t("No reply") : String(rc) });
-        await refresh();
+      const s = ctx.session();
+      if (!s) {
+        msg.textContent = t("Connect to the piano first.");
         return;
       }
-      // the version on the screen was the one rolled back (e.g. a dark or stuck panel):
-      // restart the panel UI now (Control 1 = reload into the newest usable version), any loader since 0.2.0
-      const st = await c.status();
-      const run = st && (st.running === 2 || st.running === 3) ? st.slots[st.running - 2] : null;
-      if (run?.state === "bad" && (await c.control(PuiControl.Activate)) === 0) {
-        show(st);
-        msg.textContent = t("Rolled back: the panel is restarting into the previous UI.");
+      // one panel UI job per link (src/protocol/xferlock.ts): not during an upload (this or a rebuilt screen's), not
+      // twice for a double tap - a second Control 2 would mark the fallback version bad too
+      const release = xferLock(s, "panelui", "rollback");
+      if (!release) {
+        msg.textContent = t("Busy");
         return;
       }
-      show(st);
-      msg.textContent = t("Rolled back: the panel starts the previous UI next time.");
+      (rollback as HTMLButtonElement).disabled = true;
+      try {
+        await rollbackNow(new PanelUiClient(s));
+      } finally {
+        release();
+        (rollback as HTMLButtonElement).disabled = false;
+      }
     },
   }, t("Roll back"));
+  async function rollbackNow(c: PanelUiClient): Promise<void> {
+    const rc = await c.control(PuiControl.Rollback);
+    if (rc !== 0) {
+      msg.textContent = t("Failed: {e}", { e: rc === null ? t("No reply") : String(rc) });
+      await refresh();
+      return;
+    }
+    // the version on the screen was the one rolled back (e.g. a dark or stuck panel):
+    // restart the panel UI now (Control 1 = reload into the newest usable version), any loader since 0.2.0
+    const st = await c.status();
+    const run = st && (st.running === 2 || st.running === 3) ? st.slots[st.running - 2] : null;
+    if (run?.state === "bad" && (await c.control(PuiControl.Activate)) === 0) {
+      show(st);
+      msg.textContent = t("Rolled back: the panel is restarting into the previous UI.");
+      return;
+    }
+    show(st);
+    msg.textContent = t("Rolled back: the panel starts the previous UI next time.");
+  }
 
   // laid out like 「펌웨어 업데이트」 on the Information screen: state under its label,
   // one labelled file picker, the primary send with its switch, then roll back; the card title is the caller's

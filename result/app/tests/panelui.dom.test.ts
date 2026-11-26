@@ -89,3 +89,54 @@ test("panel UI box: rolling back the version on the screen restarts the panel UI
   assert.deepEqual(nav, ["index.html?embedded=1"]);
   box.remove();
 });
+
+test("panel UI box: Roll back is one job - a double tap sends one Control 2, a tap during an upload sends none", async () => {
+  // fast repeated taps put the panel and the screen out of step; a second roll back would mark the fallback bad too
+  const key = keyFromPem(newKeyPem());
+  const replies: number[][] = [];
+  const ctx: Record<string, unknown> = {
+    localStorage: new MemStorage(),
+    setTimeout: (f: () => void, ms: number) => setTimeout(f, ms).unref(), clearTimeout,
+    location: { search: "?embedded=1", replace() {} },
+    kwmcore: { postMessage: (url: string) => url.startsWith("kwmcore://sendMidiMessage/") && replies.push(JSON.parse(url.slice(url.indexOf("?") + 1)).msg) },
+    addEventListener() {},
+  };
+  runInNewContext(loaderSource(uiConfig(key, { version: "0.2.0", seq: 10 })), ctx);
+  const ui = ctx.CA79UI as { hookKwm(k: unknown): void; navigate: (u: string) => void };
+  ui.navigate = () => {};
+  const K: Record<string, unknown> = {};
+  ui.hookKwm(K);
+  const listeners: ((m: Uint8Array) => void)[] = [];
+  const controls: number[] = [];
+  const relay: PuiPort = {
+    sendRaw(m) {
+      if (m[6] === 0x34) controls.push(m[7]!);
+      (K.onMidiMessage as (a: number[], id: string) => void)(Array.from(m), "USB");
+      for (const r of replies.splice(0)) setTimeout(() => listeners.forEach((l) => l(Uint8Array.from(r))), 1);
+    },
+    onMidi(fn) {
+      listeners.push(fn);
+      return () => listeners.splice(listeners.indexOf(fn), 1);
+    },
+  };
+  const pkg = (seq: number) => new Uint8Array(makePackage({ js: "v" + seq, css: "" }, { version: "0.2." + seq, seq, key }));
+  assert.equal((await new PanelUiClient(relay).upload(pkg(20), { activate: false })).phase, "done");
+  assert.equal((await new PanelUiClient(relay).upload(pkg(21), { activate: false })).phase, "done");
+  const box = panelUiBox({ session: () => relay } as unknown as AppContext);
+  dom.window.document.body.append(box);
+  const rb = box.querySelector("#pui-rollback") as HTMLButtonElement;
+  rb.click();
+  rb.click();
+  await tick(80);
+  assert.deepEqual(controls.filter((c) => c === 2), [2], "one Control 2 for a double tap");
+  // during an upload (another screen's Send): refused, nothing sent
+  controls.length = 0;
+  const up = new PanelUiClient(relay).upload(pkg(22), { activate: false });
+  await tick(5);
+  rb.click();
+  await tick(20);
+  assert.deepEqual(controls, [], "no control op during the upload");
+  assert.match(box.querySelector("#pui-msg")!.textContent!, /Busy/);
+  assert.equal((await up).phase, "done");
+  box.remove();
+});

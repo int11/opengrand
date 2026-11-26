@@ -289,6 +289,30 @@ test("upload over the fake relay: window 2, commit stores slot A, status and boo
   assert.equal(appGot, 1);
 });
 
+test("one panel UI job per link: a second upload while one runs is refused before it sends anything", async () => {
+  // Data acks carry no tag: two uploads on one link (a rebuilt Information screen has a fresh Send button) read each
+  // other's acks
+  const store = new FakeStorage();
+  const panel = panelPage(store);
+  const relay = new FakeRelay(panel);
+  const begins: number[] = [];
+  const send = relay.sendRaw.bind(relay);
+  relay.sendRaw = (m: Uint8Array) => {
+    if (m[6] === PanelUiOp.Begin) begins.push(begins.length);
+    send(m);
+  };
+  const file = new Uint8Array(pack(2100, "x" + randomBytes(2000).toString("hex"), KEY, "0.3.1"));
+  const first = new PanelUiClient(relay).upload(file);
+  await new Promise((r) => setTimeout(r, 5));
+  const second = await new PanelUiClient(relay).upload(file);
+  assert.equal(second.phase, "error");
+  assert.equal(second.rc, 3, second.message);
+  const fin = await first;
+  assert.equal(fin.phase, "done", fin.message);
+  assert.equal(begins.length, 1, "one Begin on the wire");
+  assert.equal((await new PanelUiClient(relay).upload(file)).rc, 14, "released: the next upload runs (already installed)");
+});
+
 test("losses both ways and a panel page reload mid-transfer: go-back + resume finish the same bytes", async () => {
   const store = new FakeStorage();
   let panel = panelPage(store);
