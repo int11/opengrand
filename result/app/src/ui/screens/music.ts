@@ -306,8 +306,12 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     : () => {};
   teardown = () => {
     offDone();
-    if (volTimer) clearTimeout(volTimer);
-    volTimer = null;
+    // a volume move still waiting goes out now rather than being lost with the old screen
+    if (volTimer) {
+      clearTimeout(volTimer);
+      volTimer = null;
+      volFor();
+    }
   };
   const pause = () => {
     if (live.status !== "playing") return;
