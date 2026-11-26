@@ -236,7 +236,20 @@ export class PianoSession {
    * every request here is idempotent on the stock — a CONNECT from the port that is already bound
    * only re-sends the `7E 02` reply (stock 0x4014A75C–0x4014A7A4, no `7E 01 00`, no queue reset).
    */
-  async connect(timeoutMs = 3000): Promise<PianoIdentity> {
+  connect(timeoutMs = 3000): Promise<PianoIdentity> {
+    // one CONNECT + re-sync at a time: a second caller (the file client's recover, a re-bind) joins the one under way —
+    // two would share the waiters and the dump handlers, and the second dump request ends the first one's wait
+    if (this.connecting) return this.connecting;
+    const run: Promise<PianoIdentity> = this.connect1(timeoutMs).finally(() => {
+      if (this.connecting === run) this.connecting = null;
+    });
+    this.connecting = run;
+    return run;
+  }
+
+  private connecting: Promise<PianoIdentity> | null = null;
+
+  private async connect1(timeoutMs: number): Promise<PianoIdentity> {
     this.setState("connecting");
     const step = Math.max(250, Math.floor(timeoutMs / 3));
     const tries = this.opt.connectTries;
