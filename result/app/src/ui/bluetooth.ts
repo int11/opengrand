@@ -266,7 +266,19 @@ export function bluetoothPage(port: () => BtPort | null, opts: BtPageOptions = {
     }
     void load();
   };
-  const setPol = async (p: BtSourcePolicy) => { const bp = port(); if (!bp) return; const r = await bp.setPolicy(p); say(r ? r.rc : null); void load(); };
+  // One policy write at a time, each built from the policy the piano last reported when it is sent: two quick taps
+  // sent two 1D 06 writes at once, both took the first reply, and the second one, built from the policy drawn before
+  // the first, undid the first on the piano.
+  let acts: Promise<void> = Promise.resolve();
+  const queue = (job: () => Promise<void>): Promise<void> => (acts = acts.then(job, job));
+  const setPol = (edit: (cur: BtSourcePolicy) => BtSourcePolicy) => queue(async () => {
+    const bp = port();
+    if (!bp || !last) return;
+    const r = await bp.setPolicy(edit(last.policy));
+    if (r && r.rc === 0 && last) last = { ...last, policy: r.policy };
+    say(r ? r.rc : null);
+    void load();
+  });
   const disarm = (r: SourceRow) => {
     clearTimeout(r.disarm);
     r.disarm = undefined;
@@ -293,7 +305,7 @@ export function bluetoothPage(port: () => BtPort | null, opts: BtPageOptions = {
     r.pref = h("button", {
       type: "button", "data-action": "pref", onclick: () => {
         const d = devOf(key);
-        if (d && last) void setPol({ ...last.policy, pref: d.state & SRC_DEV.pref ? null : d.addr });
+        if (d && last) { const pref = d.state & SRC_DEV.pref ? null : d.addr; void setPol((q) => ({ ...q, pref })); }
       },
     }, t("Prefer"));
     r.el = h("div", { class: "bt-dev", "data-mac": key }, h("div", { class: "bt-dev-head" }, r.text, r.badge), h("div", { class: "inline" }, r.use, r.pref, r.close));
@@ -305,8 +317,8 @@ export function bluetoothPage(port: () => BtPort | null, opts: BtPageOptions = {
     pol.replaceChildren(
       h("p", { class: "sub" }, t("When another device plays")),
       h("div", { class: "segmented", id: "bt-src-mode" },
-        h("button", { type: "button", class: only ? "on" : undefined, "data-mode": "select", onclick: () => void setPol({ ...p, mode: SRC_MODE.select, flags: p.flags & ~SRC_FLAG.follow }) }, t("Keep the one I picked")),
-        h("button", { type: "button", class: follow ? "on" : undefined, "data-mode": "follow", onclick: () => void setPol({ ...p, mode: SRC_MODE.select, flags: p.flags | SRC_FLAG.follow }) }, t("Switch to it"))),
+        h("button", { type: "button", class: only ? "on" : undefined, "data-mode": "select", onclick: () => void setPol((q) => ({ ...q, mode: SRC_MODE.select, flags: q.flags & ~SRC_FLAG.follow })) }, t("Keep the one I picked")),
+        h("button", { type: "button", class: follow ? "on" : undefined, "data-mode": "follow", onclick: () => void setPol((q) => ({ ...q, mode: SRC_MODE.select, flags: q.flags | SRC_FLAG.follow })) }, t("Switch to it"))),
       h("p", { class: "muted" }, only ? t("A device you did not pick that starts playing is paused and its sound held back — it stays connected.")
         : follow ? t("The device that starts playing becomes the one the piano plays.")
         : t("An older behaviour is set on the piano (no automatic choice) — pick one of the two above.")),
@@ -328,7 +340,7 @@ export function bluetoothPage(port: () => BtPort | null, opts: BtPageOptions = {
     rcBox.replaceChildren(
       h("p", { class: "sub" }, t("Reconnect at power-on")),
       h("div", { class: "segmented", id: "bt-rc" }, ...RECONNECT_TEXT.map(([v, label]) =>
-        h("button", { type: "button", class: p.reconnect === v ? "on" : undefined, "data-reconnect": String(v), onclick: () => void setPol({ ...p, strategy: p.strategy ?? 0, reconnect: v }) }, t(label)))),
+        h("button", { type: "button", class: p.reconnect === v ? "on" : undefined, "data-reconnect": String(v), onclick: () => void setPol((q) => ({ ...q, strategy: q.strategy ?? 0, reconnect: v })) }, t(label)))),
       h("p", { class: "muted", id: "bt-rc-why" }, cur ? t(cur[2]) : ""),
       h("p", { class: "muted", id: "bt-rc-store" }, st & POLICY_STORE.failed ? t("Could not save it on the piano — try again.")
         : st & POLICY_STORE.pending ? t("Saving on the piano…") : t("Used when the piano is switched on, and when it wakes from a standby that switched Bluetooth audio off.")));
@@ -350,12 +362,12 @@ export function bluetoothPage(port: () => BtPort | null, opts: BtPageOptions = {
     const wait = p.lateWait == null ? 45 : p.lateWait || 10;   /* 0: only an app that wrote 0 - the old default 1.0 s */
     return [
       h("div", { class: "segmented", id: "bt-src-latestop" },
-        h("button", { type: "button", class: on ? undefined : "on", "data-latestop": "0", onclick: () => void setPol({ ...p, strategy: p.strategy ?? 0, options: (p.options ?? 0) & ~SRC_OPTION.lateStop }) }, t("Off")),
-        h("button", { type: "button", class: on ? "on" : undefined, "data-latestop": "1", onclick: () => void setPol({ ...p, strategy: p.strategy ?? 0, options: (p.options ?? 0) | SRC_OPTION.lateStop }) }, t("If the PC holds its sound, the piano stops it (experiment)"))),
+        h("button", { type: "button", class: on ? undefined : "on", "data-latestop": "0", onclick: () => void setPol((q) => ({ ...q, strategy: q.strategy ?? 0, options: (q.options ?? 0) & ~SRC_OPTION.lateStop })) }, t("Off")),
+        h("button", { type: "button", class: on ? "on" : undefined, "data-latestop": "1", onclick: () => void setPol((q) => ({ ...q, strategy: q.strategy ?? 0, options: (q.options ?? 0) | SRC_OPTION.lateStop })) }, t("If the PC holds its sound, the piano stops it (experiment)"))),
       ...(p.lateWait == null ? [] : [h("p", {}, t("Wait after it reports paused")),
         h("div", { class: "segmented", id: "bt-src-latewait" }, ...LATE_WAITS.map((v) =>
           h("button", { type: "button", class: wait === v ? "on" : undefined, "data-latewait": String(v),
-            onclick: () => void setPol({ ...p, strategy: p.strategy ?? 0, lateWait: v }) }, t("{s} s", { s: String(v / 10) }))))]),
+            onclick: () => void setPol((q) => ({ ...q, strategy: q.strategy ?? 0, lateWait: v })) }, t("{s} s", { s: String(v / 10) }))))]),
       h("p", { class: "muted", id: "bt-src-latestop-why" }, on
         ? t("On: when you switch away from a device with remote control that reports paused but keeps its sound open {s} s later (a PC holds it about 10 s, a phone about 3 s), the piano stops its sound stream so the switch is quicker. If the PC is then silent: restart the Bluetooth audio module; if still silent, restart its Bluetooth audio device in Windows, and turn this off.", { s: String(wait / 10) })
         : t("Off: the piano waits until the device lets its sound go by itself (a PC about 10 s).")),
