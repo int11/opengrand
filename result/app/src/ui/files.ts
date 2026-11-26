@@ -68,8 +68,9 @@ export interface UsbPane {
   run(what: string, op: () => Promise<unknown>, refresh?: boolean, out?: HTMLElement): Promise<boolean>;
   /** Read the list again (after something else wrote a file). */
   reload(): Promise<void>;
-  /** Stop both USB players (ui/usbplay.ts usbStopAll). */
-  stop(): Promise<void>;
+  /** Stop both USB players (ui/usbplay.ts usbStopAll). `quick`: no quiet check - for a piano song that starts next (no
+   *  USB select follows that a late Reset could land after, F13b). */
+  stop(quick?: boolean): Promise<void>;
   /** The file chosen in the list (what the player bar's ▶ plays); null = none. */
   selected(): string | null;
   /** Choose a file and play it, as a tap on its row does; start false: only choose it (unless a USB file plays). */
@@ -246,7 +247,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
     if ((start || usbAnyRunning(playing)) && !usbPlayingName(playing, name)) void play(name);
   };
   // stop: both USB players (the selected type's, the audio one, the SMF one), then the piano must stay quiet
-  const stop = async () => {
+  const stop = async (quick = false) => {
     if (lock.busy || playing.stopping) return;
     if (!ctx.files()) {
       result.textContent = t("Connect to the piano first.");
@@ -255,7 +256,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
     lock.busy = true;
     result.textContent = t("{op}…", { op: t("Stop") });
     try {
-      const r = await usbStopAll(ctx);
+      const r = await usbStopAll(ctx, quick);
       result.textContent = r === "stopped" ? "" : r === "still" ? stillText() : t("Connect to the piano first.");
     } finally {
       lock.busy = false;
@@ -332,7 +333,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
       h("div", { class: "pane-btns" },
         h("button", { onclick: () => void load(), "data-act": "refresh" }, `↻ ${t("Refresh")}`), // always asks
         // always there: playback the app did not start (panel, piano buttons) or whose notice never came
-        h("button", { "data-act": "usb-stop", onclick: () => void stop() }, `■ ${t("Stop")}`))),
+        h("button", { "data-act": "usb-stop", onclick: () => void stop(false) }, `■ ${t("Stop")}`))),
     result,
     list,
     h("details", { class: "fold", id: "usb-manage" },

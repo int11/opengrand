@@ -250,7 +250,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       else await usb.play(name);
       return;
     }
-    if (usbAnyRunning(pb)) await usb.stop();
+    if (usbAnyRunning(pb)) await usb.stop(true);
     await ensureMode();
     if (m.rec) await op(RecorderCmd.Play);
     else kawai(MUSIC_CMD.Play);
@@ -314,7 +314,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   const startRec = async (overwrite = false, part: RecPart = REC_PART_NOW) => {
     hideOver();
     if (refuseTable()) return;
-    if (usbAnyRunning(pb)) await usb.stop();
+    if (usbAnyRunning(pb)) await usb.stop(true);
     await ensureMode();
     if (refuseTable()) return;
     // the stock (and a core without the record control): IntSongPart 0 sets the part Music 3 records into
@@ -526,7 +526,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     // tapped before in this session and the song still holds something: that song again, no second copy
     const was = put().get(name);
     if (andPlay && was !== undefined && songs[was]?.hasData) {
-      if (usbAnyRunning(pb)) await usb.stop();
+      if (usbAnyRunning(pb)) await usb.stop(true);
       if (!(await pick(was, true))) return;
       await play(true);
       note.textContent = t("Playing {name} from piano song {n}.", { name: leaf, n: was + 1 });
