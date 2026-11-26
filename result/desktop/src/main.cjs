@@ -243,7 +243,18 @@ ipcMain.on("bt:listen", (e) => {
 ipcMain.on("bt:unlisten", (e) => {
   if (!fromMainWindow(e)) return;
   inApp.listening = false;
-  if (btPending?.inApp) finishBluetooth(""); // nobody is left to choose (dialog gone, page reloaded)
+  if (btPending?.inApp) finishBluetooth(""); // nobody is left to choose (dialog gone)
+});
+// A new document in the window (reload, an in-app link), sent by its preload before any page script runs: the old
+// page's request of any kind, its armed reconnect and its listening are gone with it. Left pending, an old reconnect /
+// chooser request would take the new page's first requestDevice() as a list update of its own (answered with the
+// remembered device, or cancelled by the old timer, instead of being listed in the new page's dialog).
+ipcMain.on("bt:page", (e) => {
+  if (!fromMainWindow(e)) return;
+  inApp.listening = false;
+  inApp.cancelUntil = 0;
+  reconnectArm = null;
+  finishBluetooth("");
 });
 ipcMain.on("bt:choose", (e, id) => {
   if (!fromApp(e)) return;

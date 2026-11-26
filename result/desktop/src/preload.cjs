@@ -20,7 +20,7 @@ const btListeners = new Set();
 ipcRenderer.on("bt:devices", (_e, list) => {
   for (const cb of [...btListeners]) cb(list);
 });
-ipcRenderer.send("bt:unlisten");
+ipcRenderer.send("bt:page"); // a new document: the main process drops what the previous page left running
 
 // Online self-update (main: selfupdate.cjs): state pushes while a check / download runs
 const updListeners = new Set();
