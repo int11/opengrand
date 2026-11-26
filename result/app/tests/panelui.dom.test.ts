@@ -177,7 +177,7 @@ function loaderRelay(o: { dropActivate?: boolean } = {}) {
   return { relay, pkg, controls };
 }
 
-test("panel UI box rebuilt during an upload (tab switch, language, reconnect): it follows the running upload, Send / Roll back off, then the result", async () => {
+test("panel UI box rebuilt during an upload (tab switch, language change, Reconnect on the same session): it follows the running upload, Send / Roll back off, then the result", async () => {
   const { relay, pkg, controls } = loaderRelay();
   const ctx = { session: () => relay } as unknown as AppContext;
   const up = new PanelUiClient(relay).upload(pkg(30), { activate: false });   // the Send of the screen that was replaced

@@ -400,7 +400,7 @@ test("the commit wait is by time, not by attempts: on a quiet link (a status rea
   assert.ok(commitMs < 2500, `the commit wait took ${commitMs} ms for a 300 ms timeout`);
 });
 
-test("Information screen rebuilt during an upload (tab switch, language, reconnect): it follows the running upload and the apply after it, buttons off, then shows the result", async () => {
+test("Information screen rebuilt during an upload (tab switch, language change, Reconnect on the same session): it follows the running upload and the apply after it, buttons off, then shows the result", async () => {
   const { session, s } = residentPiano({ v2: true });
   localStorage.setItem(ota.OTA_KEY_STORAGE, Array.from(KEY, (b) => b.toString(16).padStart(2, "0")).join(""));
   const ctx = createContext(new ParamStore(), { session: () => session });

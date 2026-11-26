@@ -77,7 +77,7 @@ export function panelUiBox(ctx: AppContext): HTMLElement {
       else if (typeof j.result === "string") msg.textContent = j.result;
       if (j.finished) {
         setBusy(false);
-        if (!own) void refresh();
+        if (!own && msg.isConnected) void refresh();    // only a screen still shown asks the panel
       }
     });
   };

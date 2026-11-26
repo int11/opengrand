@@ -677,7 +677,8 @@ export function infoScreen(ctx: AppContext): HTMLElement {
       if (!j.finished) return;
       setOtaBusy(false);
       // the screen that started the job runs its next step right after (no macrotask between): look after that
-      if (!own) setTimeout(() => { if (!followRunningOta()) void otaRefresh(false); }, 0);
+      // (only a screen still shown: a replaced one sends nothing more on the link)
+      if (!own && otaBox.isConnected) setTimeout(() => { if (otaBox.isConnected && !followRunningOta()) void otaRefresh(false); }, 0);
     });
   }
   /** Follow the job this screen just started (the lock is taken before the client call returns). */
