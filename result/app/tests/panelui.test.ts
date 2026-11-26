@@ -927,6 +927,9 @@ test("BLE transfer estimate for the real app bundle (MTU 23, paced writer)", asy
   // song's own tempo, the lesson tempo slider (setSmfRelativeTempo) and their ja/ko lines: main was 217 255 B, with
   // all three 218 341 B)
   // -> 236 000 (2026-11-24, the above two together plus the effect-name / recorder-split rows merged the same day)
-  assert.ok(file.length < 236_000, `package ${file.length} B`);
+  // -> 241 000 (2026-11-27, field fixes merged together: the transport runner (ui/transport.ts) and its loading marks,
+  // the screen scope (ui/scope.ts), transfer jobs a rebuilt screen follows, race fixes across screens: main was 232 399 B,
+  // this 236 778 B; the panel loader's own cap is 512 KB - this budget only keeps the BLE upload time in view)
+  assert.ok(file.length < 241_000, `package ${file.length} B`);
   console.log(`# real bundle: package ${file.length} B, ${e.frames} frames, ${e.blePackets} BLE packets; window ≈ ${e.windowedS.toFixed(0)} s, stop-and-wait ≈ ${e.stopAndWaitS.toFixed(0)} s`);
 });
