@@ -34,6 +34,7 @@ import { h } from "./dom.ts";
 import { loadUsbList, usbListGone, usbListStale, usbListState } from "./usblist.ts";
 import { iconButton, playingMark } from "./screens/songctl.ts";
 import { KINDS, kindOf } from "./songkinds.ts";
+import { transport } from "./transport.ts";
 import { usbAnyRunning, usbPlay, usbPlayback, usbPlayingName, usbStopAll } from "./usbplay.ts";
 
 /** Last internal song table this app saw, per context: drawn at once when the tab opens again (same session). */
@@ -68,15 +69,19 @@ export interface UsbPane {
   run(what: string, op: () => Promise<unknown>, refresh?: boolean, out?: HTMLElement): Promise<boolean>;
   /** Read the list again (after something else wrote a file). */
   reload(): Promise<void>;
-  /** Stop both USB players (ui/usbplay.ts usbStopAll). `quick`: no quiet check - for a piano song that starts next (no
-   *  USB select follows that a late Reset could land after, F13b). */
-  stop(quick?: boolean): Promise<void>;
+  /** Stop both USB players (ui/usbplay.ts usbStopAll) - a transport request (ui/transport.ts). */
+  stop(): Promise<void>;
+  /** The stop itself, for a transport job (never through the runner again). `quick`: no quiet check - for a piano song
+   *  that starts next (no USB select follows that a late Reset could land after, F13b). */
+  stopNow(quick?: boolean): Promise<void>;
   /** The file chosen in the list (what the player bar's ▶ plays); null = none. */
   selected(): string | null;
   /** Choose a file and play it, as a tap on its row does; start false: only choose it (unless a USB file plays). */
   pick(name: string, start?: boolean): void;
-  /** Play a file (ui/usbplay.ts usbPlay: whatever USB playback runs is stopped first). */
+  /** Play a file (ui/usbplay.ts usbPlay: whatever USB playback runs is stopped first) - a transport request. */
   play(name: string): Promise<void>;
+  /** The play itself, for a transport job. */
+  playNow(name: string): Promise<void>;
 }
 
 export interface UsbPaneOptions {
@@ -218,8 +223,11 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
   const playKey = () => ctx.usbFiles.map((n) => (usbPlayingName(playing, n) ? "■" : "▶") + n).join("\n");
   let shownKey = "";
   const stillText = () => t("The piano still plays from the USB memory. Stop it on the piano: on the panel's USB memory screen choose the playing file and press Stop; if it still plays, switch the piano off and on.");
-  const play = async (name: string) => {
-    if (lock.busy || playing.stopping) return;
+  // every play / stop goes through the context's one transport runner (ui/transport.ts): a burst of taps ends with the
+  // last one carried out, never two sequences interleaved on the link (field 2026-11-27)
+  const tp = transport(ctx);
+  const playNow = async (name: string) => {
+    if (lock.busy) return; // a file operation (rename, delete, upload) holds the file channel
     if (opts.beforePlay && !(await opts.beforePlay())) return;
     let refused: string | null = null;
     const ok = await run(t("Play"), async () => {
@@ -232,6 +240,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
     else if (ok) result.textContent = "";
     render();
   };
+  const play = (name: string) => tp.request(() => playNow(name)).then(() => {});
   // a tap on a row plays that file, as in any media player (owner 2026-11-23: a tap that only chose the file read as
   // 「재생이 안 된다」); the playing file's row does nothing. pick(name, false) only chooses (⏮ ⏭ while stopped).
   const pick = (name: string, start = true) => {
@@ -247,8 +256,8 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
     if ((start || usbAnyRunning(playing)) && !usbPlayingName(playing, name)) void play(name);
   };
   // stop: both USB players (the selected type's, the audio one, the SMF one), then the piano must stay quiet
-  const stop = async (quick = false) => {
-    if (lock.busy || playing.stopping) return;
+  const stopNow = async (quick = false) => {
+    if (lock.busy) return;
     if (!ctx.files()) {
       result.textContent = t("Connect to the piano first.");
       return;
@@ -263,6 +272,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
     }
     render();
   };
+  const stop = () => tp.request(() => stopNow(false)).then(() => {});
 
   const rename = (name: string) => {
     const to = typeof prompt === "function" ? prompt(t("New name for {name}", { name }), name) : null;
@@ -333,7 +343,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
       h("div", { class: "pane-btns" },
         h("button", { onclick: () => void load(), "data-act": "refresh" }, `↻ ${t("Refresh")}`), // always asks
         // always there: playback the app did not start (panel, piano buttons) or whose notice never came
-        h("button", { "data-act": "usb-stop", onclick: () => void stop(false) }, `■ ${t("Stop")}`))),
+        h("button", { "data-act": "usb-stop", onclick: () => void stop() }, `■ ${t("Stop")}`))),
     result,
     list,
     h("details", { class: "fold", id: "usb-manage" },
@@ -351,7 +361,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
           } }, t("Format the USB memory"))))),
   );
   return {
-    el, run, stop, pick, play,
+    el, run, stop, stopNow, pick, play, playNow,
     reload: () => load(false, true),
     selected: () => (chosen !== null && ctx.usbFiles.includes(chosen) ? chosen : null),
   };

@@ -48,13 +48,13 @@ const progress = (bar: number, beat: number) => Uint8Array.from([0xf0, 0x40, 0x7
 type Piano = { send(m: Uint8Array): void; onMessage(h: (m: Uint8Array) => void): void };
 
 /** The stock's USB players as the emulator shows them (see the header). */
-function stockPlayers(link: Piano, sent: string[], opt: { stuck?: boolean; lateAudio?: boolean } = {}) {
+function stockPlayers(link: Piano, sent: string[], opt: { stuck?: boolean; lateAudio?: boolean; lat?: number } = {}) {
   // replies a BLE event later (~8 ms), in order - as on the air; a loopback answer inside the send would arrive
   // before the app's own code after the send has run (the field's order: the app's ▶ done, then the echo)
   let lastAt = 0;
   const piano = {
     send: (m: Uint8Array) => {
-      const at = Math.max(Date.now() + 8, lastAt + 1);
+      const at = Math.max(Date.now() + (opt.lat ?? 8), lastAt + 1);
       lastAt = at;
       setTimeout(() => link.send(m), at - Date.now());
     },
@@ -100,7 +100,13 @@ function stockPlayers(link: Piano, sent: string[], opt: { stuck?: boolean; lateA
     sent.push(toHex(m));
     if (m[1] !== 0x40 || m[4] !== 0x08) return;
     const fn = m[3];
-    if (fn === 0x10 && m[7] !== 0x1d) return void piano.send(Uint8Array.from([0xf0, 0x40, 0x7f, 0x07, 0x04, 0x1e, m[6], m[7], m[8], 0xf7]));
+    if (fn === 0x10 && m[7] !== 0x1d) {
+      piano.send(Uint8Array.from([0xf0, 0x40, 0x7f, 0x07, 0x04, 0x1e, m[6], m[7], m[8], 0xf7]));
+      // SongSelect (10 52 00): the stock tells the song's length with MaxTime 10 52 18, bar form - every piano song here
+      // holds 5 bars
+      if (m[6] === 0x52 && m[7] === 0x00) piano.send(Uint8Array.from([0xf0, 0x40, 0x7f, 0x10, 0x04, 0x1e, 0x52, 0x18, 0x7f, 0, 0, 5, 0xf7]));
+      return;
+    }
     if ((fn === 0x31 || fn === 0x10) && m[6] === 0x52 && m[7] === 0x1d) {
       const v = m[9];
       // FUN_4015DCC4: 0 / 5 from 3 stops the selected type's player; any other mode is only stored
@@ -175,7 +181,7 @@ function stockPlayers(link: Piano, sent: string[], opt: { stuck?: boolean; lateA
 
 const FILES = ["SONG_01.MID", "UP01.MID", "TEST01.MID", "1.mp3", "2.mp3", "233.mp3"];
 
-async function setup(opt: { stuck?: boolean; syncMode?: number; lateAudio?: boolean } = {}) {
+async function setup(opt: { stuck?: boolean; syncMode?: number; lateAudio?: boolean; lat?: number } = {}) {
   const p = await pianoPair();
   const store = new ParamStore();
   bindStore(store);
@@ -403,4 +409,46 @@ test("field 11-27: a USB file tapped while a piano song plays stops the song fir
   const mode3 = tx.indexOf("F0 40 7F 31 08 02 52 1D 7F 03 F7");
   assert.ok(songStop >= 0 && songStop < mode3, "Music Reset in MusicMode 2 before MusicMode 3");
   // the other way round: a piano song row tapped while the MP3 plays stops the MP3 (play() stops USB first)
+});
+
+// Fast taps between piano songs and USB files (field 2026-11-27, panel UI 0.2.34: tapping quickly left the piano and the
+// screen out of step): the last tap wins - exactly one player runs, it is the one tapped last, and the screen agrees.
+async function fastTaps(last: "usb" | "piano", gap = 40, lat = 8) {
+  const { st, el, notify } = await setup({ syncMode: 0, lat });
+  notify([0x52, 0x01, 0x7f, 0x7f]); // IntSongPart: both parts (the stock's MaxTime then is the song's bars)
+  await tick(20);
+  const tapSong = () => (el.querySelector('#songs-list [data-song="1"] button.song-pick') as HTMLElement).click();
+  tapSong(); // chosen once: the piano says it holds 5 bars
+  await tick(300);
+  assert.equal(el.querySelector('#songs-list [data-song="1"]')!.getAttribute("data-state"), "data", "song 1 holds a recording");
+  const tapUsb = (f: string) => (el.querySelector(`[data-file="${f}"] [data-act="file-pick"]`) as HTMLElement).click();
+  tapUsb("1.mp3");
+  await tick(gap);
+  tapUsb("2.mp3");
+  await tick(gap);
+  tapSong();
+  await tick(gap);
+  if (last === "usb") tapUsb("233.mp3");
+  await tick(3000 + 40 * lat);
+  return { st, el };
+}
+
+for (const [gap, lat] of [[40, 8], [30, 40], [50, 40], [20, 25]] as const) test(`fast taps USB A → USB B → piano song → USB C (${gap} ms apart, replies ${lat} ms): only USB C plays and the screen says so`, async () => {
+  const { st, el } = await fastTaps("usb", gap, lat);
+  assert.equal(st.rec === 1, false, "the piano song does not play");
+  assert.equal(st.audio, true, "the audio player plays");
+  assert.equal(st.audioName.replace(/^\\/, ""), "233.mp3", "the file tapped last");
+  assert.equal(st.smf, 2);
+  const marked = [...el.querySelectorAll("[data-file][data-playing]")].map((r) => r.getAttribute("data-file"));
+  assert.deepEqual(marked, ["233.mp3"], "only the last file's row is marked playing");
+  el.remove();
+});
+
+for (const [gap, lat] of [[40, 8], [30, 40], [50, 40], [20, 25]] as const) test(`fast taps USB A → USB B → piano song (${gap} ms apart, replies ${lat} ms): only the piano song plays and the screen says so`, async () => {
+  const { st, el } = await fastTaps("piano", gap, lat);
+  assert.equal(st.rec, 1, "the piano song plays");
+  assert.equal(st.audio, false, "no USB audio under it");
+  assert.equal(st.smf, 2);
+  assert.deepEqual([...el.querySelectorAll("[data-file][data-playing]")].map((r) => r.getAttribute("data-file")), [], "no USB row marked playing");
+  el.remove();
 });

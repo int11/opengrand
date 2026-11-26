@@ -11,6 +11,7 @@ const { ParamStore } = await import("../src/state/store.ts");
 const { createContext } = await import("../src/ui/context.ts");
 const { bindStore } = await import("../src/ui/controls.ts");
 const { recorderScreen } = await import("../src/ui/recorder.ts");
+const { transport } = await import("../src/ui/transport.ts");
 
 function statusRaw(state: number, song: number, bar = 0, store = 0, recPart = 0): number[] {
   const raw = new Array(48).fill(0);
@@ -229,6 +230,9 @@ test("recording panel on OpenGrand (feat2 0x10): state line, selected song, op 0
   s.push(frame([0x00, 0x00, ...ng.pack7(statusRaw(1, 0, 2))]));
   await wait(5);
   assert.equal(selected(el), "Song 13 bars");
+  // the tap also asked the USB player to play A.MID - a transport job (ui/transport.ts); this stand-in has no file channel,
+  // so it ends only when its file request times out. The ■ below waits for it (one sequence at a time).
+  for (let i = 0; i < 400 && transport(ctx).busy(); i++) await tick(50);
   panelBtn(el, "stop").click();
   await wait();
   assert.deepEqual(s.asked.at(-1), [0x1e, 0x02, 2, 0, 0]);

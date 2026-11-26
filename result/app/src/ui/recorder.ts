@@ -84,6 +84,7 @@ import { songList } from "./recsongs.ts";
 import { usbSource } from "./recusb.ts";
 import { saveSheet } from "./savesheet.ts";
 import { KINDS, kindOf } from "./songkinds.ts";
+import { transport } from "./transport.ts";
 import { usbAnyRunning, usbPlayback } from "./usbplay.ts";
 
 /** ● would record part 2 of a song that has no part 1 */
@@ -137,6 +138,10 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     shownSource.set(ctx, v);
   };
 
+  // every play / record / stop goes through the context's one transport runner (ui/transport.ts), shared with the USB
+  // pane: a burst of taps ends with the last one carried out, never two sequences interleaved (field 2026-11-27). A
+  // job calls the steps (playNow, usb.stopNow, pick ...) directly, never a request.
+  const tp = transport(ctx);
   const usb = usbPane(ctx, lock, {
     intoPiano: (name, andPlay) => void intoPiano(name, andPlay),
     // a USB file never plays over a piano song: the song is stopped first (field 2026-11-27 on the panel: a piano song
@@ -184,7 +189,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     view: () => m.view(),
     step: (d) => {
       const n = m.sel < 0 ? 0 : m.sel + d;
-      if (n >= 0 && n < SONGS) void pick(n);
+      if (n >= 0 && n < SONGS) void tp.request(() => pick(n));
     },
   };
   const source = (): PlayerSource => (usbView() ? usbSrc : piano);
@@ -230,7 +235,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   // with the record control (feat3 0x01), else - and on the stock - the Kawai Music bytes. A USB playback is stopped
   // first.
   // piano: the piano song whatever the bar showed (a song row's tap - also while a USB stop is still being confirmed)
-  const play = async (piano = false) => {
+  const playNow = async (piano = false) => {
     hideOver();
     note.textContent = "";
     if (isRecState(m.state)) {
@@ -247,27 +252,39 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       // the USB file chosen in the list (MusicMode 3, 24 08, Play - ui/usbplay.ts)
       const name = usb.selected();
       if (name === null) note.textContent = t("Choose a song first.");
-      else await usb.play(name);
+      else await usb.playNow(name);
       return;
     }
-    if (usbAnyRunning(pb)) await usb.stop(true);
+    if (usbAnyRunning(pb)) await usb.stopNow(true);
     await ensureMode();
-    if (m.rec) await op(RecorderCmd.Play);
-    else kawai(MUSIC_CMD.Play);
+    if (m.rec) {
+      if (!(await op(RecorderCmd.Play))) return;
+    } else kawai(MUSIC_CMD.Play);
+    // taken as playing until the piano says otherwise (its Music report or song notice follows): the next request's
+    // stop must not miss a song whose report is still on the way (field 2026-11-27 fast taps: piano song, then a USB
+    // file at once - the song played on under the file)
+    m.state = 1;
+    renderSongs();
+    renderNow();
   };
+  const play = (piano = false) => tp.request(() => playNow(piano));
   // the op also while a recording runs or waits where the core controls recording (cmd 3 ends it, like the panel)
   const opNow = () => !!m.rec && (!isRecState(m.state) || m.recCtl);
   const pause = () => {
     hideOver();
-    if (opNow()) void op(RecorderCmd.Pause);
-    else kawai(MUSIC_CMD.Pause);
+    void tp.request(async () => {
+      if (opNow()) await op(RecorderCmd.Pause);
+      else kawai(MUSIC_CMD.Pause);
+    });
   };
   const stop = () => {
     hideOver();
     // the USB players: whatever runs, and - with a USB file in the bar - also what this app does not know of
-    if (usbView()) return void usb.stop();
-    if (opNow()) void op(RecorderCmd.Stop);
-    else kawai(MUSIC_CMD.Stop);
+    void tp.request(async () => {
+      if (usbView()) return usb.stopNow();
+      if (opNow()) await op(RecorderCmd.Stop);
+      else kawai(MUSIC_CMD.Stop);
+    });
   };
   // the progress line's dot let go on a bar: op 0x1E cmd 7 (the only jump - see the head of this file)
   const seek = async (to: number) => {
@@ -311,10 +328,10 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   // only when none is empty, or the song table is not known (stock, not scanned), the chosen song is asked about first.
   // overwrite: the user agreed to record over what the song may hold (cmd 8 refuses a recorded part without it)
   // part: the part the piano records now (REC_PART_NOW), or part 1 chosen in the part question
-  const startRec = async (overwrite = false, part: RecPart = REC_PART_NOW) => {
+  const startRecNow = async (overwrite = false, part: RecPart = REC_PART_NOW) => {
     hideOver();
     if (refuseTable()) return;
-    if (usbAnyRunning(pb)) await usb.stop(true);
+    if (usbAnyRunning(pb)) await usb.stopNow(true);
     await ensureMode();
     if (refuseTable()) return;
     // the stock (and a core without the record control): IntSongPart 0 sets the part Music 3 records into
@@ -323,6 +340,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     standbyAt = Date.now();
     standby(overwrite, part);
   };
+  const startRec = (overwrite = false, part: RecPart = REC_PART_NOW) => tp.request(() => startRecNow(overwrite, part));
   /** ● into song n: part 2 of a song with no part 1 is asked about first (see the head of this file), before anything
    *  is sent - go gets the part to record into. */
   const partGuard = (n: number, go: (part: RecPart) => void) => {
@@ -345,7 +363,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     // one part alone was chosen in the options and the chosen song has room in it: the second hand of that song
     if (i?.hasData && i.parts && (part === 0 || part === 1) && !i.parts[part]) return partGuard(sel, (p) => void startRec(false, p));
     const to = m.emptySong();
-    if (to >= 0) return partGuard(to, (p) => void (async () => {
+    if (to >= 0) return partGuard(to, (p) => void tp.request(async () => {
       if (to !== m.sel) {
         // OpenGrand: the piano confirms one command at a time - Rec goes out when the song choice is done (panelsim
         // 2026-11-23: a Music 3 right behind the op select was dropped)
@@ -353,8 +371,8 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
         if (!(await pick(to))) return;
         await done;
       }
-      if (m.sel === to) await startRec(false, p);
-    })());
+      if (m.sel === to) await startRecNow(false, p);
+    }));
     if (sel < 0) {
       note.textContent = songs.some((s) => s) ? t("All 10 piano songs are used. Choose the song to record over below, then press Rec.") : t("Choose a song first.");
       return;
@@ -373,13 +391,13 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   // 「USB로 저장」 (rule 3) - also what opens when a recording stops (rule 2)
   const saved = saveSheet(ctx, "save-sheet", {
     lock, formats: KINDS.piano.saveTo,
-    quiet: async () => {
-      if (usbAnyRunning(pb)) await usb.stop();
+    quiet: () => tp.request(async () => {
+      if (usbAnyRunning(pb)) await usb.stopNow();
       if (m.state === 0 || m.state === 1) {
         if (m.rec) await op(RecorderCmd.Stop);
         else kawai(MUSIC_CMD.Stop);
       }
-    },
+    }).then(() => {}),
     refresh: () => usb.reload(),
     get out() { return list.status; },
   });
@@ -466,7 +484,7 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   };
   // A file the piano takes into a recorder song (a KSO; rule 1): into an empty piano song - asked only when none is
   // empty - with 24 09 <song> 03, and for a row's tap played there: the bar then shows that piano song.
-  const intoPiano = async (name: string, andPlay: boolean) => {
+  const intoPianoNow = async (name: string, andPlay: boolean) => {
     hideOver();
     note.textContent = "";
     if (isRecState(m.state)) {
@@ -480,9 +498,9 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       if (!c || c.session !== ctx.session()) putInto.set(ctx, (c = { session: ctx.session(), at: new Map() }));
       return c.at;
     };
-    const go = async (n: number) => {
+    const goNow = async (n: number) => {
       if (refuseTable()) return; // asked again: the table may have failed while the question was shown
-      if (usbAnyRunning(pb)) await usb.stop();
+      if (usbAnyRunning(pb)) await usb.stopNow();
       if (m.state === 0 || m.state === 1) {
         if (m.rec) await op(RecorderCmd.Stop);
         else kawai(MUSIC_CMD.Stop);
@@ -520,38 +538,40 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       }
       // chosen again even if it was: the piano loads what the file put there
       if (!(await pick(n, true))) return;
-      await play(true);
+      await playNow(true);
       note.textContent = t("Playing {name} from piano song {n}.", { name: leaf, n: n + 1 }) + lossy;
     };
     // tapped before in this session and the song still holds something: that song again, no second copy
     const was = put().get(name);
     if (andPlay && was !== undefined && songs[was]?.hasData) {
-      if (usbAnyRunning(pb)) await usb.stop(true);
+      if (usbAnyRunning(pb)) await usb.stopNow(true);
       if (!(await pick(was, true))) return;
-      await play(true);
+      await playNow(true);
       note.textContent = t("Playing {name} from piano song {n}.", { name: leaf, n: was + 1 });
       return;
     }
     const to = m.emptySong();
-    if (to >= 0) return go(to);
+    if (to >= 0) return goNow(to);
     const n = m.sel >= 0 ? m.sel : SONGS - 1;
     // the stock before a scan: the songs are not known - say that, not that none is empty
     const why = songs.some((i) => i) ? t("No piano song is empty.") : t("The piano's songs have not been read yet (Scan reads them).");
     const q = andPlay ? "Playing {name} puts it into song {n} and replaces what is there." : "{name} goes into song {n} and replaces what is there.";
-    askOver(`${why} ${t(q, { name: leaf, n: n + 1 })}`, t("Replace song {n}", { n: n + 1 }), "into-confirm", () => void go(n));
+    askOver(`${why} ${t(q, { name: leaf, n: n + 1 })}`, t("Replace song {n}", { n: n + 1 }), "into-confirm", () => void tp.request(() => goNow(n)));
   };
+  const intoPiano = (name: string, andPlay: boolean) => tp.request(() => intoPianoNow(name, andPlay));
   // a tap on a song row: choose it and - when it holds a recording - play it, as a media player does (owner 2026-11-23:
   // a tap that only chose read as 「재생이 안 된다」). An empty song is only chosen: it is where Rec records. The
   // playing song's row does nothing; during a recording the choice is refused (pick says why).
-  const tapSong = async (n: number) => {
+  const tapSongNow = async (n: number) => {
     if (n === m.sel && (m.state === 1 || isRecState(m.state)) && !usbAnyRunning(pb)) return;
     const before = m.sel;
     await pick(n);
     if (m.sel !== n || isRecState(m.state)) return; // refused
     if (!songs[n]?.hasData) return;
     if (n === before && m.state === 1 && !usbAnyRunning(pb)) return;
-    await play(true);
+    await playNow(true);
   };
+  const tapSong = (n: number) => tp.request(() => tapSongNow(n));
 
   // ---- [Piano songs | USB memory] ----
   let shown: ListId = shownList.get(ctx) ?? "internal";
