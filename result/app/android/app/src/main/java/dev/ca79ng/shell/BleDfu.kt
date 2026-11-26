@@ -98,6 +98,9 @@ class BleDfu(private val activity: Activity, private val usbPath: () -> String, 
         val filters = BOOTLOADERS.map { ScanFilter.Builder().setDeviceName(it.key).build() }
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
+                // results already posted to the main thread still arrive after stopScan(): only the first hit of the
+                // scan that is still running may start the DFU (a second hit queued a second DfuServiceInitiator)
+                if (scanCb !== this) return
                 val name = result.scanRecord?.deviceName ?: result.device.name ?: return
                 val service = BOOTLOADERS[name] ?: return
                 val uuids = result.scanRecord?.serviceUuids
@@ -114,7 +117,7 @@ class BleDfu(private val activity: Activity, private val usbPath: () -> String, 
                     .setZip(zipPath)
                     .start(activity, DfuService::class.java)
             }
-            override fun onScanFailed(errorCode: Int) { send(JSONObject().put("error", "scan failed $errorCode")); finish() }
+            override fun onScanFailed(errorCode: Int) { if (scanCb !== this) return; scanCb = null; send(JSONObject().put("error", "scan failed $errorCode")); finish() }
         }
         scanCb = cb
         send(JSONObject().put("state", "scan"))
