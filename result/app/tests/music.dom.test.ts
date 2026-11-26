@@ -19,9 +19,13 @@ const g = globalThis as unknown as G;
 /** The shell's metronome calls of the last fakeShell (kept apart so the player sequences stay readable). */
 let metro: { cmd: string; obj: Record<string, unknown> }[] = [];
 /** A panel shell that answers selectSmf / setConcertMagicMode and records every bridge call. */
-function fakeShell(opt: { failSelect?: boolean; files?: string[]; info?: Record<string, unknown> } = {}) {
+/** Answers the fake shell holds back (opt.hold names the commands), released by hand in order: the races a field tap
+ *  makes when the shell is slow. */
+let held: { cmd: string; answer(): void }[] = [];
+function fakeShell(opt: { failSelect?: boolean; files?: string[]; info?: Record<string, unknown>; hold?: string[] } = {}) {
   const calls: { cmd: string; obj: Record<string, unknown> }[] = [];
   metro = [];
+  held = [];
   g.kwmcore = {
     postMessage(url: string) {
       const i = url.indexOf("?");
@@ -30,7 +34,9 @@ function fakeShell(opt: { failSelect?: boolean; files?: string[]; info?: Record<
       (/Metronome/.test(cmd) ? metro : calls).push({ cmd, obj });
       if (cmd === "getSmfList") setTimeout(() => g.KWM!.resolvePromise(cmd, JSON.stringify((opt.files ?? []).map((name) => ({ name })))), 1);
       if (cmd === "selectSmf" || cmd === "setConcertMagicMode") {
-        setTimeout(() => (opt.failSelect && cmd === "selectSmf" ? g.KWM!.rejectPromise(cmd, "{}") : g.KWM!.resolvePromise(cmd, JSON.stringify(cmd === "selectSmf" && opt.info ? opt.info : { format: 1, totalTime: 1000 }))), 1);
+        const answer = () => (opt.failSelect && cmd === "selectSmf" ? g.KWM!.rejectPromise(cmd, "{}") : g.KWM!.resolvePromise(cmd, JSON.stringify(cmd === "selectSmf" && opt.info ? opt.info : { format: 1, totalTime: 1000 })));
+        if (opt.hold?.includes(cmd)) held.push({ cmd, answer });
+        else setTimeout(answer, 1);
       }
     },
   };
@@ -417,3 +423,110 @@ test("music tab on the panel: lesson metronome volume is the shell's beat clicks
   assert.ok(!sent.slice(from).some((m) => m.includes(" 56 03 ")), "no MetronomeVolume frames");
   el.remove();
 });
+
+// Fast taps on a slow shell (each tap is a multi-step sequence over the bridge): the latest tap wins, Stop cancels a
+// piece still loading, and nothing of an earlier tap reaches the shell or the screen after a later one.
+const release = async (cmd: string, ok = true) => {
+  const i = held.findIndex((x) => x.cmd === cmd);
+  assert.ok(i >= 0, `${cmd} is waiting for its answer`);
+  const w = held.splice(i, 1)[0];
+  if (ok) w.answer();
+  else g.KWM!.rejectPromise(cmd, "{}");
+  await tick(5);
+};
+const tapRow = (el: Element, i: number) => (rows(el)[i].querySelector("button") as HTMLButtonElement).click();
+const tapBar = (el: Element, act: string) => (el.querySelector(`#music-player [data-act="${act}"]`) as HTMLElement).click();
+const MODE5 = "F0 40 7F 31 08 02 52 1D 7F 05 F7", MODE0 = "F0 40 7F 31 08 02 52 1D 7F 00 F7";
+
+test("music tab on the panel: Stop while a piece is still loading - the piece never starts", async () => {
+  const calls = fakeShell({ files: [stub(bookOf(PIANO_MUSIC, "piano"), 0, "T-A.mid")], hold: ["selectSmf"] });
+  const { store } = await setup();
+  const el = S.musicScreen(store);
+  document.body.append(el);
+  byText(el, "button", "Piano Music").click();
+  tapRow(el, 0);
+  await tick(10);
+  assert.deepEqual(calls.map((c) => c.cmd), ["getSmfList", "selectSmf"]);
+  tapBar(el, "stop");
+  await release("selectSmf");
+  assert.deepEqual(calls.map((c) => c.cmd), ["getSmfList", "selectSmf", "playStopSmf"], "no playStartSmf after Stop");
+  assert.equal(el.querySelector("#music-player-state")!.textContent, "Stopped");
+  el.remove();
+});
+
+test("music tab on the panel: the same piece tapped twice while loading - selected and started once", async () => {
+  const calls = fakeShell({ files: [stub(bookOf(PIANO_MUSIC, "piano"), 0, "T-A.mid")] });
+  const { store } = await setup();
+  const el = S.musicScreen(store);
+  document.body.append(el);
+  byText(el, "button", "Piano Music").click();
+  tapRow(el, 0);
+  tapRow(el, 0);
+  await tick(30);
+  assert.deepEqual(calls.map((c) => c.cmd), ["getSmfList", "selectSmf", "setSmfRelativeTempo", "playStartSmf"]);
+  el.remove();
+});
+
+test("music tab on the panel: a Concert Magic piece, then a Piano Music piece during its setup - the keys are not muted under the piece that plays", async () => {
+  const calls = fakeShell({ files: [stub(bookOf(CONCERT_MAGIC, "cm-children"), 0, "T-F.mid"), stub(bookOf(PIANO_MUSIC, "piano"), 0, "T-A.mid")], hold: ["setConcertMagicMode"] });
+  const { store, sent } = await setup();
+  const el = S.musicScreen(store);
+  document.body.append(el);
+  byText(el, "button", "Concert Magic").click();
+  tapRow(el, 0);
+  await tick(10);
+  assert.equal(calls.at(-1)!.cmd, "setConcertMagicMode");
+  byText(el, "button", "Piano Music").click();
+  tapRow(el, 0);
+  await tick(10);
+  assert.equal(calls.at(-1)!.cmd, "playStartSmf");
+  await release("setConcertMagicMode");
+  await tick();
+  assert.ok(!calls.some((c) => c.cmd === "setConcertMagicNativeTrigger"), "no native trigger for the earlier tap");
+  assert.ok(!sent.includes(MODE5), "no MusicMode 5 under the piano piece");
+  assert.equal(el.querySelector("#music-player .pl-main")!.getAttribute("data-act"), "pause", "the screen shows the piano piece playing");
+  el.remove();
+});
+
+test("music tab on the panel: Stop during Concert Magic setup - Concert Magic never turns on", async () => {
+  const calls = fakeShell({ files: [stub(bookOf(CONCERT_MAGIC, "cm-children"), 0, "T-F.mid")], hold: ["setConcertMagicMode"] });
+  const { store, sent } = await setup();
+  const el = S.musicScreen(store);
+  document.body.append(el);
+  byText(el, "button", "Concert Magic").click();
+  tapRow(el, 0);
+  await tick(10);
+  tapBar(el, "stop");
+  await release("setConcertMagicMode");
+  await tick();
+  assert.ok(!calls.some((c) => c.cmd === "setConcertMagicNativeTrigger"), "native trigger never set");
+  assert.ok(!sent.includes(MODE5), "no MusicMode 5 after Stop");
+  assert.equal(el.querySelector("#music-player-state")!.textContent, "Stopped");
+  el.remove();
+});
+
+for (const refused of [false, true]) {
+  test(`music tab on the panel: from Concert Magic to a piece the shell ${refused ? "cannot open" : "does not have"} - Concert Magic ends`, async () => {
+    const files = [stub(bookOf(CONCERT_MAGIC, "cm-children"), 0, "T-F.mid")];
+    if (refused) files.push(stub(bookOf(PIANO_MUSIC, "piano"), 0, "T-A.mid"));
+    const calls = fakeShell({ files, hold: ["selectSmf"] });
+    const { store, sent } = await setup();
+    const el = S.musicScreen(store);
+    document.body.append(el);
+    byText(el, "button", "Concert Magic").click();
+    tapRow(el, 0);
+    await tick(10);
+    await release("selectSmf");
+    await tick(10);
+    assert.ok(sent.includes(MODE5), "Concert Magic on");
+    byText(el, "button", "Piano Music").click();
+    tapRow(el, 0); // refused: in the shell's list, but its select fails; else: not in the shell's list
+    await tick(10);
+    if (refused) await release("selectSmf", false);
+    await tick();
+    assert.match(el.querySelector("#music-player-state")!.textContent!, refused ? /could not open/ : /not in the panel app/);
+    assert.deepEqual(calls.filter((c) => c.cmd === "setConcertMagicNativeTrigger").at(-1)!.obj, { isNative: false }, "native trigger off");
+    assert.ok(sent.includes(MODE0), "MusicMode 0: the keys sound again");
+    el.remove();
+  });
+}

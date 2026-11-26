@@ -147,6 +147,10 @@ const live = {
   redraw: null as (() => void) | null, // the newest screen's
 };
 const LIVE0 = JSON.stringify({ ...live, redraw: undefined });
+// Each tap on a piece, and Stop, starts a new generation: a piece's sequence (list → selectSmf → setup → start) goes on
+// after each wait only while it is still the newest, so the latest tap wins and Stop cancels a piece still loading.
+// Kept across screens (Stop on a rebuilt screen cancels a load from the old one) and never reset (no value repeats).
+let gen = 0;
 /** Tests: forget what plays. */
 export function _resetMusicForTests(): void {
   Object.assign(live, JSON.parse(LIVE0), { redraw: null });
@@ -221,6 +225,7 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   };
   const stop = () => {
     // the shell may play a piece started from an earlier screen: always stop it, end Concert Magic, both hands again
+    gen++; // a piece still loading never starts
     if (canPlay) callNative("playStopSmf");
     endMagic();
     if (live.cur) live.status = "idle";
@@ -228,6 +233,8 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   };
   const play = async (mode: number, b: BuiltinBook, i: number) => {
     if (!canPlay) return;
+    const my = ++gen;
+    const stale = () => gen !== my; // another tap (or Stop) came meanwhile: it owns the shell and the screen
     if (live.status === "playing" || live.status === "paused") callNative("playStopSmf");
     const song = b.songs[i];
     live.cur = { mode, book: b, i };
@@ -235,18 +242,21 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     redraw();
     let info: SmfInfo | null = null;
     const path = (await shellPaths()).get(song.key);
-    if (live.cur?.book.id !== b.id || live.cur.i !== i) return; // another piece was picked meanwhile
+    if (stale()) return;
     if (!path) {
       live.status = "missing";
+      endMagic(); // Concert Magic of the piece before must not keep the keys muted
       return redraw();
     }
     try {
       info = await callPromise<SmfInfo>("selectSmf", { path, quantise: 256 }, 8000);
     } catch {
-      if (live.cur?.book.id === b.id && live.cur.i === i) live.status = "error";
+      if (stale()) return;
+      live.status = "error";
+      endMagic();
       return redraw();
     }
-    if (live.cur?.book.id !== b.id || live.cur.i !== i) return; // another piece was picked meanwhile
+    if (stale()) return;
     // the new piece starts with nothing muted: hand practice (a lesson piece with two hand parts) is set again
     live.parts = handParts(info?.existTrack);
     live.handsSent = "both";
@@ -256,6 +266,7 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     volFor();
     if (mode === MUSIC_MODE.ConcertMagic) {
       await callPromise("setConcertMagicMode", { ...CM_SETUP }, 3000).catch(() => {});
+      if (stale()) return;
       callNative("setConcertMagicNativeTrigger", { isNative: true });
       if (!live.magicOn) void store.command(modeP, 0x7f, [MUSIC_MODE.ConcertMagic]);
       live.magicOn = true;
