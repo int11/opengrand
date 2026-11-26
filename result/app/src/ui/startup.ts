@@ -37,14 +37,28 @@ export function startupSection(ctx: AppContext, stock?: HTMLElement): HTMLElemen
     : r.rc === StartupResult.SaveFailed ? t("The piano could not save it.")
     : t("The piano rejected this value.");
 
+  // One write at a time (mode, save, forget): two writes in flight both took the first `5C` reply, so after two quick
+  // mode changes the card showed the first one while the piano held the second. An unanswered write redraws the last
+  // status the piano gave, not the value the select was moved to.
+  let writes: Promise<void> = Promise.resolve();
+  let shown: StartupStatus | null = null;
+  const write = (job: () => Promise<StartupReply | null>) => {
+    note.textContent = t("Saving…");
+    const run = async () => {
+      const r = await job();
+      if (r?.status) render(r.status);
+      else if (shown) render(shown);
+      note.textContent = rcText(r);
+    };
+    writes = writes.then(run, run);
+  };
   const render = (st: StartupStatus) => {
+    shown = st;
     const sel = h("select", { name: "startupMode" },
       ...(["stock", "current", "poweroff"] as StartupMode[]).map((m) => h("option", { value: m, selected: m === st.mode }, t(MODE_LABEL[m])))) as HTMLSelectElement;
-    sel.addEventListener("change", async () => {
-      note.textContent = t("Saving…");
-      const r = await su.setMode(sel.value as StartupMode);
-      if (r?.status) render(r.status);
-      note.textContent = rcText(r);
+    sel.addEventListener("change", () => {
+      const mode = sel.value as StartupMode;
+      write(() => su.setMode(mode));
     });
     const info = st.mode === "stock"
       ? t("At power-on the piano starts with its own saved sound settings (factory unless saved with “Save startup settings” below); everything else goes back to factory.")
@@ -65,18 +79,8 @@ export function startupSection(ctx: AppContext, stock?: HTMLElement): HTMLElemen
       h("p", { class: "muted" }, info, last ? " " + last : ""),
       ...(older ? [h("p", { class: "muted", id: "startup-older" }, older)] : []),
       h("div", { class: "transport" },
-        h("button", { "data-action": "startup-save-current", onclick: async () => {
-          note.textContent = t("Saving…");
-          const r = await su.saveCurrent();
-          if (r?.status) render(r.status);
-          note.textContent = rcText(r);
-        } }, t("Save current settings")),
-        h("button", { "data-action": "startup-clear", onclick: (e: Event) => confirmTap(e.currentTarget, t("Forget the saved startup settings? From the next power-on the piano starts with its own sound settings and everything else at factory."), async () => {
-          note.textContent = t("Saving…");
-          const r = await su.clear();
-          if (r?.status) render(r.status);
-          note.textContent = rcText(r);
-        }) }, t("Forget saved startup settings"))),
+        h("button", { "data-action": "startup-save-current", onclick: () => write(() => su.saveCurrent()) }, t("Save current settings")),
+        h("button", { "data-action": "startup-clear", onclick: (e: Event) => confirmTap(e.currentTarget, t("Forget the saved startup settings? From the next power-on the piano starts with its own sound settings and everything else at factory."), () => write(() => su.clear())) }, t("Forget saved startup settings"))),
       note,
     );
     ng.hidden = false;
