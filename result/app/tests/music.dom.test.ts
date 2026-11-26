@@ -530,3 +530,65 @@ for (const refused of [false, true]) {
     el.remove();
   });
 }
+
+// The shell's player reports the end of a piece with KWM.callbackNative("onPlayDone", "{}", true) - no piece id.
+const done = () => (g.KWM!.callbackNative as unknown as (cmd: string, json: string, keep: boolean) => void)("onPlayDone", "{}", true);
+const playingRows = (el: Element) => rows(el).filter((r) => r.getAttribute("data-playing") === "1").length;
+
+test("music tab on the panel: a piece that ends by itself is no longer marked playing (the shell's onPlayDone)", async () => {
+  const pm = bookOf(PIANO_MUSIC, "piano");
+  const calls = fakeShell({ files: [stub(pm, 0, "T-A.mid")] });
+  const { store } = await setup();
+  S.musicScreen(store); // an earlier screen (a tab switch builds the screen again): it no longer listens
+  const el = S.musicScreen(store);
+  document.body.append(el);
+  byText(el, "button", "Piano Music").click();
+  tapRow(el, 0);
+  await tick(30);
+  assert.equal(playingRows(el), 1);
+  done();
+  assert.equal(playingRows(el), 1, "a done just after the start is the piece before's");
+  await tick(320);
+  const before = calls.length;
+  done();
+  assert.equal(playingRows(el), 0, "the row is unmarked");
+  assert.equal(rows(el)[0].getAttribute("data-on"), "1", "the piece stays picked");
+  assert.equal(el.querySelector("#music-player-state")!.textContent, "Stopped");
+  assert.equal(calls.length, before, "nothing sent to the shell");
+  // the play button starts the piece again
+  tapBar(el, "play");
+  await tick(30);
+  assert.deepEqual(calls.slice(before).map((c) => c.cmd), ["selectSmf", "setSmfRelativeTempo", "playStartSmf"]);
+  assert.equal(playingRows(el), 1);
+  // paused: the shell's player is not at the end
+  await tick(320);
+  (el.querySelector("#music-player .pl-main") as HTMLElement).click();
+  done();
+  assert.equal(el.querySelector("#music-player-state")!.textContent, "Paused");
+  el.remove();
+});
+
+test("music tab on the panel: a done while a newer piece loads (or just after it starts) does not end the newer piece", async () => {
+  const pm = bookOf(PIANO_MUSIC, "piano");
+  const calls = fakeShell({ files: [stub(pm, 0, "T-A.mid"), stub(pm, 1, "T-B.mid")], hold: ["selectSmf"] });
+  const { store } = await setup();
+  const el = S.musicScreen(store);
+  document.body.append(el);
+  byText(el, "button", "Piano Music").click();
+  tapRow(el, 0);
+  await tick(10);
+  await release("selectSmf");
+  await tick(320);
+  tapRow(el, 1); // stops the first piece: the shell may report its end now
+  await tick(5);
+  done();
+  await release("selectSmf");
+  assert.deepEqual(calls.map((c) => c.cmd), ["getSmfList", "selectSmf", "setSmfRelativeTempo", "playStartSmf", "playStopSmf", "selectSmf", "setSmfRelativeTempo", "playStartSmf"]);
+  assert.equal(rows(el)[1].getAttribute("data-playing"), "1", "the done during the load was the first piece's");
+  done();
+  assert.equal(rows(el)[1].getAttribute("data-playing"), "1", "and just after the start too");
+  await tick(320);
+  done();
+  assert.equal(playingRows(el), 0, "the second piece's own end");
+  el.remove();
+});

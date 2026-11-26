@@ -37,7 +37,7 @@ import { t } from "../../i18n.ts";
 import { findParam } from "../../protocol/codecs.ts";
 import { builtinBooks, type BuiltinBook, type BuiltinMode, type BuiltinSong, regionOf, songKey } from "../../protocol/builtinsongs.ts";
 import type { ParamStore } from "../../state/store.ts";
-import { callNative, callPromise, kwm, kwmcoreAvailable } from "../../transport/kwmcore.ts";
+import { callNative, callPromise, kwm, kwmcoreAvailable, onShellCallback } from "../../transport/kwmcore.ts";
 import type { AppContext } from "../context.ts";
 import { h, section } from "../dom.ts";
 import { MUSIC_MODE, playerBar, playingMark } from "./songctl.ts";
@@ -151,8 +151,20 @@ const LIVE0 = JSON.stringify({ ...live, redraw: undefined });
 // after each wait only while it is still the newest, so the latest tap wins and Stop cancels a piece still loading.
 // Kept across screens (Stop on a rebuilt screen cancels a load from the old one) and never reset (no value repeats).
 let gen = 0;
+// The end of a piece: the shell's player calls KWM.callbackNative("onPlayDone") when it reaches the end, without saying
+// which piece. A done is taken only for the piece started last (its generation) and only once it has played a moment:
+// the stop of the piece before (a new tap) may report its end while the new one loads or just after it starts.
+const DONE_STALE_MS = 300;
+let playGen = -1; // the generation whose playStartSmf was sent last
+let playStart = 0; // when (Date.now())
+// the newest screen's clean-up (its shell listener, its pending volume send), run when a screen is built again
+let teardown: (() => void) | null = null;
 /** Tests: forget what plays. */
 export function _resetMusicForTests(): void {
+  teardown?.();
+  teardown = null;
+  playGen = -1;
+  playStart = 0;
   Object.assign(live, JSON.parse(LIVE0), { redraw: null });
   shellFiles = null;
 }
@@ -176,6 +188,8 @@ function shellPaths(): Promise<Map<string, string>> {
 }
 
 export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
+  teardown?.(); // a tab switch builds a new screen: the old one stops listening
+  teardown = null;
   const canPlay = kwmcoreAvailable();
   // the CA79's EU and US lists differ (Concert Magic, Piano Music, hymns): the piano's destination picks one
   const region = regionOf(ctx?.session()?.identity?.destination);
@@ -274,10 +288,26 @@ export function musicScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
     } else {
       endMagic();
       live.interval = beatTicks(info);
+      playGen = my;
+      playStart = Date.now();
       callNative("playStartSmf", { interval: live.interval });
       live.status = "playing";
     }
     redraw();
+  };
+  // a piece that ends by itself is no longer playing (Concert Magic has no end: the keys play it)
+  const offDone = canPlay
+    ? onShellCallback("onPlayDone", () => {
+        if (live.status !== "playing" || !live.cur || live.cur.mode === MUSIC_MODE.ConcertMagic) return;
+        if (playGen !== gen || Date.now() - playStart < DONE_STALE_MS) return;
+        live.status = "idle";
+        redraw();
+      })
+    : () => {};
+  teardown = () => {
+    offDone();
+    if (volTimer) clearTimeout(volTimer);
+    volTimer = null;
   };
   const pause = () => {
     if (live.status !== "playing") return;

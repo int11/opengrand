@@ -101,6 +101,7 @@ export function callNative(cmd: string, obj?: object | null): boolean {
 type Waiter = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null };
 const pending = new Map<string, Waiter[]>();
 const callbacks = new Map<string, (v: unknown) => void>();
+const shellListeners = new Map<string, Set<(v: unknown) => void>>();
 const shellCounts: Record<string, number> = {};
 const midiListeners = new Set<(msg: Uint8Array, id: string) => void>();
 const deviceListeners = new Set<() => void>();
@@ -177,6 +178,11 @@ export function installKwm(): KwmGlobal {
     rejectPromise: (cmd: string, json: string) => settle(cmd, false, json),
     callbackNative: (cmd: string, json: string, keep: boolean) => {
       shellCounts[cmd] = (shellCounts[cmd] ?? 0) + 1;
+      const ls = shellListeners.get(cmd);
+      if (ls && ls.size) {
+        const v = parse(json);
+        for (const l of [...ls]) l(v);
+      }
       const cb = callbacks.get(cmd);
       if (!cb) return;
       if (!keep) callbacks.delete(cmd);
@@ -450,12 +456,30 @@ export function shellCallbackCounts(): Record<string, number> {
   return { ...shellCounts };
 }
 
+/**
+ * Listen to a callback the shell calls on its own through `KWM.callbackNative(name, json, keep)` (e.g. "onPlayDone" when
+ * its SMF player reaches the end of a piece). Several listeners per name; the returned function removes this one.
+ */
+export function onShellCallback(name: string, l: (v: unknown) => void): () => void {
+  installKwm();
+  let ls = shellListeners.get(name);
+  if (!ls) shellListeners.set(name, (ls = new Set()));
+  ls.add(l);
+  return () => {
+    const cur = shellListeners.get(name);
+    if (!cur) return;
+    cur.delete(l);
+    if (cur.size === 0) shellListeners.delete(name);
+  };
+}
+
 /** Test hook: forget queued calls and listeners. */
 export function _resetKwmcoreForTests(): void {
   for (const q of pending.values()) for (const w of q) if (w.timer) clearTimeout(w.timer);
   pending.clear();
   queued.clear();
   callbacks.clear();
+  shellListeners.clear();
   for (const k of Object.keys(shellCounts)) delete shellCounts[k];
   midiListeners.clear();
   deviceListeners.clear();
