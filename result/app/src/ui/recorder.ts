@@ -430,7 +430,9 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     const head = typeof document !== "undefined" ? document.querySelector("header") : null;
     const top = `${head ? head.offsetHeight : 0}px`;
     if (head && el.style.getPropertyValue("--dock") !== top) el.style.setProperty("--dock", top);
-    usb.markLoading(); // a session gone without a word from the runner: the loading marks go too
+    // a session gone without a word from the runner: the loading marks go too
+    usb.markLoading();
+    renderSongs();
     renderNow();
   }, 250);
 

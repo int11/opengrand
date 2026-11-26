@@ -186,7 +186,8 @@ async function setup(opt: { stuck?: boolean; syncMode?: number; lateAudio?: bool
   const store = new ParamStore();
   bindStore(store);
   store.attach(p.session);
-  const ctx = createContext(store, { session: () => p.session });
+  let gone = false; // drop(): the context's session is over (a disconnect)
+  const ctx = createContext(store, { session: () => (gone ? null : p.session) });
   const st = stockPlayers(p.piano, p.sent, opt);
   ctx.usbFiles = [...FILES];
   Object.assign(usbListState(ctx), { at: Date.now(), session: p.session });
@@ -199,7 +200,7 @@ async function setup(opt: { stuck?: boolean; syncMode?: number; lateAudio?: bool
   const el = recorderScreen(ctx);
   document.body.append(el);
   await tick(10);
-  return { ...p, store, ctx, st, el };
+  return { ...p, store, ctx, st, el, drop: () => void (gone = true) };
 }
 
 // A row has no ▶ / ■ of its own since the player bar (2026-11-23). "play" = what a user does to play the file: choose
@@ -516,6 +517,24 @@ test("loading: a tap that fails clears the marks and keeps its error text", asyn
   assert.match(resultText(el), /1\.mp3 was not started/, "the failure is said");
   assert.deepEqual(loadingRows(el), [], "no row left loading");
   assert.equal(barLoading(el), null);
+});
+
+test("loading: the session gone mid-job - the row and the bar marks go", async () => {
+  const { el, notify, drop } = await setup({ syncMode: 0, lat: 400 });
+  notify([0x52, 0x01, 0x7f, 0x7f]);
+  await tick(20);
+  // the piano song's tap waits behind a USB file's slow job (replies 400 ms late)
+  row(el, "1.mp3", "play")!.click();
+  await tick(20);
+  (el.querySelector('#songs-list [data-song="1"] button.song-pick') as HTMLElement).click();
+  assert.deepEqual(loadingRows(el), ["song 1"]);
+  await tick(20);
+  assert.deepEqual(loadingRows(el), ["song 1"], "still waiting");
+  drop();
+  await tick(300);
+  assert.deepEqual(loadingRows(el), [], "no row left loading for a session that is over");
+  assert.equal(barLoading(el), null);
+  await tick(1500);
 });
 
 test("loading: ko / ja wording of the bar's line", async () => {
