@@ -133,6 +133,22 @@ test("BLE: an open that finishes after a newer open of the same piano does not d
   live.close();
 });
 
+const { DESKTOP_RECONNECT_HOOK, desktopReopenBle } = await import("../src/transport/desktop.ts");
+
+test("desktop reconnect: a second reconnect while the first hook was never run settles the first", async () => {
+  // the shell said "started" but did not run the hook (no window focus …); the next reopen sets its own hook. Before,
+  // the first promise was left pending for ever (the start that awaited it never ended).
+  const g: Record<string, unknown> = {};
+  let calls = 0;
+  g.ca79Desktop = { shell: "electron", bluetooth: { remembered: "CA79", reconnect: async () => (calls++ === 0 ? "started" : ((g[DESKTOP_RECONNECT_HOOK] as () => void)(), "started")) } };
+  const first = desktopReopenBle(async () => "old", g);
+  await tick(1);
+  const second = desktopReopenBle(async () => "new", g);
+  assert.equal(await second, "new");
+  const r = await Promise.race([first.then(() => "resolved", () => "rejected"), tick(50).then(() => "pending")]);
+  assert.equal(r, "rejected");
+});
+
 const { createContext } = await import("../src/ui/context.ts");
 const { ParamStore } = await import("../src/state/store.ts");
 

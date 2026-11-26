@@ -52,6 +52,9 @@ export const DESKTOP_RECONNECT_HOOK = "__ca79ngDesktopReconnect";
 
 type Global = Record<string, unknown>;
 
+/** The reconnect whose hook is set now: a newer one replaces the hook, so the older one is given up (else it never settles). */
+const waiting = new WeakMap<Global, () => void>();
+
 export function desktopShell(g: Global = globalThis as unknown as Global): DesktopBridge | null {
   const d = g.ca79Desktop as DesktopBridge | undefined;
   return d && d.shell === "electron" ? d : null;
@@ -68,11 +71,18 @@ export function desktopReopenBle<T>(request: () => Promise<T>, g: Global = globa
   return new Promise<T>((resolve, reject) => {
     const drop = () => {
       if (g[DESKTOP_RECONNECT_HOOK] === hook) delete g[DESKTOP_RECONNECT_HOOK];
+      if (waiting.get(g) === giveUp) waiting.delete(g);
     };
     const hook = () => {
       drop();
       request().then(resolve, reject);
     };
+    const giveUp = () => {
+      drop();
+      reject(new Error("desktop reconnect replaced by a newer one"));
+    };
+    waiting.get(g)?.();
+    waiting.set(g, giveUp);
     g[DESKTOP_RECONNECT_HOOK] = hook;
     bt.reconnect().then(
       (r) => {
