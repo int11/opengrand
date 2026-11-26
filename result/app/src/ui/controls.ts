@@ -6,6 +6,7 @@ import type { ParamDef } from "../protocol/params.gen.ts";
 import { keyOf, type ParamStore } from "../state/store.ts";
 import { t, tl } from "../i18n.ts";
 import { h } from "./dom.ts";
+import { onDispose } from "./scope.ts";
 
 export interface ControlOptions {
   label?: string;
@@ -27,9 +28,25 @@ export function bindStore(store: ParamStore): void {
   store.subscribe((key) => refreshers.get(key)?.forEach((f) => f()));
 }
 
+/** controls bound to the store right now (tests: replaced screens must not leave theirs behind) */
+export function boundControls(): number {
+  let n = 0;
+  refreshers.forEach((set) => (n += set.size));
+  return n;
+}
+
+/** Bind `f` to the key for the life of the screen being built (ui/scope.ts: main.ts disposes it when the tab is
+ * replaced). A control built outside a scope (a screen built directly, as tests do) stays bound. */
 function onKey(key: string, f: () => void): void {
-  if (!refreshers.has(key)) refreshers.set(key, new Set());
-  refreshers.get(key)!.add(f);
+  let set = refreshers.get(key);
+  if (!set) refreshers.set(key, (set = new Set()));
+  set.add(f);
+  onDispose(() => {
+    const now = refreshers.get(key);
+    if (!now) return;
+    now.delete(f);
+    if (!now.size) refreshers.delete(key);
+  });
 }
 
 /** labels of a two-value setting that read as off / on (the last `/` part) - only those are drawn as a switch */

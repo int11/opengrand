@@ -4,6 +4,7 @@ import { findParam } from "../../protocol/codecs.ts";
 import type { SoundRef, TabId } from "../../state/settings.ts";
 import type { ParamStore } from "../../state/store.ts";
 import { type AppContext, createContext } from "../context.ts";
+import { onDispose } from "../scope.ts";
 
 export const PART = { Main1: 0x00, Layer: 0x08, Lower: 0x09, FourHandsRight: 0x0a, FourHandsLeft: 0x0b } as const;
 export const PART_LABEL: Record<string, string> = { Main1: "Main", Layer: "Layer", Lower: "Lower", FourHandsRight: "4H Right", FourHandsLeft: "4H Left" };
@@ -53,4 +54,5 @@ export function whileShown(el: HTMLElement, store: ParamStore, f: (key: string) 
     }
     f(key);
   });
+  onDispose(off); // a screen built in a scope (main.ts show()): at once when it is replaced
 }

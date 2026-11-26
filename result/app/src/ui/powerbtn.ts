@@ -129,6 +129,7 @@ export function powerButton(session: () => PianoSession | null, conn: { state: C
     const wake = st === "standby";
     el.disabled = true;
     const r = await new NgPower(new NgClient(s)).standby(wake ? "wake" : "enter");
+    if (bound !== s) return; // the app switched pianos meanwhile: this reply is the previous piano's
     opts.say?.(r?.rc === PolicyResult.Ok ? "" : powerRcText(r));
     if (r) set(r.state);
     draw();

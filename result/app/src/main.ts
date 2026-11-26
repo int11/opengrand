@@ -19,6 +19,7 @@ import { createContext } from "./ui/context.ts";
 import { usbListState } from "./ui/usblist.ts";
 import { usbPlayback } from "./ui/usbplay.ts";
 import { bindStore } from "./ui/controls.ts";
+import { createScope, inScope, type Scope } from "./ui/scope.ts";
 import { DisplayController } from "./ui/display.ts";
 import { h } from "./ui/dom.ts";
 import { recorderScreen } from "./ui/recorder.ts";
@@ -115,6 +116,8 @@ const loaderNote = h("p", { class: "muted", id: "loader-note", hidden: true });
 let current: TabId = ctx.settings.startTab;
 /** the current tab was drawn while the connection was not ready / waking (show) */
 let drawnUnsynced = false;
+// the shown tab's lifetime (ui/scope.ts): its control bindings, listeners and timers go when show() replaces it
+let screenScope: Scope | null = null;
 
 // ---- connection: one state machine (src/state/connection.ts); header, button and banner draw only its state ----
 const LAST_LINK = "ca79ng.lastLink";
@@ -235,7 +238,11 @@ function renderChrome(): void {
 function show(id: TabId): void {
   current = id;
   drawnUnsynced = conn.phase !== "ready" && conn.phase !== "waking";
-  main.replaceChildren(screens[id]());
+  const scope = createScope();
+  const el = inScope(scope, screens[id]);
+  screenScope?.dispose();
+  screenScope = scope;
+  main.replaceChildren(el);
   let on: HTMLElement | null = null;
   tabbar.querySelectorAll<HTMLElement>("button[data-tab]").forEach((b) => {
     b.classList.toggle("on", b.dataset.tab === id);

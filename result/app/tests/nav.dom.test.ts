@@ -88,3 +88,16 @@ test("phone / PC: the connect button stays and opens the device list", () => {
   assert.ok(doc.querySelector("#picker"), "idle: the device list");
   doc.querySelector("#picker")!.remove();
 });
+
+// the panel runs for days (Chrome 71): every tab change rebuilds the screen, and the replaced one's control
+// bindings must go with it (main.ts show() disposes its scope, src/ui/scope.ts)
+test("tab changes: a replaced tab leaves no control binding behind", async () => {
+  const { boundControls } = await import("../src/ui/controls.ts");
+  const open = (id: string) => tabs().find((b) => b.dataset.tab === id)!.click();
+  open("settings");
+  const one = boundControls();
+  assert.ok(one > 0, "the Settings tab binds its controls");
+  for (let i = 0; i < 3; i++) for (const b of tabs()) b.click();
+  open("settings");
+  assert.equal(boundControls(), one, "bindings of replaced tabs are still in the map");
+});

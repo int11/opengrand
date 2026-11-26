@@ -11,6 +11,7 @@ import type { ParamStore } from "../../state/store.ts";
 import type { AppContext } from "../context.ts";
 import { control } from "../controls.ts";
 import { h, section } from "../dom.ts";
+import { leftDocument, onDispose } from "../scope.ts";
 import { userEditSection } from "../vtedit.ts";
 import { ctxFor, whileShown } from "./common.ts";
 
@@ -153,12 +154,16 @@ export function vtScreen(store: ParamStore, ctx?: AppContext): HTMLElement {
   };
   const startBtn = h("button", { class: "primary", onclick: start }, `▶ ${t("Preview")}`);
   // §9.10: the piano reports SoundPreviewStop when the phrase ends by itself
-  store.onMessage((m) => {
+  // goes with the screen (ui/scope.ts); built without a scope, at the first message after the tab was left
+  const gone = leftDocument(() => startBtn);
+  const offPreview = store.onMessage((m) => {
+    if (gone()) return void offPreview();
     if (m.fn === 0x10 && m.v1 === 0x50 && m.v2 === 0x1e && m.data[0] === playing) {
       playing = null;
       startBtn.classList.remove("on");
     }
   });
+  onDispose(offPreview);
   const stopBtn = h("button", { onclick: stop }, `■ ${t("Stop")}`);
 
   const vt = vtRows(store);

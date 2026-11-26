@@ -24,6 +24,8 @@ import { t } from "../i18n.ts";
 import { shellInfo } from "../transport/android.ts";
 import type { AppContext } from "./context.ts";
 import { h, section } from "./dom.ts";
+import { currentScope, leftDocument, onDispose } from "./scope.ts";
+import type { PianoSession } from "../protocol/session.ts";
 
 declare const __APP_VERSION__: string | undefined;
 export const APP_VERSION: string = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "dev";
@@ -52,6 +54,9 @@ function cardFold(d: HTMLDetailsElement): HTMLDetailsElement {
 function fold(id: string, title: Node | string, open: boolean, ...children: (Node | null)[]): HTMLDetailsElement {
   return h("details", { id, class: "fold", open }, h("summary", {}, title), ...children) as HTMLDetailsElement;
 }
+
+/** the NOR dump's status poll: interval, one status() wait, no-replies in a row that end it - tests shorten them */
+export const NOR_POLL = { ms: 1000, timeoutMs: 700, misses: 3 };
 
 export function infoScreen(ctx: AppContext): HTMLElement {
   const s = ctx.session();
@@ -149,6 +154,35 @@ export function infoScreen(ctx: AppContext): HTMLElement {
     if (ngPoll !== null) clearInterval(ngPoll);
     ngPoll = null;
   };
+  // the poll lives while this screen does (ui/scope.ts; built without a scope: while it stays in the document), on
+  // the session it started on, and ends after NOR_POLL.misses status() calls in a row got no reply (piano gone)
+  const scope = currentScope();
+  const left = leftDocument(() => ngDumpBox);
+  onDispose(stopPoll);
+  const startPoll = (cur: PianoSession) => {
+    stopPoll();
+    if (scope?.disposed) return;
+    const ng = new NgClient(cur);
+    let misses = 0;
+    let busy = false;
+    const timer = setInterval(() => {
+      if (ngPoll !== timer || busy) return;
+      if (scope?.disposed || left() || ctx.session() !== cur) return stopPoll();
+      busy = true;
+      void ng.status(NOR_POLL.timeoutMs).then((st) => {
+        busy = false;
+        if (ngPoll !== timer) return; // stopped (or restarted) meanwhile
+        if (st) {
+          misses = 0;
+          showDump(st);
+        } else if (++misses >= NOR_POLL.misses) {
+          stopPoll();
+          ngDumpStatus.textContent = t("No reply.");
+        }
+      });
+    }, NOR_POLL.ms);
+    ngPoll = timer;
+  };
   const showDump = (st: NgDumpStatus) => {
     ngBar.hidden = st.state !== "running" && st.state !== "closing";
     ngBar.value = st.chunk;
@@ -207,7 +241,10 @@ export function infoScreen(ctx: AppContext): HTMLElement {
     devShown();
     if (!otaBox.hidden) await otaRefresh();
     const st = await ng.status();
-    if (st) showDump(st);
+    if (!st) return;
+    showDump(st);
+    // back on the tab while a dump runs: follow it again
+    if ((st.state === "running" || st.state === "closing") && ngPoll === null && ctx.session() === cur) startPoll(cur);
   };
 
   const ngDumpBtn = h("button", {
@@ -225,13 +262,7 @@ export function infoScreen(ctx: AppContext): HTMLElement {
         ngDumpStatus.textContent = st ? t("Failed: {e}", { e: st.errorText }) : t("Rejected ({c}).", { c: String(rc) });
         return;
       }
-      stopPoll();
-      ngPoll = setInterval(() => {
-        void (async () => {
-          const st = await ng.status();
-          if (st) showDump(st);
-        })();
-      }, 1000);
+      startPoll(cur);
     },
   }, t("Dump NOR flash to USB"));
 

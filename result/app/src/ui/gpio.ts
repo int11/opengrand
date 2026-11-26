@@ -6,6 +6,7 @@ import { t } from "../i18n.ts";
 import type { PianoSession } from "../protocol/session.ts";
 import { type GpioEvent, type GpioSnapshot, gpioPins, GPIO_PINS, NgClient, NgGpio, parseGpioNotice } from "../protocol/ngext.ts";
 import { h } from "./dom.ts";
+import { currentScope, onDispose } from "./scope.ts";
 
 const hex8 = (v: number) => "0x" + v.toString(16).toUpperCase().padStart(2, "0");
 const hex32 = (v: number) => "0x" + (v >>> 0).toString(16).toUpperCase().padStart(8, "0");
@@ -32,6 +33,7 @@ export function gpioSection(s: PianoSession): HTMLElement {
   const raw = h("p", { class: "muted", id: "gpio-raw" });
   const log = h("div", { id: "gpio-log" });
   let unsub: (() => void) | null = null;
+  const scope = currentScope();
 
   const showLog = (events: GpioEvent[], live = false) => {
     const rows = events.map((e) => h("p", { class: "gpio-event", "data-signal": e.pin, "data-seq": e.seq }, (live ? "● " : "") + gpioEventText(e)));
@@ -62,6 +64,10 @@ export function gpioSection(s: PianoSession): HTMLElement {
   notifyBox.addEventListener("change", async () => {
     const on = notifyBox.checked;
     const r = await gpio.notify(on);
+    if (scope?.disposed) { // the screen was replaced meanwhile: nobody listens - notices off again
+      if (on && r?.rc === 0 && s.state === "ready") void gpio.notify(false).catch(() => null);
+      return;
+    }
     if (!r || r.rc !== 0) {
       notifyBox.checked = false;
       status.textContent = !r ? t("No answer from the piano (this firmware may not have the GPIO diagnostic).")
@@ -80,6 +86,14 @@ export function gpioSection(s: PianoSession): HTMLElement {
       unsub = null;
     }
     status.textContent = on ? t("Change notices on: pin changes appear below as they happen.") : t("Change notices off.");
+  });
+
+  // the screen replaced (ui/scope.ts): the notice listener goes, and the piano stops sending notices to nobody
+  onDispose(() => {
+    if (!unsub) return;
+    unsub();
+    unsub = null;
+    if (s.state === "ready") void gpio.notify(false).catch(() => null);
   });
 
   return h("div", { id: "gpio-diag" },

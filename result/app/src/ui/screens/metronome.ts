@@ -5,6 +5,7 @@ import { RHYTHMS } from "../../protocol/params.gen.ts";
 import type { ParamStore } from "../../state/store.ts";
 import { control } from "../controls.ts";
 import { h, section } from "../dom.ts";
+import { onDispose } from "../scope.ts";
 
 /** The metronome tempo range (manual p.44: 10~400 BPM, ±1 by [–] [+], ±10 by an up / down swipe). */
 export const TEMPO_MIN = 10;
@@ -102,6 +103,7 @@ export function metronomeScreen(store: ParamStore, beatEvents: EventTarget): HTM
     dots.replaceChildren(...Array.from({ length: Math.max(n, 4) }, (_, i) => h("span", { class: i === n - 1 ? "dot on" : "dot" })));
   };
   beatEvents.addEventListener("beat", onBeat);
+  onDispose(() => beatEvents.removeEventListener("beat", onBeat)); // in a scope (main.ts show()): at once on replace
   const sigs: [number, number][] = [[1, 4], [2, 4], [3, 4], [4, 4], [5, 4], [3, 8], [6, 8], [7, 8], [9, 8], [12, 8]];
   const sigSel = h("select", {}, ...sigs.map(([n, d], i) => h("option", { value: String(i) }, `${n}/${d}`))) as HTMLSelectElement;
   sigSel.addEventListener("change", () => {
@@ -166,5 +168,6 @@ export function metronomeScreen(store: ParamStore, beatEvents: EventTarget): HTM
     if (gone()) offStore();
     else follow(k);
   });
+  onDispose(offStore);
   return root;
 }

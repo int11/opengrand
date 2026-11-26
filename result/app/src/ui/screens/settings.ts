@@ -9,6 +9,7 @@ import { control } from "../controls.ts";
 import { toneRows } from "../tone.ts";
 import { confirmTap, disarm } from "../confirm2.ts";
 import { h, section } from "../dom.ts";
+import { leftDocument, onDispose } from "../scope.ts";
 import { powerPolicySection } from "../power.ts";
 import { startupSection } from "../startup.ts";
 import { ctxFor, TAB_TITLES } from "./common.ts";
@@ -92,10 +93,14 @@ export function settingsScreen(store: ParamStore, ctx?: AppContext): HTMLElement
 
   const lib = c.library;
   const recStatus = h("p", { class: "muted", id: "rec-reset" });
-  store.onMessage((m) => {
+  // goes with the screen (ui/scope.ts); built without a scope, at the first message after the tab was left
+  const gone = leftDocument(() => recStatus);
+  const offReset = store.onMessage((m) => {
+    if (gone()) return void offReset();
     // ResetCompleteInfo 32 52 22 7F [0, hi, lo]; [0, 7F, 0] = all songs
     if (m.fn === 0x32 && m.v1 === 0x52 && m.v2 === 0x22) recStatus.textContent = m.data[1] === 0x7f ? t("All recorder songs deleted.") : t("Song {n} deleted.", { n: ((m.data[1] << 7) | m.data[2]) + 1 });
   });
+  onDispose(offReset);
   const reset = (msg: string, fn: () => void) => (e: Event) => confirmTap(e.currentTarget, msg, fn);
 
   return h(

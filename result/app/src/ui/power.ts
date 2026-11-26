@@ -9,6 +9,7 @@ import type { AppContext } from "./context.ts";
 import { btAudioText } from "./btaudio.ts";
 import { confirmTap } from "./confirm2.ts";
 import { h } from "./dom.ts";
+import { currentScope, onDispose } from "./scope.ts";
 import { gpioSection } from "./gpio.ts";
 import { identifyShared } from "./identify.ts";
 
@@ -145,6 +146,9 @@ export function powerPolicySection(ctx: AppContext): HTMLElement {
  * goes, the auto power-off test 1 / 5 min (19 04), the diagnostic line (op 0x1A) and 「GPIO 읽기」 (op 0x17). Same ops,
  * same ids (`#remote-off-row` · `#apo-test` · `[data-action=apo-test-*|remote-off]` · `#apo-test-left` · `#power-diag` ·
  * `#gpio-diag`). Hidden until the piano answers Identify with the power bit; `onShow` tells the card to show itself. */
+/** the APO test's countdown read (op 0x1A) interval - tests shorten it */
+export const APO_TEST = { pollMs: 5000 };
+
 export function powerDevSection(ctx: AppContext, onShow?: () => void): HTMLElement {
   const el = h("div", { id: "power-dev", hidden: true });
   const s = ctx.session();
@@ -153,6 +157,16 @@ export function powerDevSection(ctx: AppContext, onShow?: () => void): HTMLEleme
   const note = h("p", { class: "muted", id: "power-dev-status" });
   const diagLine = h("p", { class: "muted", id: "power-diag", hidden: true });
   const apoLeft = h("span", { class: "muted", id: "apo-test-left" });
+  // the APO test's countdown loop: one at a time (a new press or Cancel ends the previous one), gone with the screen
+  const scope = currentScope();
+  let apoSeq = 0;
+  let apoTimer: ReturnType<typeof setTimeout> | null = null;
+  const stopApo = () => {
+    apoSeq++;
+    if (apoTimer !== null) clearTimeout(apoTimer);
+    apoTimer = null;
+  };
+  onDispose(stopApo);
   // 「GPIO 읽기」 (op 0x17, read only): built once, kept across re-renders (its notice
   // subscription lives with it); older payloads stay silent and the box says so
   const gpioBox = gpioSection(s);
@@ -190,18 +204,23 @@ export function powerDevSection(ctx: AppContext, onShow?: () => void): HTMLEleme
       : null;
     // APO test shortcut (19 04): the auto power-off in 1 / 5 min through the normal path (RAM only)
     const apoTest = (secs: number) => async () => {
+      stopApo();
+      const my = apoSeq;
       const r = await power.apoTest(secs);
+      if (my !== apoSeq || scope?.disposed) return; // another press (its reply is the one shown) or the screen left
       note.textContent = apoTestText(r);
       if (r) render(pol, r.state);
       void showDiag();
       // the countdown from op 0x1A (a read: not activity) every 5 s while the block is shown
       const until = Date.now() + (secs + 15) * 1000;
       const again = () => {
+        apoTimer = null;
+        if (my !== apoSeq || scope?.disposed) return;
         if (!el.isConnected || el.hidden || Date.now() > until || r?.rc !== PolicyResult.Ok || !secs) return;
         if (typeof document === "undefined" || document.visibilityState !== "hidden") void showDiag();
-        setTimeout(again, 5000);
+        apoTimer = setTimeout(again, APO_TEST.pollMs);
       };
-      if (el.isConnected) setTimeout(again, 5000);
+      if (el.isConnected) apoTimer = setTimeout(again, APO_TEST.pollMs);
     };
     const testRow = remoteOff && standby === "on"
       ? h("div", { class: "row", id: "apo-test" }, h("span", {}, t("Auto power-off test")),
