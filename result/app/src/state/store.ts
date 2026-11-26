@@ -25,6 +25,10 @@ export class ParamStore {
   private listeners = new Set<Listener>();
   private session: PianoSession | null = null;
   private rawListeners = new Set<(m: ParamMessage) => void>();
+  /** the last value the piano confirmed per key (sent by it, or a set it ACKed): where a failed set goes back to */
+  private confirmed = new Map<string, number[]>();
+  /** per key: the number of the latest set — a failed set rolls back only when no newer set of that key followed */
+  private setSeq = new Map<string, number>();
 
   attach(session: PianoSession): void {
     this.session = session;
@@ -171,11 +175,18 @@ export class ParamStore {
   async set(p: ParamDef, part: number, data: number[]): Promise<boolean> {
     const key = BANDED.has(p.name) && data.length ? bandKey(p, part, data[0]) : keyOf(p, part);
     const before = this.values.get(key);
+    if (!this.confirmed.has(key) && before) this.confirmed.set(key, before);
+    const my = (this.setSeq.get(key) ?? 0) + 1;
+    this.setSeq.set(key, my);
     this.put(key, data);
     if (!this.session) return true;
     const ok = await this.session.sendParam({ fn: p.fn, v1: p.v1, v2: p.v2, part, data });
-    if (!ok && p.fn === 0x10) {
-      if (before) this.put(key, before);
+    if (ok) this.confirmed.set(key, data.slice());
+    // fast taps: a newer set of this key decides what is shown (its own rollback, if it fails, comes back to the
+    // piano's value) — an older one going back to the value it replaced would hide the newer one
+    else if (p.fn === 0x10 && this.setSeq.get(key) === my) {
+      const was = this.confirmed.get(key);
+      if (was) this.put(key, was);
       else this.values.delete(key);
     }
     return ok;
@@ -190,8 +201,12 @@ export class ParamStore {
   fromWire(m: ParamMessage): void {
     const p = paramByWire(m.fn, m.v1, m.v2, m.part);
     if (!p) return;
+    this.confirmed.set(keyOf(p, m.part), m.data.slice());
     this.put(keyOf(p, m.part), m.data);
-    if (BANDED.has(p.name) && m.data.length) this.put(bandKey(p, m.part, m.data[0]), m.data);
+    if (BANDED.has(p.name) && m.data.length) {
+      this.confirmed.set(bandKey(p, m.part, m.data[0]), m.data.slice());
+      this.put(bandKey(p, m.part, m.data[0]), m.data);
+    }
   }
 
   private put(key: string, data: number[]): void {

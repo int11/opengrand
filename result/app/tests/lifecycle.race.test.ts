@@ -151,6 +151,65 @@ test("desktop reconnect: a second reconnect while the first hook was never run s
 
 const { createContext } = await import("../src/ui/context.ts");
 const { ParamStore } = await import("../src/state/store.ts");
+const { PARAMS } = await import("../src/protocol/params.gen.ts");
+
+/** A session on a loopback whose piano ACKs / NACKs each fn 0x10 as `answer` says, and can send 7E 01 00. */
+async function storeOnPiano(answer: (data: number[]) => "ack" | "nack" | "none") {
+  const [a, pa] = LoopbackLink.pair();
+  fakePiano(pa);
+  const tx = (fn: number, body: number[]) => pa.send(encodeFrame({ dev: 0, fn, group: 0x04, machine: 0x1e, body }));
+  const held: (() => void)[] = [];
+  pa.onMessage((m) => {
+    const f = decodeFrame(m);
+    if (!f) return;
+    if (f.fn === 0x7e && f.body[0] === 0x01 && f.body[1] === 0x01) tx(0x7e, [0x02, 0x00, 0x00]);
+    else if (f.fn === 0x7e && f.body[0] === 0x05 && f.body[1] === 0x40) tx(0x7e, [0x05, 0x00, 0x00, 0x02]);
+    else if (f.fn === 0x7e && f.body[0] === 0x05 && f.body[1] === 0x41) tx(0x7e, [0x05, 0x01, 0x00, 0x01]);
+    else if (f.fn === 0x7e && f.body[0] === 0x05 && f.body[1] === 0x42) tx(0x7e, [0x05, 0x02, 0x00]);
+    else if (f.fn === 0x7e && f.body[0] === 0x04 && f.body[1] === 0x41) tx(0x7e, [0x04, 0x01, 0x32]);
+    else if (f.fn === 0x02 && f.body[0] === 0x5f) tx(0x03, [0x5f, 0x7f, 0x7f]);
+    else if (f.fn === 0x10) {
+      const how = answer(f.body.slice(3));
+      const reply = () => tx(how === "ack" ? 0x07 : 0x06, [f.body[0], f.body[1], f.body[2]]);
+      if (how !== "none") held.push(reply);
+    }
+  });
+  const s = new PianoSession(a, { ackTimeoutMs: 40, maxRetries: 1 });
+  await s.connect(60);
+  const store = new ParamStore();
+  store.attach(s);
+  return { s, store, tx, flush: () => held.splice(0).forEach((r) => r()) };
+}
+
+const TEMPO = PARAMS.find((p) => p.name === "MetronomeTempo")!;
+
+test("store: a dropped set behind a newer one does not roll the newer value back", async () => {
+  // fast taps: 2 then 3; the piano refuses 2 and takes 3. Before, 2's rollback put back the value from before both
+  // taps after 3 was shown, and the screen kept it while the piano had 3.
+  const p = await storeOnPiano((d) => (d[1] === 2 ? "nack" : "ack"));
+  p.tx(0x10, [TEMPO.v1, TEMPO.v2, 0x7f, 0, 1]); // the piano's value: 1
+  await tick(5);
+  const a = p.store.set(TEMPO, 0x7f, [0, 2]);
+  const b = p.store.set(TEMPO, 0x7f, [0, 3]);
+  await tick(5);
+  p.flush(); // NACK 2
+  await tick(5);
+  p.flush(); // ACK 3
+  assert.deepEqual([await a, await b], [false, true]);
+  assert.deepEqual(p.store.get(TEMPO, 0x7f), [0, 3]);
+});
+
+test("store: both sets dropped by a displacement end on the piano's value, not on the first tap", async () => {
+  const p = await storeOnPiano(() => "none");
+  p.tx(0x10, [TEMPO.v1, TEMPO.v2, 0x7f, 0, 1]);
+  await tick(5);
+  const a = p.store.set(TEMPO, 0x7f, [0, 2]);
+  const b = p.store.set(TEMPO, 0x7f, [0, 3]);
+  await tick(5);
+  p.tx(0x7e, [0x01, 0x00]); // 7E 01 00: another device took control, both dropped
+  assert.deepEqual([await a, await b], [false, false]);
+  assert.deepEqual(p.store.get(TEMPO, 0x7f), [0, 1]);
+});
 
 test("file channel recover: the CONNECT + re-sync runs through the connection manager, a failed one is not left as Connected", async () => {
   // fn 0x24 timeout → recover. Before, the context called session.takeControl() behind the manager's back: when the
