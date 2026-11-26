@@ -285,7 +285,8 @@ async function rejoinRig() {
   const ctx = createContext(new ParamStore(), { session: () => m.session, retake: (x) => m.rejoin(x) });
   const recover = () => (ctx.files() as unknown as { opt: { recover(): Promise<unknown> } }).opt.recover(); // as FileAccessClient does
   const displace = () => real(encodeFrame({ dev: 0, fn: 0x7e, group: 0x04, machine: 0x1e, body: [0x01, 0x00] }));
-  return { m, n, texts, seen, recover, displace, mute: (on: boolean) => { mute = on; }, wakes: () => wakes };
+  const invite = () => real(encodeFrame({ dev: 0, fn: 0x7e, group: 0x04, machine: 0x1e, body: [0x01, 0x01] }));
+  return { m, n, texts, seen, recover, displace, invite, mute: (on: boolean) => { mute = on; }, wakes: () => wakes };
 }
 
 test("file channel recover on the same session: main.ts's on-connect hook does not run again, the header does not say Reconnecting", async () => {
@@ -326,7 +327,7 @@ test("a file channel recover cut by a displacement, then Take control again: the
   await tick(5);
   r.displace();
   assert.equal(await p, "displaced");
-  await tick(5); // the CONNECT the displacement cut ends first (a retake in the same tick would join it)
+  await tick(5);
   r.mute(false);
   r.m.retake();
   assert.equal(await r.m.settled(), "ready");
@@ -342,4 +343,33 @@ test("Reconnect from the connected menu still counts as a connect (the user aske
   assert.deepEqual([r.n.connected, r.n.rejoined], [2, 0]);
   assert.ok(r.texts.includes("Reconnecting to {name}…"), r.texts.join(" | "));
   r.m.disconnect();
+});
+
+test("a displacement and a retake in the same tick: the retake is a new CONNECT, not a join of the one the displacement cut", async () => {
+  // a file channel recover is under way when 7E 01 00 comes; the retake comes before that CONNECT has ended — the
+  // piano's 7E 01 01 right behind it, or 「Take control again」 at once. Before, the retake joined the cut CONNECT, which
+  // then failed displaced: the manager stayed "retaking" until its watchdog (280 s).
+  for (const how of ["invite", "button"] as const) {
+    const r = await rejoinRig();
+    try {
+      const s = r.m.session!;
+      r.mute(true);
+      const p = r.recover();
+      await tick(5);
+      if (how === "button")
+        s.onState((st) => {
+          if (st === "displaced") r.m.retake(); // the banner's button, in the same tick as the displacement
+        });
+      r.mute(false);
+      r.displace();
+      if (how === "invite") r.invite();
+      assert.equal(await p, "displaced", how);
+      const end = await Promise.race([r.m.settled(), tick(1000).then(() => `still ${r.m.phase}`)]);
+      assert.equal(end, "ready", how);
+      assert.equal(s.state, "ready", how);
+      assert.equal(r.m.session, s, how);
+    } finally {
+      r.m.disconnect(); // the 280 s watchdog goes with it
+    }
+  }
 });

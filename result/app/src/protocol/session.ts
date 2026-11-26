@@ -238,7 +238,9 @@ export class PianoSession {
    */
   connect(timeoutMs = 3000): Promise<PianoIdentity> {
     // one CONNECT + re-sync at a time: a second caller (the file client's recover, a re-bind) joins the one under way —
-    // two would share the waiters and the dump handlers, and the second dump request ends the first one's wait
+    // two would share the waiters and the dump handlers, and the second dump request ends the first one's wait.
+    // A displacement ends the one under way (displace() clears `connecting`): a caller after it starts a new one —
+    // joining the cut one would only get its DisplacedError
     if (this.connecting) return this.connecting;
     const run: Promise<PianoIdentity> = this.connect1(timeoutMs).finally(() => {
       if (this.connecting === run) this.connecting = null;
@@ -248,18 +250,27 @@ export class PianoSession {
   }
 
   private connecting: Promise<PianoIdentity> | null = null;
+  /** bumped by every connect1 and every displacement: a connect1 whose number is not the current one was cut */
+  private attempt = 0;
 
   private async connect1(timeoutMs: number): Promise<PianoIdentity> {
+    const id = ++this.attempt;
+    // after every await: a reply that came in the same tick as the displacement must not carry the cut connect on
+    // next to the new one (both would send, and the dump handlers are one per session)
+    const live = <T>(x: T): T => {
+      if (id !== this.attempt) throw new DisplacedError();
+      return x;
+    };
     this.setState("connecting");
     const step = Math.max(250, Math.floor(timeoutMs / 3));
     const tries = this.opt.connectTries;
     const sys = (match: (f: KawaiFrame) => boolean, body: number[], n: number, dev = this.deviceId) =>
-      this.ask(() => appFrame(Fn.System, body, dev), (f) => f.fn === Fn.System && match(f), step, n);
+      this.ask(() => appFrame(Fn.System, body, dev), (f) => f.fn === Fn.System && match(f), step, n, () => id === this.attempt);
 
-    const mode = await sys((f) => f.body[0] === 0x02, [...SysCmd.Sync], tries, DEV_BROADCAST);
+    const mode = live(await sys((f) => f.body[0] === 0x02, [...SysCmd.Sync], tries, DEV_BROADCAST));
     this.deviceId = mode.dev;
 
-    const m = await sys((f) => f.body[0] === 0x05 && f.body[1] === 0x00, [...SysCmd.RequestModel], tries);
+    const m = live(await sys((f) => f.body[0] === 0x05 && f.body[1] === 0x00, [...SysCmd.RequestModel], tries));
     const sub1 = m.body[2] ?? 0;
     const sub2 = m.body[3] ?? 0;
     const known = MODELS.find((x) => x.group === m.group && x.machine === m.machine && x.sub1 === sub1 && x.sub2 === sub2);
@@ -273,17 +284,18 @@ export class PianoSession {
         if (e instanceof DisplacedError) throw e;
         return null;
       });
-    const d = await optional(sys((f) => f.body[0] === 0x05 && f.body[1] === 0x01, [...SysCmd.RequestDestination], 2));
+    const d = live(await optional(sys((f) => f.body[0] === 0x05 && f.body[1] === 0x01, [...SysCmd.RequestDestination], 2)));
     if (d) this.identity.destination = d.body[d.body.length - 1];
-    const l = await optional(sys((f) => f.body[0] === 0x05 && f.body[1] === 0x02, [...SysCmd.RequestLanguage], 2));
+    const l = live(await optional(sys((f) => f.body[0] === 0x05 && f.body[1] === 0x02, [...SysCmd.RequestLanguage], 2)));
     if (l) this.identity.language = l.body[2];
-    const v = await optional(sys((f) => f.body[0] === 0x04 && f.body[1] === 0x01, [...SysCmd.RequestVersion], 2));
+    const v = live(await optional(sys((f) => f.body[0] === 0x04 && f.body[1] === 0x01, [...SysCmd.RequestVersion], 2)));
     if (v) this.identity.version = String.fromCharCode(...v.body.slice(2).filter((b) => b >= 0x20));
 
     this.setState("syncing");
     try {
-      await this.requestAll(timeoutMs * 2);
+      live(await this.requestAll(timeoutMs * 2));
     } catch (e) {
+      live(null);
       if (e instanceof DisplacedError || this.state !== "syncing") throw e;
       // The stock drops a controller without a word when one dump value goes unACKed through its 16
       // sends (FUN_4014BD1C). Its wait has a 16-bit deadline (FUN_4014BCAC), so for 0.5 s in every 131 s
@@ -292,8 +304,8 @@ export class PianoSession {
       // again and ask once more.
       const again = this.waitFor((f) => f.fn === Fn.System && f.body[0] === 0x02, timeoutMs);
       this.link.send(appFrame(Fn.System, [...SysCmd.Sync]));
-      await again;
-      await this.requestAll(timeoutMs * 2);
+      live(await again);
+      live(await this.requestAll(timeoutMs * 2));
     }
     this.setState("ready");
     return this.identity;
@@ -303,10 +315,11 @@ export class PianoSession {
    * Send a request and wait for the matching reply, re-sending every `stepMs` up to `tries` times.
    * A displacement (`7E 01 00`) rejects at once with DisplacedError and stops the re-sends.
    */
-  private async ask(make: () => Uint8Array, match: (f: KawaiFrame) => boolean, stepMs: number, tries: number): Promise<KawaiFrame> {
+  private async ask(make: () => Uint8Array, match: (f: KawaiFrame) => boolean, stepMs: number, tries: number, alive: () => boolean): Promise<KawaiFrame> {
     let last: Error = new Error("timeout waiting for piano reply");
     for (let i = 0; i < tries; i++) {
       if (this.state === "closed" || this.released) break;
+      if (!alive()) throw new DisplacedError(); // a displacement cut this connect: no re-send of its request
       const reply = this.waitFor(match, stepMs);
       if (i > 0) this.stats.connectRetries++;
       this.link.send(make());
@@ -528,6 +541,10 @@ export class PianoSession {
     this.stats.dropped += pending.length;
     const waiters = this.waiters;
     this.waiters = [];
+    // the connect under way is cut: a takeControl() from here on (a state listener below, a 7E 01 01 right behind
+    // this) starts a new one instead of joining it
+    this.connecting = null;
+    this.attempt++;
     this.setState("displaced");
     for (const p of pending) p.resolve(false);
     for (const w of waiters) {

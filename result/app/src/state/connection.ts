@@ -44,7 +44,7 @@
 // a "not bound" answer after an automatic re-bind of the same session is left alone (no CONNECT loop), apply /
 // Identify change always re-bind (each is one swap). "Reconnect" (connected menu / any retry while connected)
 // always does a real CONNECT handshake — before, re-picking the same piano sent nothing.
-import type { PianoSession, RebindReason } from "../protocol/session.ts";
+import { DisplacedError, type PianoSession, type RebindReason } from "../protocol/session.ts";
 import type { MidiLink } from "../transport/link.ts";
 import { t } from "../i18n.ts";
 
@@ -513,7 +513,8 @@ export class ConnectionManager {
         const gen = this.state.gen;
         if (!s) break;
         s.takeControl(this.opt.replyMs ?? 3000).catch((err: Error) => {
-          if (!s.displaced) this.dispatch({ type: "failed", gen, error: err.message });
+          // DisplacedError: the displacement already came as an event (and a retake after it is a new CONNECT under way)
+          if (!(err instanceof DisplacedError) && !s.displaced) this.dispatch({ type: "failed", gen, error: err.message });
         });
         break;
       }
@@ -671,7 +672,7 @@ export class ConnectionManager {
     };
     this.opt.onSession?.(s);
     s.connect(this.opt.replyMs ?? 3000).catch((err: Error) => {
-      if (!s.displaced && s.state !== "closed") this.dispatch({ type: "failed", gen, error: err.message });
+      if (!(err instanceof DisplacedError) && !s.displaced && s.state !== "closed") this.dispatch({ type: "failed", gen, error: err.message });
     });
   }
 }
