@@ -19,8 +19,9 @@ export class NgClient {
   /**
    * Replies are matched by op (+ sub via `accept`) and do not carry the other args, so two requests with the same op
    * and sub in flight on one session (two quick taps, two screens) would both take the first reply. Per session and
-   * op + sub, a request waits for the one before it; a byte-identical one in flight is shared (one frame, one reply -
-   * no stacked timeouts against stock firmware). Other ops and subs still overlap freely.
+   * op + sub, a request waits for the one before it. A read with no args past the sub that is already in flight is
+   * shared (one frame, one reply - no stacked timeouts against stock firmware); a request with more args (a write, a
+   * command) always gets its own frame. Other ops and subs still overlap freely.
    */
   private request(op: NgOpCode, timeoutMs: number, args: number[] = [], accept?: (d: Uint8Array) => boolean): Promise<Uint8Array | null> {
     let lanes = NgClient.lanes.get(this.session);
@@ -28,7 +29,7 @@ export class NgClient {
     const key = `${op}:${args[0] ?? ""}`;
     const bytes = args.join(",");
     const tail = lanes.get(key);
-    if (tail && tail.bytes === bytes) return tail.p;
+    if (tail && tail.bytes === bytes && args.length <= 1) return tail.p;
     const p = (tail ? tail.p.then(() => this.send(op, timeoutMs, args, accept)) : this.send(op, timeoutMs, args, accept));
     const entry = { bytes, p };
     lanes.set(key, entry);

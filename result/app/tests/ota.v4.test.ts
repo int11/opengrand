@@ -386,6 +386,14 @@ test("loader confirm while an upload runs on the link: the automatic one waits (
   assert.equal(after.state, "confirmed", after.message);
 });
 
+test("loader confirm: two overlapping automatic confirms (connect + card refresh) give one confirm op and no failure", async () => {
+  const { session, s } = v4Piano({ ldrRunningConfirmed: false });
+  L4.rememberLoaderUpload({ keyId: keyIdRef(KEY), seq: 1, slot: 0 });
+  const rs = await Promise.all([L4.confirmLoader(session, KEY), L4.confirmLoader(session, KEY)]);
+  assert.deepEqual(rs.map((r) => r.state).sort(), ["confirmed", "none"], rs.map((r) => r.message).join(" | "));
+  assert.equal(s.sent.filter((m) => m[6] === 0x0f).length, 1);
+});
+
 test("update: a loader file goes to the loader slot not running (Begin / Commit target 0x11), seq = newest loader + 1", async () => {
   const { session, s } = v4Piano();
   const file = loaderFile(8);

@@ -127,10 +127,15 @@ test("NgClient: two requests with the same op and sub but other args each get th
   const [a, b] = await Promise.all([new NgClient(s).call(NgOp.Startup, [0x01, 1], 300, sub1), new NgClient(s).call(NgOp.Startup, [0x01, 2], 300, sub1)]);
   assert.equal(a?.[2], 1);
   assert.equal(b?.[2], 2, "the second caller's own reply");
-  // byte-identical requests in flight share one frame and its reply (no stacked timeouts on stock firmware)
+  // the same write twice: two frames (a command is never folded into another)
   sent.length = 0;
   const [c, d] = await Promise.all([new NgClient(s).call(NgOp.Startup, [0x01, 3], 300, sub1), new NgClient(s).call(NgOp.Startup, [0x01, 3], 300, sub1)]);
-  assert.deepEqual([c?.[2], d?.[2], sent.length], [3, 3, 1]);
+  assert.deepEqual([c?.[2], d?.[2], sent.length], [3, 3, 2]);
+  // a sub-only read already in flight is shared: one frame, one reply (no stacked timeouts on stock firmware)
+  sent.length = 0;
+  const sub0 = (x: Uint8Array) => x[0] === 0x00;
+  const [e, f] = await Promise.all([new NgClient(s).call(NgOp.Startup, [0x00], 300, sub0), new NgClient(s).call(NgOp.Startup, [0x00], 300, sub0)]);
+  assert.deepEqual([e?.[0], f?.[0], sent.length], [0, 0, 1]);
 });
 
 test("identify against stock firmware times out instead of hanging", async () => {

@@ -135,6 +135,9 @@ export async function confirmLoader(session: PianoSession, key: Uint8Array, forc
     }
     if (L.running !== p.slot) return { state: "waiting", message: t(LS.waiting), status: st };
   }
+  // again right before the op (no await between this check and the lock): an overlapping automatic confirm (connect
+  // + a firmware-card refresh) may have taken the link while the status was read
+  if (!force && OtaClient.busy(session)) return { state: "none", message: "", status: st };
   const r = await ota.confirmLoader(key);
   if (r.ok) {
     const running = r.status?.loader?.running ?? L.running;
