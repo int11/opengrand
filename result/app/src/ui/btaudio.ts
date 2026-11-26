@@ -74,7 +74,8 @@ export function btAudioBadge(session: () => PianoSession | null, conn: { state: 
   };
   let was = "";
   conn.onChange((st) => {
-    const now = live() || quietRejoin(st) ? `${st.gen}` : ""; // the file channel's rejoin: same session, nothing to hide or re-read
+    if (quietRejoin(st)) return; // the file channel's rejoin: same session, nothing to hide or re-read
+    const now = live() ? `${st.gen}` : "";
     if (now === was) return;
     was = now;
     if (now) void poll();

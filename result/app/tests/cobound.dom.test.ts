@@ -155,6 +155,29 @@ test("badge: the file channel's rejoin (quiet retaking) neither hides the line n
   conn.go("ready");
   await tick(30);
   assert.ok(s.asked.length > asked);
+
+  // connected while the page was hidden (desktop auto-reconnect, minimised), shown by the visibility poll: a quiet
+  // rejoin then must not hide it for good
+  const hidden = (v: boolean) => Object.defineProperty(document, "hidden", { value: v, configurable: true });
+  hidden(true);
+  const s2 = fakeSession(0x03, () => core03(0x0c, 4, 2));
+  const fns2: ((st: { phase: string; gen: number; quiet: boolean }) => void)[] = [];
+  const c2 = {
+    state: { phase: "idle", gen: 1, quiet: false },
+    onChange(fn: (st: { phase: string; gen: number; quiet: boolean }) => void) { fns2.push(fn); },
+    go(phase: string, quiet = false) { c2.state = { phase, gen: 1, quiet }; fns2.forEach((f) => f(c2.state)); },
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const b2 = coBoundBadge(() => s2 as any, c2 as any, () => 2, 0);
+  c2.go("ready");
+  hidden(false);
+  b2.refresh(); // as the visibilitychange handler does
+  await tick(30);
+  assert.equal(b2.el.hidden, false);
+  c2.go("retaking", true);
+  c2.go("ready");
+  await tick(30);
+  assert.equal(b2.el.hidden, false, "still shown after the rejoin");
 });
 
 test("fan-out frame from the piano: ACKed with its key and applied to the store at once", async () => {

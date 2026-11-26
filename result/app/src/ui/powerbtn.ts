@@ -134,7 +134,8 @@ export function powerButton(session: () => PianoSession | null, conn: { state: C
     draw();
   });
   conn.onChange((c) => {
-    const now = live() || quietRejoin(c) ? `${c.gen}` : ""; // the file channel's rejoin: same session, keep the button
+    if (quietRejoin(c)) return; // the file channel's rejoin: same session, keep the button
+    const now = live() ? `${c.gen}` : "";
     if (now === gen) return;
     gen = now;
     void attach();
