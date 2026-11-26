@@ -426,7 +426,12 @@ test("music tab on the panel: lesson metronome volume is the shell's beat clicks
 
 // Fast taps on a slow shell (each tap is a multi-step sequence over the bridge): the latest tap wins, Stop cancels a
 // piece still loading, and nothing of an earlier tap reaches the shell or the screen after a later one.
+// waits (up to 3 s, for a loaded machine) until the shell call is made and held - not a fixed tick
+const waitHeld = async (cmd: string) => {
+  for (let t = 0; t < 600 && !held.some((x) => x.cmd === cmd); t++) await tick(5);
+};
 const release = async (cmd: string, ok = true) => {
+  await waitHeld(cmd);
   const i = held.findIndex((x) => x.cmd === cmd);
   assert.ok(i >= 0, `${cmd} is waiting for its answer`);
   const w = held.splice(i, 1)[0];
@@ -495,7 +500,7 @@ test("music tab on the panel: Stop during Concert Magic setup - Concert Magic ne
   document.body.append(el);
   byText(el, "button", "Concert Magic").click();
   tapRow(el, 0);
-  await tick(10);
+  await waitHeld("setConcertMagicMode");
   tapBar(el, "stop");
   await release("setConcertMagicMode");
   await tick();
