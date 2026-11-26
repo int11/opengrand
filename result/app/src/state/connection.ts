@@ -365,6 +365,8 @@ export class ConnectionManager {
   private readonly dead = new WeakSet<MidiLink>();
   private readonly adopted = new WeakSet<MidiLink>();
   private reopenFn: (() => Promise<MidiLink>) | null = null;
+  /** the endpoint `reopenFn` opens: a reopen of another key (the piano chosen after it) must not use it */
+  private reopenKey: string | null = null;
   /** the next reopen re-acquires the endpoint (`reacquire`) instead of the held link: the last held reopen did not open */
   private freshNext = false;
   private pending: { choice: LinkChoice; link: MidiLink | null } | null = null;
@@ -507,7 +509,7 @@ export class ConnectionManager {
         this.graceTimer = this.reTimer = null;
         this.freshNext = false;
         if (this.state.key === null) {
-          this.reopenFn = null;
+          this.reopenFn = this.reopenKey = null;
           this.opt.remember?.(null);
         }
         break;
@@ -559,11 +561,17 @@ export class ConnectionManager {
 
   private async start(gen: number, source: "choice" | "current" | "reopen", pending: { choice: LinkChoice; link: MidiLink | null } | null): Promise<void> {
     let link: MidiLink;
+    const key = this.state.key;
+    // the link held is the endpoint of this phase: after another piano was chosen and did not open, it is still the
+    // piano before (its link stays until the new one opens) — 「Try again」 must open the piano the banner names
+    const held = this.link && !this.dead.has(this.link) && linkKey(this.link) === key ? this.link : null;
     try {
       if (source === "current" && pending?.link) link = pending.link; // a fresh link to the same endpoint
-      else if (source === "current" && this.link && !this.dead.has(this.link)) link = this.link;
-      else if (source === "choice" && pending) {
+      else if (source === "current" && held) link = held;
+      else if ((source === "choice" || source === "current") && pending) {
         this.freshNext = false; // another endpoint: its own link object
+        // until it opens, a retry / resume reopens this choice
+        if (!pending.link) [this.reopenFn, this.reopenKey] = [() => pending.choice.open(), key];
         link = pending.link ?? (await pending.choice.open());
       } else {
         // reopen of a lost link: the held link object, or — after it failed — the endpoint re-acquired afresh
@@ -572,7 +580,7 @@ export class ConnectionManager {
         if (source === "reopen") this.freshNext = !fresh && !!this.opt.reacquire;
         if (fresh) this.trace("reopen: re-acquiring the device (the held link did not reopen)");
         if (fresh) link = await fresh;
-        else if (this.reopenFn) link = await this.reopenFn();
+        else if (this.reopenFn && this.reopenKey === key) link = await this.reopenFn();
         else {
           // nothing to reopen (the last link never opened - field 2026-11-01 "no link to open"): say so, offer the list
           this.dispatch({ type: "failed", gen, error: NO_LINK });
@@ -598,6 +606,7 @@ export class ConnectionManager {
     if (old && old !== link && !this.dead.has(old) && linkKey(old) !== linkKey(link)) old.close();
     this.link = link;
     this.reopenFn = link.reopen ? () => link.reopen!() : source === "choice" && pending ? () => pending.choice.open() : this.reopenFn;
+    this.reopenKey = key;
     if (!this.adopted.has(link)) {
       this.adopted.add(link);
       link.onClose(() => this.dead.add(link));
