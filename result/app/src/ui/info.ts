@@ -91,8 +91,9 @@ export function infoScreen(ctx: AppContext): HTMLElement {
     btn.addEventListener("click", () => {
       (btn as HTMLButtonElement).disabled = true;
       const ok = installApkUpdate((st) => {
-        status.textContent = st.state === "error" ? t("Update failed: {e}", { e: String(st.message ?? "") }) : st.state === "done" ? t("Update installed.") : t("Installing…");
-        if (st.state === "error") (btn as HTMLButtonElement).disabled = false;
+        status.textContent = st.state === "error" ? t("Update failed: {e}", { e: String(st.message ?? "") }) : st.state === "done" ? t("Update installed.")
+          : st.state === "needs-source" ? t("Turn on 「Allow from this source」 for OpenGrand in the settings that just opened, then come back and install again.") : t("Installing…");
+        if (st.state === "error" || st.state === "needs-source") (btn as HTMLButtonElement).disabled = false;
       });
       if (!ok) {
         status.textContent = t("Update failed: {e}", { e: "start" });

@@ -179,9 +179,12 @@ class SelfUpdate(private val activity: Activity, private val emit: (String) -> U
                     apk.delete(); stagedFile.delete(); stagedApk = null
                     return@Thread set("phase" to "error", "error" to "sha256", "message" to "staged APK changed", "action" to null)
                 }
-                set("phase" to "installing")
-                UpdateManager.openSystemInstaller(activity, apk)
-                set("phase" to "ready") // the user may cancel the system dialog: the button stays
+                set("phase" to "installing", "hint" to null)
+                if (!UpdateManager.openSystemInstaller(activity, apk)) {
+                    // 「Install unknown apps」 is off: its switch is open now; the user comes back and taps install again
+                    return@Thread set("phase" to "ready", "hint" to "source")
+                }
+                set("phase" to "ready") // the user may cancel the system confirm: the button stays
             } catch (e: Exception) {
                 set("phase" to "error", "error" to "install", "message" to (e.message ?: e.toString()))
             }

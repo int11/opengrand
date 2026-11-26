@@ -7,9 +7,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageInstaller
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
@@ -26,8 +27,9 @@ import java.security.MessageDigest
  * integrity comes from the SHA-256 in the manifest plus Android's own signature check
  * (an update must be signed with the same key as the installed app).
  *
- * Install: panel (system app holding INSTALL_PACKAGES) -> PackageInstaller session, silent;
- *          phone -> ACTION_VIEW on a FileProvider URI (the user confirms in the system UI).
+ * Install: a PackageInstaller session on both - silent on the panel (system app holding INSTALL_PACKAGES); on a phone
+ * the system shows its own confirm screen (no app chooser, as ACTION_VIEW on an APK gave: other apps that open APKs
+ * were offered too). A phone first needs 「Install unknown apps」 for this app: without it the settings switch opens.
  */
 class UpdateManager(
     private val activity: Activity,
@@ -78,7 +80,7 @@ class UpdateManager(
                     ?: return@Thread status("error", "not an APK")
                 if (info.packageName != activity.packageName) return@Thread status("error", "package ${info.packageName} is not ${activity.packageName}")
                 status("installing")
-                if (BuildConfig.PANEL) installSession(p.apk) else installViaViewer(p.apk)
+                if (!openSystemInstaller(activity, p.apk) { st, msg -> status(st, msg) }) status("needs-source")
             } catch (e: Exception) {
                 status("error", e.message ?: e.toString())
             }
@@ -92,56 +94,51 @@ class UpdateManager(
         emit(o.toString())
     }
 
-    /** Silent install for the system-image panel app. */
-    private fun installSession(apk: File) {
-        val installer = activity.packageManager.packageInstaller
-        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
-        params.setAppPackageName(activity.packageName)
-        val id = installer.createSession(params)
-        installer.openSession(id).use { session ->
-            session.openWrite("app.apk", 0, apk.length()).use { out -> apk.inputStream().use { it.copyTo(out) }; session.fsync(out) }
-            val action = "${activity.packageName}.INSTALL_STATUS"
-            ContextCompat.registerReceiver(activity, object : BroadcastReceiver() {
-                override fun onReceive(c: Context, i: Intent) {
-                    when (i.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
-                        PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                            // not privileged after all: let the system ask the user
-                            @Suppress("DEPRECATION") val confirm = i.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
-                            confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let { activity.startActivity(it) }
-                        }
-                        PackageInstaller.STATUS_SUCCESS -> { status("done"); activity.unregisterReceiver(this) }
-                        else -> { status("error", i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "install failed"); activity.unregisterReceiver(this) }
-                    }
-                }
-            }, IntentFilter(action), ContextCompat.RECEIVER_NOT_EXPORTED)
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
-            val pi = PendingIntent.getBroadcast(activity, id, Intent(action).setPackage(activity.packageName), flags)
-            session.commit(pi.intentSender)
-        }
-    }
-
-    /** Phone: hand the verified copy to the system package installer UI. */
-    private fun installViaViewer(apk: File) {
-        openSystemInstaller(activity, apk)
-        status("done", "handed to the system installer")
-    }
-
     companion object {
+        /** May this app ask the system to install an APK (Android 8+: 「Install unknown apps」 for this app)? */
+        fun canInstall(activity: Activity): Boolean =
+            BuildConfig.PANEL || Build.VERSION.SDK_INT < 26 || activity.packageManager.canRequestPackageInstalls()
+
+        /** Open the 「Install unknown apps」 switch for this app (the user turns it on and comes back). */
+        fun openInstallSourceSettings(activity: Activity) {
+            val i = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            activity.runOnUiThread { activity.startActivity(i) }
+        }
+
         /**
-         * Copy a verified APK into the FileProvider's cache path and open the system installer on it (the user confirms;
-         * Android refuses an APK signed by another key). Used by the USB update and the online self-update (SelfUpdate).
-         * `apk` must not be the copy itself (cacheDir/updates/app.apk).
+         * Install a verified APK of this app through a PackageInstaller session: silent on the panel, the system's own
+         * confirm screen on a phone (Android refuses an APK signed by another key). `onResult` gets "done" or
+         * ("error", message); a cancelled confirm is an error. Returns false without installing when a phone lacks
+         * 「Install unknown apps」 - the settings switch is opened instead. Used by the USB update and SelfUpdate.
          */
-        fun openSystemInstaller(activity: Activity, apk: File) {
-            val dir = File(activity.cacheDir, "updates").apply { mkdirs() }
-            val copy = File(dir, "app.apk")
-            require(apk.canonicalPath != copy.canonicalPath) { "installer copy would overwrite its source" }
-            apk.inputStream().use { input -> copy.outputStream().use { input.copyTo(it) } }
-            val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.files", copy)
-            val view = Intent(Intent.ACTION_VIEW)
-                .setDataAndType(uri, "application/vnd.android.package-archive")
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-            activity.runOnUiThread { activity.startActivity(view) }
+        fun openSystemInstaller(activity: Activity, apk: File, onResult: (String, String?) -> Unit = { _, _ -> }): Boolean {
+            if (!canInstall(activity)) { openInstallSourceSettings(activity); return false }
+            val installer = activity.packageManager.packageInstaller
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+            params.setAppPackageName(activity.packageName)
+            val id = installer.createSession(params)
+            installer.openSession(id).use { session ->
+                session.openWrite("app.apk", 0, apk.length()).use { out -> apk.inputStream().use { it.copyTo(out) }; session.fsync(out) }
+                val action = "${activity.packageName}.INSTALL_STATUS.$id"
+                ContextCompat.registerReceiver(activity, object : BroadcastReceiver() {
+                    override fun onReceive(c: Context, i: Intent) {
+                        when (i.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+                            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                                // the system asks the user (a phone, or a panel build that is not privileged after all)
+                                @Suppress("DEPRECATION") val confirm = i.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
+                                confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)?.let { activity.startActivity(it) }
+                            }
+                            PackageInstaller.STATUS_SUCCESS -> { onResult("done", null); activity.unregisterReceiver(this) }
+                            else -> { onResult("error", i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "install failed"); activity.unregisterReceiver(this) }
+                        }
+                    }
+                }, IntentFilter(action), ContextCompat.RECEIVER_NOT_EXPORTED)
+                val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+                val pi = PendingIntent.getBroadcast(activity, id, Intent(action).setPackage(activity.packageName), flags)
+                session.commit(pi.intentSender)
+            }
+            return true
         }
 
         private val VERSION = Regex("^\\d+(\\.\\d+)*$")

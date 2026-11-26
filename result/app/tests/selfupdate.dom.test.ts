@@ -143,6 +143,8 @@ test("status texts: quiet problems read as such, refusals say why", () => {
   assert.match(selfUpdateText({ phase: "error", error: "offline" }), /internet/);
   assert.match(selfUpdateText({ phase: "error", error: "ratelimit" }), /request limit/);
   assert.match(selfUpdateText({ phase: "error", error: "norelease" }), /No release/);
+  assert.match(selfUpdateText({ phase: "ready", action: "install", available: "1.2.2", hint: "source" }), /ready to install\. Turn on 「Allow from this source」/, "Android: the install source switch was opened");
+  assert.doesNotMatch(selfUpdateText({ phase: "ready", action: "install", available: "1.2.2" }), /Allow from this source/);
   assert.match(selfUpdateText({ phase: "error", error: "signature" }), /signature/);
   assert.match(selfUpdateText({ phase: "error", error: "sha256" }), /checksum/);
   assert.match(selfUpdateText({ phase: "error", error: "http", message: "HTTP 500" }), /HTTP 500/);

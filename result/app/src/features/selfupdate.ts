@@ -24,6 +24,8 @@ export interface SelfUpdateState {
   /** what the ready button does: Android "install" (system installer), desktop "restart" (swap + relaunch),
    *  "manual" (portable / dev build: open the release page) */
   action?: "install" | "restart" | "manual";
+  /** Android: "source" = the last install found 「Install unknown apps」 off and opened its switch */
+  hint?: "source";
   /** desktop: why the update is manual (portable, dev, platform, root) */
   reason?: string;
   page?: string;

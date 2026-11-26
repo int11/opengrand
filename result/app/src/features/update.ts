@@ -57,13 +57,14 @@ export function checkApkUpdate(): UpdateCheck {
   }
 }
 
-/** Start the install; `onStatus` receives {state:"verifying"|"installing"|"done"|"error", message?}. */
+/** Start the install; `onStatus` receives {state:"verifying"|"installing"|"done"|"error"|"needs-source", message?}
+ *  ("needs-source": the phone's 「Install unknown apps」 for this app is off - its settings switch was opened). */
 export function installApkUpdate(onStatus: (s: Record<string, unknown>) => void): boolean {
   const nb = bridge();
   if (!nb?.installUpdate) return false;
   const off = onUpdateStatus((s) => {
     onStatus(s);
-    if (s.state === "done" || s.state === "error") off();
+    if (s.state === "done" || s.state === "error" || s.state === "needs-source") off();
   });
   const ok = nb.installUpdate();
   if (!ok) off();

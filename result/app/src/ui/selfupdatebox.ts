@@ -27,6 +27,7 @@ export const SELF_UPDATE_STRINGS: string[] = [
   "Version {v} is available.", "Opening the installer…", "Update check failed: {e}", "Updated to {v}.",
   "The last update could not be applied ({e}). The previous version is still installed.", "OpenGrand {v} is ready.", "Later",
   "Last checked: {t}", "Downloads new versions of this app from GitHub; you confirm the install.",
+  "Turn on 「Allow from this source」 for OpenGrand in the settings that just opened, then come back and install again.",
 ];
 
 export function selfUpdateText(s: SelfUpdateState | null): string {
@@ -40,7 +41,8 @@ export function selfUpdateText(s: SelfUpdateState | null): string {
     case "installing": return t("Opening the installer…");
     case "ready":
       if (s.action === "manual") return [t("Version {v} is available.", { v }), s.reason && MANUAL[s.reason] ? t(MANUAL[s.reason]) : ""].filter(Boolean).join(" ");
-      return s.action === "restart" ? t("Version {v} is ready. Restart the app to update.", { v }) : t("Version {v} is ready to install.", { v });
+      if (s.action === "restart") return t("Version {v} is ready. Restart the app to update.", { v });
+      return [t("Version {v} is ready to install.", { v }), s.hint === "source" ? t("Turn on 「Allow from this source」 for OpenGrand in the settings that just opened, then come back and install again.") : ""].filter(Boolean).join(" ");
     case "error": return ERR[s.error ?? ""] ? t(ERR[s.error!]) : t("Update check failed: {e}", { e: s.message || s.error || "?" });
   }
 }
