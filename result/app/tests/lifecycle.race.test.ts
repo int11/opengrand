@@ -46,3 +46,19 @@ test("two overlapping takeControl() on one session: both resolve, one CONNECT + 
   assert.equal(seen.filter((x) => x === "F0 40 7F 7E 08 02 01 01 F7").length, 1, seen.join("\n"));
   assert.equal(seen.filter((x) => x === "F0 40 00 02 08 02 5F 7F 7F F7").length, 1, seen.join("\n"));
 });
+
+test("a retired session sends no data request on the link the next session uses", async () => {
+  // a screen that still holds the old session (released when a new one took the same port) asks for a value:
+  // before, requestData went out on the shared link and waited out its whole timeout
+  const [app, piano] = LoopbackLink.pair();
+  const seen = fakePiano(piano);
+  const old = new PianoSession(app);
+  await old.connect(200);
+  old.release();
+  seen.length = 0;
+  const t0 = Date.now();
+  assert.equal(await old.requestData(0x55, 0x00, 300), false);
+  await tick();
+  assert.deepEqual(seen, []);
+  assert.ok(Date.now() - t0 < 200, "answers at once");
+});

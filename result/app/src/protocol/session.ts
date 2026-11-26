@@ -385,6 +385,7 @@ export class PianoSession {
    * `03 v1 v2 7F` (FUN_4014BDC8). v2 00 means the whole group on the stock (FUN_4015205C).
    */
   requestData(v1: number, v2: number, timeoutMs = 3000, part = 0x7f): Promise<boolean> {
+    if (this.released) return Promise.resolve(false); // a newer session owns this port: nothing goes out
     if (this.state === "displaced") {
       // not bound: the stock drops a request from an unbound port without a word (FUN_4014A2C8 fn 0x02 gate)
       this.stats.dropped++;
