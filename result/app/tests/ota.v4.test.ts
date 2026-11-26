@@ -600,3 +600,19 @@ test("firmware card in Korean: the loader texts are translated", async () => {
   assert.match(q(el, "#ota-loader-state").textContent!, /실행 중, 시도 1\/3/);
   el.remove();
 });
+
+test("loader confirm waits by time, not by attempts: on a quiet link (a status read takes ~1 s) the timeout still bounds the wait", async () => {
+  const { session } = v4Piano({ ldrRunningConfirmed: false });
+  const real = session.sendRaw.bind(session);
+  let quiet = false;
+  session.sendRaw = (m: Uint8Array) => {
+    if (m[1] === 0x7d && m[6] === 0x10 && quiet) return;
+    if (m[1] === 0x7d && m[6] === 0x0f) quiet = true;
+    real(m);
+  };
+  const t0 = Date.now();
+  const r = await new ota.OtaClient(session).confirmLoader(KEY, 50, 300);
+  const ms = Date.now() - t0;
+  assert.equal(r.ok, false, r.message);
+  assert.ok(ms < 2000, `the confirm waited ${ms} ms for a 300 ms timeout`);
+});

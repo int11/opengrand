@@ -1,6 +1,7 @@
 // Information screen (feature 78) with the panel/APK update (86) and the
 // BLE-MIDI module firmware update (87).
-import { type DfuState, dfuSupported, queryModuleVersion, runDfu } from "../features/dfu.ts";
+import { dfuJob, type DfuState, dfuSupported, queryModuleVersion, runDfu } from "../features/dfu.ts";
+import type { XferJob } from "../protocol/xferlock.ts";
 import { NgClient, type NgDumpStatus, ngHas } from "../protocol/ngext.ts";
 import { PROBE_FEATURE, probeReport } from "./probe.ts";
 import { btDiagBox } from "./btdiag.ts";
@@ -11,7 +12,8 @@ import { powerDevSection } from "./power.ts";
 import { ramCanarySection } from "./ramcanary.ts";
 import { kwmcoreAvailable } from "../transport/kwmcore.ts";
 import {
-  activeName, ApplyTarget, keyId, OTA_APPLY_STATE, OTA_CAP, OTA_CAP2, OTA_KEY_STORAGE, OTA_REASON, OtaClient, OtaTarget, type OtaStatus,
+  activeName, ApplyTarget, keyId, OTA_APPLY_STATE, OTA_CAP, OTA_CAP2, OTA_KEY_STORAGE, OTA_REASON, type OtaApplyResult, OtaClient,
+  type OtaConfirmResult, type OtaJob, type OtaProgress, OtaTarget, type OtaStatus,
   loaderRollbackMask, parseKey, parseOtaFile, SLOT_FLAG,
 } from "../protocol/ota.ts";
 import {
@@ -125,21 +127,34 @@ export function infoScreen(ctx: AppContext): HTMLElement {
     }
   };
   const dfuBtn = h("button", { id: "dfu-btn" }, t("Update BLE module")) as HTMLButtonElement;
+  /** Follow the module update (app-wide: this screen's, or one a replaced screen started - a tab switch, language
+   *  change or reconnect rebuilds this screen): its states with the button off, then the final one. */
+  const followDfu = (job: XferJob<DfuState, DfuState>) => {
+    dfuBtn.disabled = true;
+    bar.hidden = false;
+    job.watch((j) => {
+      const st = j.finished ? j.result : j.progress;
+      if (st) {
+        dfuStatus.textContent = phaseText(st);
+        if (st.moduleVersion) bleOut.textContent = st.moduleVersion;
+        bar.value = st.phase === "upload" ? (st.progress ?? 0) : st.phase === "done" ? 100 : bar.value;
+      }
+      if (j.finished) {
+        dfuBtn.disabled = false;
+        if (st?.phase !== "done") bar.hidden = true;
+      }
+    });
+  };
   dfuBtn.addEventListener("click", async () => {
     const cur = ctx.session();
     if (!cur) {
       dfuStatus.textContent = t("Connect to the piano first.");
       return;
     }
-    dfuBtn.disabled = true;
-    bar.hidden = false;
-    const final = await runDfu(cur, (st) => {
-      dfuStatus.textContent = phaseText(st);
-      if (st.moduleVersion) bleOut.textContent = st.moduleVersion;
-      bar.value = st.phase === "upload" ? (st.progress ?? 0) : st.phase === "done" ? 100 : bar.value;
-    });
-    dfuBtn.disabled = false;
-    if (final.phase !== "done") bar.hidden = true;
+    const run = runDfu(cur, () => {});
+    const job = dfuJob();                              // taken before runDfu returns: this run (or the one running)
+    if (job) followDfu(job);
+    await run;
   });
 
   // ---- OpenGrand custom firmware (manufacturer ID 0x7D, REMOTE_PROTOCOL.md section 10) ----
@@ -451,14 +466,14 @@ export function infoScreen(ctx: AppContext): HTMLElement {
   };
   const applyAfter = h("input", { id: "ota-apply-after", type: "checkbox" }) as HTMLInputElement;
   const otaApplyAfterRow = h("label", { class: "inline", hidden: true }, applyAfter, " ", t("Apply right after writing"));
+  const applyText = (r: OtaApplyResult) => r.ok ? t("Now running: {c}. Not boot-tested yet - it is tried at the next power-on.", { c: r.message })
+    : t("Apply failed: {e}", { e: r.rc !== undefined && r.rc >= 22 ? rcText(r.rc) : r.message });
   const runApply = async (cur: NonNullable<ReturnType<typeof ctx.session>>, key: Uint8Array, target: number) => {
     otaMsg.textContent = t("Applying…");
-    const r = await new OtaClient(cur).apply(key, target, (s) => {
-      otaMsg.textContent = t("Applying… ({s})", { s: OTA_APPLY_STATE[s.applyState] ?? s.applyState });
-      showOta(s);
-    });
-    otaMsg.textContent = r.ok ? t("Now running: {c}. Not boot-tested yet - it is tried at the next power-on.", { c: r.message })
-      : t("Apply failed: {e}", { e: r.rc !== undefined && r.rc >= 22 ? rcText(r.rc) : r.message });
+    const run = new OtaClient(cur).apply(key, target);
+    followOtaNow(cur);
+    const r = await run;
+    otaMsg.textContent = applyText(r);
     return r.ok;
   };
   // switch to the loader just written without a power cycle (v4 apply target 4); the new stage-1 is confirmed
@@ -473,13 +488,11 @@ export function infoScreen(ctx: AppContext): HTMLElement {
         otaMsg.textContent = t("Import the key first.");
         return;
       }
-      (otaReselect as HTMLButtonElement).disabled = true;
       otaMsg.textContent = t(LS.reselecting);
-      const r = await new OtaClient(cur).apply(key, ApplyTarget.Reselect, (s) => showOta(s));
-      const note = r.ok ? t(LS.reselected, { s: r.status?.loader?.running ? "B" : "A" })
-        : t(LS.reselectFailed, { e: r.rc !== undefined && r.rc >= 22 ? rcText(r.rc) : r.message });
+      const run = new OtaClient(cur).apply(key, ApplyTarget.Reselect);
+      followOtaNow(cur);
+      const note = reselectText(await run);
       otaMsg.textContent = note;
-      (otaReselect as HTMLButtonElement).disabled = false;
       await otaRefresh();                              // confirms the new loader (it was remembered at the upload)
       const after = otaMsg.textContent;
       otaMsg.textContent = after && after !== note ? `${note} ${after}` : note;
@@ -495,11 +508,14 @@ export function infoScreen(ctx: AppContext): HTMLElement {
         otaMsg.textContent = t("Import the key first.");
         return;
       }
-      (otaConfirm as HTMLButtonElement).disabled = true;
-      const r = await confirmLoader(cur, key, true);
-      otaMsg.textContent = r.message;
-      (otaConfirm as HTMLButtonElement).disabled = false;
-      if (r.status) showOta(r.status);
+      setOtaBusy(true);
+      try {
+        const r = await confirmLoader(cur, key, true);
+        otaMsg.textContent = r.message;
+        if (r.status) showOta(r.status);
+      } finally {
+        setOtaBusy(false);
+      }
     },
   }, t(LS.confirm));
   const otaConfirmRow = h("div", { id: "ota-loader-confirm-row", hidden: true }, otaLoaderNote, h("div", { class: "inline acts" }, otaConfirm));
@@ -516,13 +532,17 @@ export function infoScreen(ctx: AppContext): HTMLElement {
         return;
       }
       const ota = new OtaClient(cur);
-      const st = await ota.status();
-      if (!st?.loader) return;
-      // the piano keeps one confirmed loader (rc 23): refuse here with the same words
-      const m = loaderRollbackMask(st);
-      const rc = m.ok ? await ota.reject(key, m.mask) : m.rc;
-      otaMsg.textContent = rc === 0 ? t("Slot rejected. Turn the piano off and on to go back.")
-        : rc !== null && rc >= 22 ? rcText(rc) : t("Rejected ({c}).", { c: String(rc) });
+      setOtaBusy(true);
+      try {
+        const st = await ota.status();
+        if (!st?.loader) return;
+        // the piano keeps one confirmed loader (rc 23): refuse here with the same words
+        const m = loaderRollbackMask(st);
+        const rc = m.ok ? await ota.reject(key, m.mask) : m.rc;
+        otaMsg.textContent = rejectText(rc);
+      } finally {
+        setOtaBusy(false);
+      }
       await otaRefresh(false);
     },
   }, t(LS.rollback));
@@ -536,9 +556,7 @@ export function infoScreen(ctx: AppContext): HTMLElement {
         otaMsg.textContent = t("Import the key first.");
         return;
       }
-      (otaApply as HTMLButtonElement).disabled = true;
       await runApply(cur, key, ApplyTarget.Newest);
-      (otaApply as HTMLButtonElement).disabled = false;
       await otaRefresh();
     },
   }, t("Apply now"));
@@ -556,28 +574,14 @@ export function infoScreen(ctx: AppContext): HTMLElement {
         otaMsg.textContent = t("Pick a payload file first.");
         return;
       }
-      (otaUpload as HTMLButtonElement).disabled = true;
-      otaBar.hidden = false;
-      const fin = await new OtaClient(cur).update(otaFile, key, (p) => {
-        otaBar.value = Math.round((p.sent / Math.max(1, p.total)) * 100);
-        otaMsg.textContent =
-          p.phase === "upload" ? t("Uploading… {a}/{b} bytes", { a: p.sent, b: p.total })
-          : p.phase === "commit" ? t("Writing to the slot… ({s})", { s: p.message ?? "" })
-          : p.phase === "done" && p.kind === "loader" ? t(LS.written,
-            { s: p.target === OtaTarget.LoaderB ? "B" : "A", seq: p.seq ?? "?" })
-          : p.phase === "done" ? t("Written to {slot}. Turn the piano off and on to start it.", { slot: p.message ?? "" })
-          : p.phase === "error" ? (p.rc !== undefined && p.rc >= 22) || p.refusal ? refusalText(p) : t("Update failed: {e}", { e: p.message ?? "" })
-          : p.phase === "begin" && p.message ? t("Sending again from the start ({e})", { e: p.message })
-          : t("Working…");
-        if (p.status) showOta(p.status);
-      });
+      const run = new OtaClient(cur).update(otaFile, key);
+      followOtaNow(cur);                               // progress, result and the buttons: from the job
+      const fin = await run;
       const loaderDone = fin.phase === "done" && fin.kind === "loader";
       // remembered: the next connect (main.ts) or check confirms it once it runs
       if (loaderDone) rememberLoaderUpload({ keyId: keyId(key), seq: fin.seq!, slot: fin.target! - OtaTarget.LoaderA });
       // "apply right after writing" applies the newest main: not for a loader (that is "switch loader now")
       if (fin.phase === "done" && !loaderDone && applyAfter.checked && !(otaApplyAfterRow as HTMLElement).hidden) await runApply(cur, key, ApplyTarget.Newest);
-      (otaUpload as HTMLButtonElement).disabled = false;
-      if (fin.phase !== "done") otaBar.hidden = true;
       const msg = otaMsg.textContent;
       await otaRefresh();
       if (loaderDone) otaMsg.textContent = msg;       // the old loader still runs: keep the instructions
@@ -593,16 +597,101 @@ export function infoScreen(ctx: AppContext): HTMLElement {
         return;
       }
       const ota = new OtaClient(cur);
-      const st = await ota.status();
-      if (!st || st.active > 1) {
-        otaMsg.textContent = st?.loader ? t(LS.noMain) : t("The built-in cave is running: nothing to roll back.");
-        return;
+      setOtaBusy(true);
+      try {
+        const st = await ota.status();
+        if (!st || st.active > 1) {
+          otaMsg.textContent = st?.loader ? t(LS.noMain) : t("The built-in cave is running: nothing to roll back.");
+          return;
+        }
+        otaMsg.textContent = rejectText(await ota.reject(key, 1 << st.active));
+      } finally {
+        setOtaBusy(false);
       }
-      const rc = await ota.reject(key, 1 << st.active);
-      otaMsg.textContent = rc === 0 ? t("Slot rejected. Turn the piano off and on to go back.") : t("Rejected ({c}).", { c: String(rc) });
       await otaRefresh();
     },
   }, t("Roll back"));
+
+  // ---- the running firmware job: every OTA op holds the link (src/protocol/xferlock.ts) as a job with its progress
+  // and result; the screen that started it and a screen built while it runs (main.ts show() rebuilds this screen on a
+  // tab switch, language change or reconnect) both show it from there, with every firmware button off until it ends
+  const otaButtons = () => [otaUpload, otaReselect, otaConfirm, otaLoaderRollback, otaApply, otaRollback] as HTMLButtonElement[];
+  function setOtaBusy(on: boolean): void {
+    for (const b of otaButtons()) b.disabled = on;
+  }
+  function rejectText(rc: number | null): string {
+    return rc === 0 ? t("Slot rejected. Turn the piano off and on to go back.")
+      : rc !== null && rc >= 22 ? rcText(rc) : t("Rejected ({c}).", { c: String(rc) });
+  }
+  function reselectText(r: OtaApplyResult): string {
+    return r.ok ? t(LS.reselected, { s: r.status?.loader?.running ? "B" : "A" })
+      : t(LS.reselectFailed, { e: r.rc !== undefined && r.rc >= 22 ? rcText(r.rc) : r.message });
+  }
+  const uploadText = (p: OtaProgress): string =>
+    p.phase === "upload" ? t("Uploading… {a}/{b} bytes", { a: p.sent, b: p.total })
+    : p.phase === "commit" ? t("Writing to the slot… ({s})", { s: p.message ?? "" })
+    : p.phase === "done" && p.kind === "loader" ? t(LS.written,
+      { s: p.target === OtaTarget.LoaderB ? "B" : "A", seq: p.seq ?? "?" })
+    : p.phase === "done" ? t("Written to {slot}. Turn the piano off and on to start it.", { slot: p.message ?? "" })
+    : p.phase === "error" ? (p.rc !== undefined && p.rc >= 22) || p.refusal ? refusalText(p) : t("Update failed: {e}", { e: p.message ?? "" })
+    : p.phase === "begin" && p.message ? t("Sending again from the start ({e})", { e: p.message })
+    : t("Working…");
+  /** The line for a job's state (progress or result), null = leave the line. */
+  const otaJobText = (j: OtaJob): string | null => {
+    if (j.what === "upload") {
+      const p = (j.finished ? j.result : j.progress) as OtaProgress | undefined;
+      return p ? uploadText(p) : t("Working…");
+    }
+    if (j.what === "apply") {
+      const st = j.progress as OtaStatus | undefined;
+      if (!j.finished) return st ? t("Applying… ({s})", { s: OTA_APPLY_STATE[st.applyState] ?? st.applyState }) : t("Applying…");
+      return j.result ? applyText(j.result as OtaApplyResult) : null;
+    }
+    if (j.what === "loader switch") return !j.finished ? t(LS.reselecting) : j.result ? reselectText(j.result as OtaApplyResult) : null;
+    if (!j.finished) return t("Working…");
+    if (j.what === "reject") return j.result === undefined ? null : rejectText(j.result as number | null);
+    if (j.what === "loader confirm" && j.result) {
+      const r = j.result as OtaConfirmResult;
+      return r.ok ? t(LS.confirmed, { s: r.status?.loader?.running ? "B" : "A" })
+        : t(LS.confirmFailed, { e: r.rc !== undefined ? rcText(r.rc) : r.message });
+    }
+    return null;
+  };
+  /** Follow `job` here. `own`: this screen started it and does its follow-up (refresh, apply after); otherwise the
+   *  screen follows the next job of the same chain (the apply after an upload) and refreshes when the link is free. */
+  function followOta(job: OtaJob, own: boolean): void {
+    setOtaBusy(true);
+    if (job.what === "upload") otaBar.hidden = false;
+    job.watch((j) => {
+      if (j.what === "upload") {
+        const p = (j.finished ? j.result : j.progress) as OtaProgress | undefined;
+        if (p) otaBar.value = Math.round((p.sent / Math.max(1, p.total)) * 100);
+        if (p?.status) showOta(p.status);
+        if (j.finished && p?.phase !== "done") otaBar.hidden = true;
+      } else if (j.what === "apply" || j.what === "loader switch") {
+        const st = j.finished ? (j.result as OtaApplyResult | undefined)?.status : (j.progress as OtaStatus | undefined);
+        if (st) showOta(st);
+      }
+      const text = otaJobText(j);
+      if (text !== null) otaMsg.textContent = text;
+      if (!j.finished) return;
+      setOtaBusy(false);
+      // the screen that started the job runs its next step right after (no macrotask between): look after that
+      if (!own) setTimeout(() => { if (!followRunningOta()) void otaRefresh(false); }, 0);
+    });
+  }
+  /** Follow the job this screen just started (the lock is taken before the client call returns). */
+  function followOtaNow(cur: NonNullable<ReturnType<typeof ctx.session>>): void {
+    const job = OtaClient.running(cur);
+    if (job) followOta(job, true);
+  }
+  /** Follow a firmware job a replaced screen started; false when none runs. */
+  function followRunningOta(): boolean {
+    const cur = ctx.session();
+    const job = cur ? OtaClient.running(cur) : null;
+    if (job) followOta(job, false);
+    return !!job;
+  }
   keyFold.append(
     h("div", { class: "fold-body" },
       h("p", { class: "muted" }, t("The piano's own key (ota_key.bin) signs every update. It is kept in this app's storage only.")),
@@ -651,6 +740,14 @@ export function infoScreen(ctx: AppContext): HTMLElement {
     devCard.hidden = !panelShot && !appDev && otaDev.hidden && powerDev.hidden && canaryBox.hidden && ngProbeBox.hidden && btBox.hidden
       && ngDumpBox.hidden;
   }
+
+  // a job a replaced screen started still runs: follow it here instead of offering a second one (refused as busy)
+  if (followRunningOta()) {
+    otaBox.hidden = false;
+    devShown();
+  }
+  const dfu = dfuJob();
+  if (dfu) followDfu(dfu);
 
   // Order: what runs (versions, the custom firmware) · the updates people use (firmware, panel UI, app / module) ·
   // the developer fold last.

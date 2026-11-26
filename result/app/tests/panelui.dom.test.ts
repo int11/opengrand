@@ -3,6 +3,7 @@ import { dom, tick } from "./_dom.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
+import { randomBytes } from "node:crypto";
 
 import { keyFromPem, loaderSource, makePackage, newKeyPem, uiConfig } from "../scripts/panelpkg.ts";
 import { PanelUiClient, type PuiPort } from "../src/protocol/panelui.ts";
@@ -138,5 +139,83 @@ test("panel UI box: Roll back is one job - a double tap sends one Control 2, a t
   assert.deepEqual(controls, [], "no control op during the upload");
   assert.match(box.querySelector("#pui-msg")!.textContent!, /Busy/);
   assert.equal((await up).phase, "done");
+  box.remove();
+});
+
+/** The real panel loader behind a fake relay; `dropActivate` = the panel never answers Control 1 (activate). */
+function loaderRelay(o: { dropActivate?: boolean } = {}) {
+  const key = keyFromPem(newKeyPem());
+  const replies: number[][] = [];
+  const ctx: Record<string, unknown> = {
+    localStorage: new MemStorage(),
+    setTimeout: (f: () => void, ms: number) => setTimeout(f, ms).unref(), clearTimeout,
+    location: { search: "?embedded=1", replace() {} },
+    kwmcore: { postMessage: (url: string) => url.startsWith("kwmcore://sendMidiMessage/") && replies.push(JSON.parse(url.slice(url.indexOf("?") + 1)).msg) },
+    addEventListener() {},
+  };
+  runInNewContext(loaderSource(uiConfig(key, { version: "0.2.0", seq: 10 })), ctx);
+  const ui = ctx.CA79UI as { hookKwm(k: unknown): void; navigate: (u: string) => void };
+  ui.navigate = () => {};
+  const K: Record<string, unknown> = {};
+  ui.hookKwm(K);
+  const listeners: ((m: Uint8Array) => void)[] = [];
+  const controls: number[] = [];
+  const relay: PuiPort = {
+    sendRaw(m) {
+      if (m[6] === 0x34) controls.push(m[7]!);
+      if (o.dropActivate && m[6] === 0x34 && m[7] === 1) return;
+      (K.onMidiMessage as (a: number[], id: string) => void)(Array.from(m), "USB");
+      for (const r of replies.splice(0)) setTimeout(() => listeners.forEach((l) => l(Uint8Array.from(r))), 1);
+    },
+    onMidi(fn) {
+      listeners.push(fn);
+      return () => listeners.splice(listeners.indexOf(fn), 1);
+    },
+  };
+  // incompressible js: a package of some frames, so the upload takes a while
+  const pkg = (seq: number) => new Uint8Array(makePackage({ js: "/*" + randomBytes(6000).toString("base64") + "*/", css: "" }, { version: "0.2." + seq, seq, key }));
+  return { relay, pkg, controls };
+}
+
+test("panel UI box rebuilt during an upload (tab switch, language, reconnect): it follows the running upload, Send / Roll back off, then the result", async () => {
+  const { relay, pkg, controls } = loaderRelay();
+  const ctx = { session: () => relay } as unknown as AppContext;
+  const up = new PanelUiClient(relay).upload(pkg(30), { activate: false });   // the Send of the screen that was replaced
+  const box = panelUiBox(ctx);
+  dom.window.document.body.append(box);
+  const send = box.querySelector("#pui-send") as HTMLButtonElement;
+  const rb = box.querySelector("#pui-rollback") as HTMLButtonElement;
+  assert.equal(send.disabled, true, "Send off during the upload");
+  assert.equal(rb.disabled, true, "Roll back off during the upload");
+  assert.equal((box.querySelector("#pui-progress") as HTMLProgressElement).hidden, false);
+  assert.match(box.querySelector("#pui-msg")!.textContent!, /Sending… \d+\/\d+ bytes/);
+  rb.click();
+  assert.equal((await up).phase, "done");
+  await tick(40);
+  assert.deepEqual(controls, [], "nothing else sent during the upload");
+  assert.match(box.querySelector("#pui-msg")!.textContent!, /Stored in slot A\./);
+  assert.equal(send.disabled, false);
+  assert.equal(rb.disabled, false);
+  box.remove();
+});
+
+test("panel UI box: a failed Activate after the upload is reported - not 'the panel is restarting its UI'", async () => {
+  const { relay, pkg, controls } = loaderRelay({ dropActivate: true });
+  const box = panelUiBox({ session: () => relay } as unknown as AppContext);
+  dom.window.document.body.append(box);
+  const pick = box.querySelector("#pui-file") as HTMLInputElement;
+  const bytes = pkg(40);
+  Object.defineProperty(pick, "files", { value: [{ name: "ui.c79u", arrayBuffer: async () => bytes.slice().buffer }] });
+  pick.dispatchEvent(new dom.window.Event("change"));
+  await tick(30);
+  assert.equal((box.querySelector("#pui-activate") as HTMLInputElement).checked, true);
+  const send = box.querySelector("#pui-send") as HTMLButtonElement;
+  send.click();
+  await tick(20);
+  for (let i = 0; i < 300 && send.disabled; i++) await tick(20);
+  const msg = box.querySelector("#pui-msg")!.textContent!;
+  assert.ok(controls.includes(1), "Activate was sent");
+  assert.doesNotMatch(msg, /restarting its UI/);
+  assert.match(msg, /Stored in slot A, but the panel did not restart its UI/);
   box.remove();
 });

@@ -188,3 +188,30 @@ test("scripts/mkupdate.mjs writes a package whose manifest the app accepts", asy
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Information screen rebuilt during a module update (tab switch, language, reconnect): follows the running update, button off, then the result", async () => {
+  fakeBridge();
+  const { session } = await modulePiano("2.0.0");
+  const ctx = createContext(new ParamStore(), { session: () => session });
+  const a = infoScreen(ctx);
+  document.body.append(a);
+  (a.querySelector("#dfu-btn") as HTMLButtonElement).click();
+  await tick(20);
+  native().onDfu(JSON.stringify({ progress: 30 }));
+  a.remove();
+  const b = infoScreen(ctx);
+  document.body.append(b);
+  const btn = b.querySelector("#dfu-btn") as HTMLButtonElement;
+  const bar = b.querySelector("#dfu-progress") as HTMLProgressElement;
+  assert.equal(btn.disabled, true, "no second run from the rebuilt screen");
+  assert.equal(b.querySelector("#dfu-status")!.textContent, "Updating… 30%");
+  assert.equal(bar.hidden, false);
+  assert.equal(bar.value, 30);
+  native().onDfu(JSON.stringify({ progress: 70 }));
+  assert.equal(b.querySelector("#dfu-status")!.textContent, "Updating… 70%");
+  native().onDfu(JSON.stringify({ progress: 100, complete: 1 }));
+  await tick(5);
+  assert.equal(b.querySelector("#dfu-status")!.textContent, "Module updated.");
+  assert.equal(btn.disabled, false);
+  b.remove();
+});

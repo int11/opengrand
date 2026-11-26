@@ -10,6 +10,7 @@
 import { BleModule } from "../protocol/blemidi.ts";
 import { appFrame, Fn } from "../protocol/sysex.ts";
 import type { PianoSession } from "../protocol/session.ts";
+import { XferJob } from "../protocol/xferlock.ts";
 import { bridge, onDfuStatus } from "../transport/android.ts";
 import { compareVersions } from "./update.ts";
 
@@ -87,27 +88,39 @@ export interface DfuOptions {
 }
 
 /** One module update at a time, app-wide (the shell runs one DFU): the Information screen is rebuilt on every tab
- *  switch / reconnect with a fresh, enabled button, so the button alone does not keep a second run out. */
-let dfuRunning = false;
+ *  switch / reconnect with a fresh, enabled button, so the button alone does not keep a second run out. The running
+ *  update is kept here as a job a rebuilt screen follows (its states, then the final one). */
+let running: XferJob<DfuState, DfuState> | null = null;
 
 /** A module update is running (started by any screen). */
 export function dfuBusy(): boolean {
-  return dfuRunning;
+  return running !== null;
+}
+
+/** The running module update, to follow: every state, then the final one. */
+export function dfuJob(): XferJob<DfuState, DfuState> | null {
+  return running;
 }
 
 /** Run the whole update. Resolves with the final state (done / uptodate / error); "busy" (nothing sent) while
  *  another run is going. */
 export async function runDfu(session: Pick<PianoSession, "onMidi" | "sendRaw"> & Partial<Pick<PianoSession, "onFrame" | "deviceId">>, onState: (s: DfuState) => void, opt: DfuOptions = {}): Promise<DfuState> {
-  if (dfuRunning) {
+  if (running) {
     const s: DfuState = { phase: "error", message: "busy" };
     onState(s);
     return s;
   }
-  dfuRunning = true;
+  const job = (running = new XferJob<DfuState, DfuState>("dfu"));
+  let final: DfuState | undefined;
   try {
-    return await runDfuNow(session, onState, opt);
+    final = await runDfuNow(session, (s) => {
+      job.report(s);
+      onState(s);
+    }, opt);
+    return final;
   } finally {
-    dfuRunning = false;
+    running = null;
+    job.finish(final);
   }
 }
 

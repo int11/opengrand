@@ -361,3 +361,73 @@ test("Information screen: Apply now only on ota_loader_v2; upload can apply righ
   assert.match(el.querySelector("#ota-status")!.textContent!, /Now running: slot B/);
   el.remove();
 });
+
+/** The link goes quiet for status reads once `op` was sent: every status read then takes its whole timeout (~1 s). */
+function quietStatusAfter(session: InstanceType<typeof PianoSession>, op: number): void {
+  const real = session.sendRaw.bind(session);
+  let quiet = false;
+  session.sendRaw = (m: Uint8Array) => {
+    if (m[1] === 0x7d && m[6] === 0x10 && quiet) return;
+    if (m[1] === 0x7d && m[6] === op) quiet = true;
+    real(m);
+  };
+}
+
+test("apply waits by time, not by attempts: on a quiet link (a status read takes ~1 s) the timeout still bounds the wait", async () => {
+  const { session, s } = residentPiano({ v2: true });
+  s.slots[0] = { seq: 1, flags: 0x41, tries: 0 };
+  quietStatusAfter(session, 0x15);
+  const t0 = Date.now();
+  const r = await new ota.OtaClient(session).apply(KEY, ota.ApplyTarget.Newest, () => {}, 50, 300);
+  const applyMs = Date.now() - t0;
+  assert.equal(r.ok, false);
+  assert.match(r.message, /in time/);
+  assert.ok(applyMs < 2000, `apply waited ${applyMs} ms for a 300 ms timeout`);
+});
+
+test("the commit wait is by time, not by attempts: on a quiet link (a status read takes ~1 s) the timeout still bounds it", async () => {
+  const c = residentPiano();
+  quietStatusAfter(c.session, 0x13);
+  const t0 = Date.now();
+  const fin = await Promise.race([
+    new ota.OtaClient(c.session).update(makeFile(400), KEY, () => {}, 50, 2, { commitTimeoutMs: 300 }),
+    tick(4000).then(() => null),
+  ]);
+  const commitMs = Date.now() - t0;
+  assert.ok(fin, `the commit wait did not end within 4 s for a 300 ms timeout`);
+  assert.equal(fin.phase, "error");
+  assert.match(fin.message!, /did not finish writing/);
+  assert.ok(commitMs < 2500, `the commit wait took ${commitMs} ms for a 300 ms timeout`);
+});
+
+test("Information screen rebuilt during an upload (tab switch, language, reconnect): it follows the running upload and the apply after it, buttons off, then shows the result", async () => {
+  const { session, s } = residentPiano({ v2: true });
+  localStorage.setItem(ota.OTA_KEY_STORAGE, Array.from(KEY, (b) => b.toString(16).padStart(2, "0")).join(""));
+  const ctx = createContext(new ParamStore(), { session: () => session });
+  const a = infoScreen(ctx);
+  document.body.append(a);
+  (a.querySelector("#ng-check") as HTMLButtonElement).click();
+  await tick(80);
+  const file = makeFile(12000);
+  (a.querySelector("#ng-ota") as HTMLElement & { setOtaFile: (d: Uint8Array) => void }).setOtaFile(file);
+  (a.querySelector("#ota-apply-after") as HTMLInputElement).checked = true;
+  (a.querySelector("#ota-upload") as HTMLButtonElement).click();
+  for (let i = 0; i < 200 && !/Uploading/.test(a.querySelector("#ota-status")!.textContent!); i++) await tick(2);
+  a.remove();
+  const b = infoScreen(ctx);                         // main.ts show() builds a new screen
+  document.body.append(b);
+  const q = <T extends HTMLElement = HTMLButtonElement>(sel: string) => b.querySelector(sel) as T;
+  const buttons = ["#ota-upload", "#ota-rollback", "#ota-apply", "#ota-loader-rollback", "#ota-reselect", "#ota-loader-confirm"];
+  assert.equal(q("#ng-ota").hidden, false, "the firmware card is shown for the running job");
+  assert.match(q("#ota-status").textContent!, new RegExp(`Uploading… \\d+/${file.length} bytes`));
+  assert.equal(q("#ota-progress").hidden, false);
+  for (const sel of buttons) assert.equal(q(sel).disabled, true, `${sel} off during the upload`);
+  for (let i = 0; i < 300 && !/Now running|failed|Rejected/.test(q("#ota-status").textContent!); i++) await tick(20);
+  assert.match(q("#ota-status").textContent!, /Now running: slot A/, "the apply after the upload shows on the rebuilt screen too");
+  await tick(80);
+  assert.equal(s.begins, 1);
+  assert.deepEqual(s.applies, [0]);
+  for (const sel of buttons) assert.equal(q(sel).disabled, false, `${sel} on again after the job`);
+  assert.match(q("#ota-status").textContent!, /Now running: slot A/);
+  b.remove();
+});

@@ -8,7 +8,7 @@
 // packer (scripts/panelpkg.ts); the panel side is the ES5 loader, cross-checked in tests.
 import { encodeBlePackets } from "./blemidi.ts";
 import { crc32, NG_ID, NG_TAG, pack7, unpack7 } from "./ngext.ts";
-import { withXferLock } from "./xferlock.ts";
+import { withXferLock, type XferJob, xferJob } from "./xferlock.ts";
 
 export const PanelUiOp = { Status: 0x30, Begin: 0x31, Data: 0x32, Commit: 0x33, Control: 0x34 } as const;
 /** Ops 0x30-0x3F (replies 0x70-0x7F) are the panel-UI family the piano relays to port 3. */
@@ -178,6 +178,10 @@ export interface UploadProgress {
   restarts?: number;
   message?: string;
   rc?: number;
+  /** done with `activate`: true = the panel took Activate (it reloads into the new version), false = it refused or did
+   *  not answer (`activateRc`: its rc, null = no reply) - the package is stored, the old UI still runs */
+  activated?: boolean;
+  activateRc?: number | null;
 }
 export interface UploadOptions {
   /** Data frames in flight (1 = stop-and-wait). Default 2: hides the relay round trip, keeps the
@@ -198,10 +202,19 @@ export interface UploadOptions {
 }
 
 /** Sender over any PuiPort. One reply listener; requests are matched by op. */
+/** A panel UI job as a screen sees it (PanelUiClient.running): "upload" reports UploadProgress and ends with the final
+ *  one; "rollback" ends with the text its screen showed. */
+export type PanelUiJob = XferJob<unknown, unknown>;
+
 export class PanelUiClient {
   private readonly port: PuiPort;
   constructor(port: PuiPort) {
     this.port = port;
+  }
+
+  /** The panel UI job running on this link (started by any screen), to follow: progress, then the result. */
+  static running(port: PuiPort): PanelUiJob | null {
+    return xferJob(port, "panelui");
   }
 
   private request(op: number, args: number[], timeoutMs: number): Promise<Uint8Array | null> {
@@ -265,7 +278,13 @@ export class PanelUiClient {
    */
   upload(file: Uint8Array, opt: UploadOptions = {}): Promise<UploadProgress> {
     // one panel UI job per link (src/protocol/xferlock.ts): Data acks carry no tag
-    return withXferLock(this.port, "panelui", "upload", () => this.uploadNow(file, opt), () => {
+    return withXferLock<UploadProgress, unknown>(this.port, "panelui", "upload", (job) => this.uploadNow(file, {
+      ...opt,
+      onProgress: (p) => {
+        job.report(p);
+        opt.onProgress?.(p);
+      },
+    }), () => {
       const p: UploadProgress = { phase: "error", sent: 0, total: 0, retries: 0, rc: 3, message: PUI_RC[3] };
       opt.onProgress?.(p);
       return p;
@@ -312,7 +331,10 @@ export class PanelUiClient {
           const slot = c.slot ? "B" : "A";
           if (opt.activate) {
             report({ phase: "activate", sent: total, total, message: slot });
-            await this.control(PuiControl.Activate);
+            // the loader answers 0 before it reloads (panelui/uiloader.js onControl 1); no reply / another rc = not started
+            const a = await this.control(PuiControl.Activate);
+            if (a !== 0) return report({ phase: "done", sent: total, total, message: slot, activated: false, activateRc: a });
+            return report({ phase: "done", sent: total, total, message: slot, activated: true });
           }
           return report({ phase: "done", sent: total, total, message: slot });
         }

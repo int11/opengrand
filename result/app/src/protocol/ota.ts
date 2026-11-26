@@ -19,7 +19,7 @@
 // says what it is (format 2: type byte 0x28 = 1 main / 2 loader; format 1 = main).
 import { crc32, NG_ID, NG_TAG, pack7, parseNgReply, unpack7 } from "./ngext.ts";
 import type { PianoSession } from "./session.ts";
-import { withXferLock, xferBusy } from "./xferlock.ts";
+import { withXferLock, xferBusy, type XferJob, xferJob } from "./xferlock.ts";
 
 export const OtaOp = { Info: 0x0e, Confirm: 0x0f, Status: 0x10, Begin: 0x11, Data: 0x12, Commit: 0x13, Reject: 0x14, Apply: 0x15 } as const;
 /** Apply-now targets (cave/include/ota.h OTA_TGT_*). 2 is "built-in" up to ota_loader_v3 and "no main" on v4;
@@ -492,7 +492,16 @@ export interface OtaUploadOptions {
   lz?: boolean | "auto";
   /** false = always the old 200 B stop-and-wait (default true) */
   fast?: boolean;
+  /** how long to wait (elapsed time) for the piano to finish writing after Commit, default 60 s */
+  commitTimeoutMs?: number;
 }
+
+/** A firmware job as a screen sees it (OtaClient.running): "upload" reports OtaProgress and ends with the final one;
+ *  "apply" / "loader switch" report OtaStatus and end with the apply result; "reject" ends with its rc (number | null);
+ *  "loader confirm" ends with the confirm result. */
+export type OtaJob = XferJob<unknown, unknown>;
+export type OtaApplyResult = { ok: boolean; message: string; status?: OtaStatus; rc?: number };
+export type OtaConfirmResult = { ok: boolean; rc?: number; message: string; status?: OtaStatus };
 
 export class OtaClient {
   private readonly session: PianoSession;
@@ -505,9 +514,14 @@ export class OtaClient {
     return xferBusy(session, "ota");
   }
 
+  /** The firmware job running on this link (started by any screen), to follow: progress, then the result. */
+  static running(session: PianoSession): OtaJob | null {
+    return xferJob(session, "ota");
+  }
+
   /** One firmware job per link (src/protocol/xferlock.ts): `refused` without sending anything while another runs. */
-  private job<T>(what: string, fn: () => Promise<T>, refused: () => T): Promise<T> {
-    return withXferLock(this.session, "ota", what, fn, refused);
+  private job<T>(what: string, fn: (job: XferJob<unknown, T>) => Promise<T>, refused: () => T): Promise<T> {
+    return withXferLock<T, unknown>(this.session, "ota", what, fn, refused);
   }
 
   private request(op: number, args: number[], timeoutMs: number, accept?: (d: Uint8Array) => boolean): Promise<Uint8Array | null> {
@@ -650,11 +664,11 @@ export class OtaClient {
   /** Confirm the running loader (op 0x0F, v4): without it stage-0 gives the new loader up after LOADER_TRIES
    *  unconfirmed power-ons and runs the previous one. The reply only means "accepted": the slot's confirm mark is
    *  written by the engine loop, so the status is polled until the loader shows confirmed. */
-  confirmLoader(key: Uint8Array, pollMs = 200, timeoutMs = 5000): Promise<{ ok: boolean; rc?: number; message: string; status?: OtaStatus }> {
-    return this.job("loader confirm", () => this.confirmLoaderNow(key, pollMs, timeoutMs), () => ({ ok: false, rc: 3, message: OTA_ERRORS[3]! }));
+  confirmLoader(key: Uint8Array, pollMs = 200, timeoutMs = 5000): Promise<OtaConfirmResult> {
+    return this.job<OtaConfirmResult>("loader confirm", () => this.confirmLoaderNow(key, pollMs, timeoutMs), () => ({ ok: false, rc: 3, message: OTA_ERRORS[3]! }));
   }
 
-  private async confirmLoaderNow(key: Uint8Array, pollMs: number, timeoutMs: number): Promise<{ ok: boolean; rc?: number; message: string; status?: OtaStatus }> {
+  private async confirmLoaderNow(key: Uint8Array, pollMs: number, timeoutMs: number): Promise<OtaConfirmResult> {
     const st = await this.status();
     if (!st) return { ok: false, message: "no reply" };
     const L = st.loader;
@@ -663,11 +677,13 @@ export class OtaClient {
     if (L.slots[L.running]!.flags & SLOT_FLAG.confirmed) return { ok: true, message: "already confirmed", status: st };
     const rc = await this.authed(OtaOp.Confirm, key, [OtaTarget.LoaderA + L.running]);
     if (rc !== 0) return { ok: false, rc: rc ?? undefined, message: rc === null ? "no reply" : OTA_ERRORS[rc] ?? String(rc), status: st };
-    for (let i = 0; i < Math.ceil(timeoutMs / pollMs); i++) {
+    // bounded by elapsed time: on a quiet link a status read alone takes its whole timeout
+    const end = Date.now() + timeoutMs;
+    do {
       const s = await this.status();
       if (s?.loader && s.loader.slots[s.loader.running]!.flags & SLOT_FLAG.confirmed) return { ok: true, message: "confirmed", status: s };
       await new Promise((r) => setTimeout(r, pollMs));
-    }
+    } while (Date.now() < end);
     return { ok: false, message: "the piano did not mark the loader confirmed in time" };
   }
 
@@ -675,8 +691,11 @@ export class OtaClient {
    *  until the piano reports done / error. A live-applied slot is not boot-tested: it is still on
    *  probation (3 boot attempts) at the next power-on. */
   apply(key: Uint8Array, target: number = ApplyTarget.Newest, onStatus: (s: OtaStatus) => void = () => {},
-    pollMs = 200, timeoutMs = 20_000): Promise<{ ok: boolean; message: string; status?: OtaStatus; rc?: number }> {
-    return this.job("apply", () => this.applyNow(key, target, onStatus, pollMs, timeoutMs),
+    pollMs = 200, timeoutMs = 20_000): Promise<OtaApplyResult> {
+    return this.job<OtaApplyResult>(target === ApplyTarget.Reselect ? "loader switch" : "apply", (job) => this.applyNow(key, target, (s) => {
+      job.report(s);
+      onStatus(s);
+    }, pollMs, timeoutMs),
       () => ({ ok: false, message: `apply refused: ${OTA_ERRORS[3]}`, rc: 3 }));
   }
 
@@ -694,7 +713,9 @@ export class OtaClient {
     const before = st.loader?.reselects ?? 0;
     const rc = await this.authed(OtaOp.Apply, key, [target & 7]);
     if (rc !== 0) return { ok: false, message: `apply refused: ${rc === null ? "no reply" : OTA_ERRORS[rc] ?? rc}`, rc: rc ?? undefined };
-    for (let i = 0; i < Math.ceil(timeoutMs / pollMs); i++) {
+    // bounded by elapsed time: on a quiet link a status read alone takes its whole timeout
+    const end = Date.now() + timeoutMs;
+    do {
       await new Promise((r) => setTimeout(r, pollMs));
       const s = await this.status();
       if (!s) continue;
@@ -717,7 +738,7 @@ export class OtaClient {
         return { ok: true, message: activeName(s), status: s };
       }
       if (s.applyState === 6) return { ok: false, message: OTA_ERRORS[s.applyErr] ?? String(s.applyErr), status: s, rc: s.applyErr };
-    }
+    } while (Date.now() < end);
     return { ok: false, message: "the piano did not finish applying in time" };
   }
 
@@ -740,7 +761,10 @@ export class OtaClient {
    *  Begin with 5 bytes and gets the 200 B stop-and-wait frames. */
   update(file: Uint8Array, key: Uint8Array, onProgress: (p: OtaProgress) => void = () => {}, pollMs = 300,
     maxRestarts = 2, opts: OtaUploadOptions = {}): Promise<OtaProgress> {
-    return this.job("upload", () => this.updateNow(file, key, onProgress, pollMs, maxRestarts, opts), () => {
+    return this.job("upload", (job) => this.updateNow(file, key, (p) => {
+      job.report(p);
+      onProgress(p);
+    }, pollMs, maxRestarts, opts), () => {
       const p: OtaProgress = { phase: "error", sent: 0, total: file.length, message: OTA_ERRORS[3], rc: 3 };
       onProgress(p);
       return p;
@@ -828,14 +852,17 @@ export class OtaClient {
         const c = await this.authed(OtaOp.Commit, key, [target]);
         if (c !== 0) return refused("commit", c);
         let end: OtaStatus | null = null;
-        for (let i = 0; i < Math.ceil(60_000 / pollMs) && !end; i++) {
+        // bounded by elapsed time: on a quiet link a status read alone takes its whole timeout
+        const commitMs = opts.commitTimeoutMs ?? 60_000;
+        const deadline = Date.now() + commitMs;
+        do {
           await new Promise((r) => setTimeout(r, pollMs));
           const s = await this.status();
           if (!s) continue;
           if (s.job === 8 || s.job === 9) end = s;
           else report({ phase: "commit", sent: file.length, total: file.length, status: s, message: OTA_JOB[s.job] });
-        }
-        if (!end) return fail("the piano did not finish writing in 60 s");
+        } while (!end && Date.now() < deadline);
+        if (!end) return fail(`the piano did not finish writing in ${commitMs / 1000} s`);
         if (end.job === 8) return report({ phase: "done", sent: file.length, total: file.length, status: end, message: targetName(target), ...planned });
         // OE_CRC: every byte arrived, one of them damaged on the way; checked in RAM, the flash was not touched
         if (end.err !== 10 || restarts >= maxRestarts) {

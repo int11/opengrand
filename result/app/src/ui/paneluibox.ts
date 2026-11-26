@@ -1,7 +1,9 @@
 // "Panel UI over Bluetooth" box on the Information screen: sends a signed panel UI package
 // (.c79u, `npm run panelui:pack`) through the piano's relay to the built-in panel
 // (src/protocol/panelui.ts, REMOTE_PROTOCOL.md section 10.7). Not shown on the panel itself.
-import { keyIdHex, PanelUiClient, type PanelUiStatus, parsePackage, PUI_RUNNING, PuiControl } from "../protocol/panelui.ts";
+import {
+  keyIdHex, PanelUiClient, type PanelUiJob, type PanelUiStatus, parsePackage, PUI_RUNNING, PuiControl, type UploadProgress,
+} from "../protocol/panelui.ts";
 import { xferLock } from "../protocol/xferlock.ts";
 import { t } from "../i18n.ts";
 import type { AppContext } from "./context.ts";
@@ -43,33 +45,57 @@ export function panelUiBox(ctx: AppContext): HTMLElement {
       ? t("{n} bytes, version {v}, seq {s}, key {k}.", { n: file.length, v: p.header.version, s: p.header.seq, k: keyIdHex(p.header.keyId) })
       : t("Not a panel UI package (.c79u).");
   });
+  /** What an upload's progress says; only from the progress, so a rebuilt screen shows the same (no screen state). */
+  const uploadText = (p: UploadProgress): string =>
+    (p.phase === "upload" || p.phase === "begin") && p.restarts ? t("Resending (a frame was damaged on the way)… {a}/{b} bytes", { a: p.sent, b: p.total })
+    : p.phase === "upload" || p.phase === "begin" ? t("Sending… {a}/{b} bytes", { a: p.sent, b: p.total })
+    : p.phase === "commit" ? t("The panel is checking and storing it…")
+    : p.phase === "done" && p.rc === 14 ? t("Failed: {e}", { e: p.message ?? "" })
+    : p.phase === "done" && p.activated === true ? t("Stored in slot {slot}; the panel is restarting its UI.", { slot: p.message ?? "" })
+    : p.phase === "done" && p.activated === false ? t("Stored in slot {slot}, but the panel did not restart its UI ({e}).", {
+      slot: p.message ?? "", e: p.activateRc === null || p.activateRc === undefined ? t("No reply") : String(p.activateRc),
+    })
+    : p.phase === "done" ? t("Stored in slot {slot}.", { slot: p.message ?? "" })
+    : p.phase === "error" ? t("Failed: {e}", { e: p.message ?? "" })
+    : t("Working…");
+  const setBusy = (on: boolean) => {
+    (send as HTMLButtonElement).disabled = on;
+    (rollback as HTMLButtonElement).disabled = on;
+  };
+  /** Follow a panel UI job on this link - this screen's, or one a replaced screen started (a tab switch, language
+   *  change or reconnect rebuilds the screen): its progress with Send / Roll back off, then its result. */
+  const follow = (job: PanelUiJob, own: boolean) => {
+    setBusy(true);
+    if (job.what === "upload") bar.hidden = false;
+    job.watch((j) => {
+      if (j.what === "upload") {
+        const p = (j.finished ? j.result : j.progress) as UploadProgress | undefined;
+        if (p) bar.value = Math.round((p.sent / Math.max(1, p.total)) * 100);
+        msg.textContent = p ? uploadText(p) : t("Working…");
+        if (j.finished && p?.phase !== "done") bar.hidden = true;
+      } else if (!j.finished) msg.textContent = t("Working…");
+      else if (typeof j.result === "string") msg.textContent = j.result;
+      if (j.finished) {
+        setBusy(false);
+        if (!own) void refresh();
+      }
+    });
+  };
   const send = h("button", {
     id: "pui-send", class: "primary",
     onclick: async () => {
+      const s = ctx.session();
       const c = client();
-      if (!c) return;
+      if (!s || !c) return;
       if (!file) {
         msg.textContent = t("Pick a package first.");
         return;
       }
-      (send as HTMLButtonElement).disabled = true;
-      bar.hidden = false;
-      const fin = await c.upload(file, {
-        activate: activate.checked,
-        onProgress: (p) => {
-          bar.value = Math.round((p.sent / Math.max(1, p.total)) * 100);
-          msg.textContent =
-            (p.phase === "upload" || p.phase === "begin") && p.restarts ? t("Resending (a frame was damaged on the way)… {a}/{b} bytes", { a: p.sent, b: p.total })
-            : p.phase === "upload" || p.phase === "begin" ? t("Sending… {a}/{b} bytes", { a: p.sent, b: p.total })
-            : p.phase === "commit" ? t("The panel is checking and storing it…")
-            : p.phase === "done" ? (activate.checked && p.rc !== 14 ? t("Stored in slot {slot}; the panel is restarting its UI.", { slot: p.message ?? "" }) : t("Stored in slot {slot}.", { slot: p.message ?? "" }))
-            : p.phase === "error" ? t("Failed: {e}", { e: p.message ?? "" })
-            : t("Working…");
-        },
-      });
-      (send as HTMLButtonElement).disabled = false;
-      if (fin.phase !== "done") bar.hidden = true;
-      if (fin.rc === 14) msg.textContent = t("Failed: {e}", { e: fin.message ?? "" });
+      const up = c.upload(file, { activate: activate.checked });
+      // the lock is taken before upload() returns: this is its job (or the one that refused it)
+      const job = PanelUiClient.running(s);
+      if (job) follow(job, true);
+      await up;
       await refresh();
     },
   }, t("Send to panel"));
@@ -83,17 +109,16 @@ export function panelUiBox(ctx: AppContext): HTMLElement {
       }
       // one panel UI job per link (src/protocol/xferlock.ts): not during an upload (this or a rebuilt screen's), not
       // twice for a double tap - a second Control 2 would mark the fallback version bad too
-      const release = xferLock(s, "panelui", "rollback");
-      if (!release) {
+      const lease = xferLock(s, "panelui", "rollback");
+      if (!lease) {
         msg.textContent = t("Busy");
         return;
       }
-      (rollback as HTMLButtonElement).disabled = true;
+      follow(lease.job, true);
       try {
         await rollbackNow(new PanelUiClient(s));
       } finally {
-        release();
-        (rollback as HTMLButtonElement).disabled = false;
+        lease.release(msg.textContent);                // a rebuilt screen shows the same result
       }
     },
   }, t("Roll back"));
@@ -116,6 +141,11 @@ export function panelUiBox(ctx: AppContext): HTMLElement {
     show(st);
     msg.textContent = t("Rolled back: the panel starts the previous UI next time.");
   }
+
+  // a job a replaced screen started is still running on this link: follow it instead of offering a second one
+  const cur = ctx.session();
+  const running = cur ? PanelUiClient.running(cur) : null;
+  if (running) follow(running, false);
 
   // laid out like 「펌웨어 업데이트」 on the Information screen: state under its label,
   // one labelled file picker, the primary send with its switch, then roll back; the card title is the caller's
