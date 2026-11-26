@@ -154,7 +154,8 @@ test("music tab on the panel: a tap plays the piece through the shell; hand prac
   assert.deepEqual(calls[1].obj, { tempo: 1 }, "the lesson tempo again after each select (1× until moved)");
   calls.splice(1, 1);
   assert.deepEqual(calls[1].obj, { interval: 480 }, "ticks per beat, as the original app passes");
-  assert.ok(!sent.some((m) => m.includes(" 55 01 ")), "no Volume frames to the piano");
+  assert.ok(sent.some((m) => m.includes(" 55 01 0F 64")) && sent.some((m) => m.includes(" 55 01 31 64")),
+    "song volume 100 on both hands (Volume Global / MIDI2ch) with each piece");
   assert.equal(rows(el)[3].getAttribute("data-playing"), "1");
   assert.match(el.querySelector("#music-player .pl-title")!.textContent!, /Invention No\. 4/);
   assert.ok(!sent.some((m) => m.includes(" 52 00 7F") || m.includes(" 52 1D ")), "no SongSelect / MusicMode for a lesson piece");
@@ -175,7 +176,7 @@ test("music tab on the panel: a tap plays the piece through the shell; hand prac
   assert.equal(calls.at(-3)!.obj.path, "Kawai/default/T-C.mid");
   assert.equal(calls.at(-2)!.cmd, "setSmfRelativeTempo", "a fresh select mutes nothing: no setSmfTrack for Piano Music");
   assert.equal(calls.filter((c) => c.cmd === "getSmfList").length, 0, "the list is asked once");
-  assert.ok(!sent.some((m) => m.includes(" 55 01 ")), "still no Volume frames");
+  assert.equal(sent.filter((m) => m.includes(" 55 01 0F ")).length, 3, "Volume again with each piece picked");
   assert.equal(beatTicks({ division: 480, beatInfo: [{ numra: 6, denom: 8 }] }), 720, "6/8: a dotted quarter");
   assert.equal(beatTicks({ division: 480, beatInfo: [{ numra: 3, denom: 4 }] }), 480);
   el.remove();
@@ -216,7 +217,46 @@ test("hand practice: the hand parts come from selectSmf's existTrack; a change w
   (el.querySelector('#music-player [data-act="stop"]') as HTMLElement).click();
   byText(el, "button", "Right hand").click();
   assert.deepEqual(tracks(), [1, 2, -1, 2], "stopped: sent with the next select instead");
-  assert.ok(!sent.some((m) => m.includes(" 55 01 ")), "no Volume frames");
+  el.remove();
+});
+
+test("song volume and balance: Volume Global (right hand) / MIDI2ch (left hand) as the original app computes them, with each piece and while it plays", async () => {
+  const { handVolumes } = await import("../src/ui/screens/music.ts");
+  assert.deepEqual(handVolumes(100, 50), [100, 100]);
+  assert.deepEqual(handVolumes(100, 0), [0, 100], "left end: the right hand silent");
+  assert.deepEqual(handVolumes(100, 100), [100, 0], "right end: the left hand silent");
+  assert.deepEqual(handVolumes(100, 25), [50, 100]);
+  assert.deepEqual(handVolumes(127, 99), [127, 2], "floor(127 × floor(100·1/50)/100)");
+  assert.deepEqual(handVolumes(200, -5), [0, 127], "clamped");
+
+  const inv = bookOf(LESSON_BOOKS, "inventions");
+  const files = [stub(inv, 0, "T-A.mid"), stub(bookOf(PIANO_MUSIC, "piano"), 13, "T-C.mid")];
+  fakeShell({ files });
+  const { store, sent } = await setup();
+  const el = S.musicScreen(store);
+  document.body.append(el);
+  const vol = () => sent.filter((m) => m.includes(" 55 01 ")).map((m) => m.split(" 55 01 ")[1].slice(0, 5));
+  change(field<HTMLSelectElement>(el, "Lesson book"), "inventions");
+  const bal = el.querySelector("#lesson-balance input") as HTMLInputElement;
+  assert.ok(!(el.querySelector("#lesson-balance") as HTMLElement).hidden, "a book with two hand parts shows the balance");
+  change(bal, "25");
+  await tick(200);
+  assert.deepEqual(vol(), [], "nothing playing: nothing sent");
+  (rows(el)[0].querySelector("button") as HTMLButtonElement).click();
+  await tick(30);
+  assert.deepEqual(vol(), ["0F 32", "31 64"], "the lesson piece starts with the balance: right hand 50, left 100");
+  const songVol = el.querySelector("section:not([hidden]) .song-volume input") as HTMLInputElement;
+  change(songVol, "60");
+  change(bal, "50");
+  await tick(200);
+  assert.deepEqual(vol().slice(2), ["0F 3C", "31 3C"], "moves while playing: one send after they settle");
+  // Piano Music: the song volume, no balance
+  change(bal, "0");
+  byText(el, "button", "Piano Music").click();
+  assert.equal((el.querySelector("section:not([hidden]) .song-volume input") as HTMLInputElement).value, "60", "one song volume for every mode");
+  (rows(el)[13].querySelector("button") as HTMLButtonElement).click();
+  await tick(30);
+  assert.deepEqual(vol().slice(-2), ["0F 3C", "31 3C"], "Piano Music: both hands at the song volume");
   el.remove();
 });
 
@@ -374,6 +414,6 @@ test("music tab on the panel: lesson metronome volume is the shell's beat clicks
   assert.deepEqual(metro.at(-1), { cmd: "muteMetronome", obj: { on: false } });
   (el.querySelector('#music-player [data-act="stop"]') as HTMLElement).click();
   await tick();
-  assert.ok(!sent.slice(from).some((m) => m.includes(" 56 03 ") || m.includes(" 55 01 ")), "no MetronomeVolume / Volume frames");
+  assert.ok(!sent.slice(from).some((m) => m.includes(" 56 03 ")), "no MetronomeVolume frames");
   el.remove();
 });
