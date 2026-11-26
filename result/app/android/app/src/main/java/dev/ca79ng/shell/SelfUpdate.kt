@@ -56,7 +56,7 @@ class SelfUpdate(private val activity: Activity, private val emit: (String) -> U
         emit(o.toString())
     }
 
-    /** Check, and download when newer. Returns false when a check is already running. */
+    /** Check, and download when newer. Returns false when a check (or an install start) is already running. */
     fun check(): Boolean {
         synchronized(this) { if (busy) return false; busy = true }
         Thread {
@@ -172,6 +172,9 @@ class SelfUpdate(private val activity: Activity, private val emit: (String) -> U
     fun apply(): Boolean {
         val apk = stagedApk ?: return false
         if (state.optString("phase") != "ready") return false
+        // one job at a time with check(): "installing" is set on the worker only after the sha256, so without this a
+        // double tap opened two installer sessions, and a check meanwhile re-downloaded over the APK being copied
+        synchronized(this) { if (busy) return false; busy = true }
         Thread {
             try {
                 val s = JSONObject(stagedFile.readText())
@@ -187,6 +190,8 @@ class SelfUpdate(private val activity: Activity, private val emit: (String) -> U
                 set("phase" to "ready") // the user may cancel the system confirm: the button stays
             } catch (e: Exception) {
                 set("phase" to "error", "error" to "install", "message" to (e.message ?: e.toString()))
+            } finally {
+                busy = false
             }
         }.start()
         return true

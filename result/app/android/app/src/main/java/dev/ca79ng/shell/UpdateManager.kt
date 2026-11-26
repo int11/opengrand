@@ -36,6 +36,8 @@ class UpdateManager(
     private val usbPath: () -> String,
     private val emit: (String) -> Unit,
 ) {
+    private val installing = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private data class Pkg(val apk: File, val version: String, val versionCode: Long, val sha256: String)
 
     private fun candidates(): List<File> {
@@ -71,6 +73,8 @@ class UpdateManager(
     /** Verify and install on a worker thread; status goes to ca79ngNative.onUpdate. */
     fun install(): Boolean {
         val p = find() ?: return false
+        // one verify + install at a time: a second tap during the sha256 started a second PackageInstaller session
+        if (!installing.compareAndSet(false, true)) return false
         Thread {
             try {
                 status("verifying")
@@ -83,6 +87,8 @@ class UpdateManager(
                 if (!openSystemInstaller(activity, p.apk) { st, msg -> status(st, msg) }) status("needs-source")
             } catch (e: Exception) {
                 status("error", e.message ?: e.toString())
+            } finally {
+                installing.set(false)
             }
         }.start()
         return true
