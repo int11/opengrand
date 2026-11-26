@@ -52,6 +52,12 @@ class LinkLifecycle(val graceMs: Long = GRACE_MS) {
         return true
     }
 
+    /**
+     * Checked [FORCE_CLOSE_MS] after "background": close what the page left open only if the app is still away.
+     * Back in front meanwhile, the page is reconnecting - the force close posted earlier must not cut that link.
+     */
+    fun forceCloseDue(): Boolean = released
+
     /** Activity back in front: true → the link was let go, tell the page "foreground". */
     fun onStart(): Boolean {
         stoppedAt = null

@@ -43,4 +43,16 @@ class ShellPolicyTest {
         assertFalse(l.released)
         assertFalse(l.onStart())
     }
+
+    @Test fun forceCloseOnlyWhileStillReleased() {
+        val l = LinkLifecycle(graceMs = 30_000)
+        l.onStop(1_000)
+        assertTrue(l.releaseDue(31_000))
+        assertTrue(l.forceCloseDue()) // still away when the force close comes: free the module
+        // back in front within FORCE_CLOSE_MS: the page reconnects, the force close posted earlier must not cut it
+        assertTrue(l.onStart())
+        assertFalse(l.forceCloseDue())
+        l.onStop(32_500) // away again right after: still inside the new grace
+        assertFalse(l.forceCloseDue())
+    }
 }

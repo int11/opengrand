@@ -137,10 +137,12 @@ class MainActivity : Activity() {
     // The panel build never lets go (it is the piano's own screen).
     private val linkLife = LinkLifecycle()
     private val ui = Handler(Looper.getMainLooper())
+    // a throttled page: free the module anyway - unless the app came back meanwhile (the page is reconnecting)
+    private val forceClose = Runnable { if (linkLife.forceCloseDue()) midi.closeOpen() }
     private val releaseCheck = Runnable {
         if (linkLife.releaseDue(SystemClock.elapsedRealtime())) {
             callback("onLifecycle", "background")
-            ui.postDelayed({ midi.closeOpen() }, LinkLifecycle.FORCE_CLOSE_MS) // a throttled page: free the module anyway
+            ui.postDelayed(forceClose, LinkLifecycle.FORCE_CLOSE_MS)
         }
     }
 
@@ -154,6 +156,7 @@ class MainActivity : Activity() {
     override fun onStart() {
         super.onStart()
         ui.removeCallbacks(releaseCheck)
+        ui.removeCallbacks(forceClose)
         if (linkLife.onStart()) callback("onLifecycle", "foreground")
     }
 
