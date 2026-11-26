@@ -64,12 +64,23 @@ export function chordScreen(ctx: AppContext): HTMLElement {
   invSel.addEventListener("change", () => { inversion = Number(invSel.value); render(); });
 
   // play on the piano: note on, then off after 1.2 s (channel 1)
+  // A tap while a chord still sounds ends that chord first: its pending note-offs used to cut the new chord short
+  // (same notes) or arrive in the middle of it.
+  let sounding: { off: () => void; timer: ReturnType<typeof setTimeout> } | null = null;
   const play = () => {
     const s = ctx.session();
     if (!s) return;
+    if (sounding) {
+      clearTimeout(sounding.timer);
+      sounding.off();
+    }
     const notes = render().notes;
     for (const n of notes) s.sendRaw(Uint8Array.of(0x90, n, 80));
-    setTimeout(() => { for (const n of notes) s.sendRaw(Uint8Array.of(0x80, n, 0)); }, 1200);
+    const off = () => {
+      for (const n of notes) s.sendRaw(Uint8Array.of(0x80, n, 0));
+      sounding = null;
+    };
+    sounding = { off, timer: setTimeout(off, 1200) };
   };
 
   // what the player is holding, from the piano's MIDI out
