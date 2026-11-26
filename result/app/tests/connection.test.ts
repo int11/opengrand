@@ -73,6 +73,10 @@ const TABLE: [ConnState, ConnEvent, Phase, string[]][] = [
   [at("waking"), { type: "retry" }, "retaking", ["retake"]],
   [at("displaced"), { type: "retry" }, "retaking", ["retake"]],
   ...(["connecting", "syncing", "retaking"] as Phase[]).map((p): [ConnState, ConnEvent, Phase, string[]] => [at(p), { type: "retry" }, p, []]),
+  // the file channel's rejoin: only while connected; displaced / busy / not connected: nothing
+  [at("ready"), { type: "rejoin" }, "retaking", ["retake"]],
+  [at("waking"), { type: "rejoin" }, "retaking", ["retake"]],
+  ...(["idle", "connecting", "syncing", "retaking", "displaced", "lost", "failed"] as Phase[]).map((p): [ConnState, ConnEvent, Phase, string[]] => [at(p), { type: "rejoin" }, p, []]),
   // the piano may have dropped our binding (field 2026-11-09, apply now): CONNECT + re-sync once
   ...(["apply", "identity", "notBound"] as const).flatMap((why): [ConnState, ConnEvent, Phase, string[]][] => [
     [at("ready"), { type: "rebind", gen: G, why }, "retaking", ["retake"]],
@@ -175,6 +179,18 @@ test("re-bind flags: once per session for 'not bound'; a new session or a manual
   assert.equal(fresh.rebound, false, "a new session starts unguarded");
   // a displacement retake is not a rejoin: the banner still says Taking control
   assert.deepEqual(connView(reduce(at("displaced"), { type: "retake" }).state).status, ["Taking control…"]);
+});
+
+test("quiet rejoin (file channel): the header says Syncing, not Reconnecting; the re-arm keeps it; ready / a displacement end it", () => {
+  const r = reduce(at("ready"), { type: "rejoin" }).state;
+  assert.deepEqual([r.phase, r.rejoin, r.quiet], ["retaking", true, true]);
+  assert.deepEqual(connView(r).status, ["Syncing with {name}…", { name: "CA79" }]);
+  assert.deepEqual([connView(r).banner, connView(r).button.action], [null, "none"]);
+  const id = reduce(r, { type: "identified", gen: G }).state;
+  assert.equal(id.quiet, true);
+  assert.equal(reduce(id, { type: "synced", gen: G, model: "CA79", version: "1" }).state.quiet, false);
+  assert.equal(reduce(id, { type: "displaced", gen: G }).state.quiet, false);
+  assert.equal(reduce(at("ready"), { type: "retry" }).state.quiet, false, "the menu's Reconnect is not quiet");
 });
 
 test("boot notice flags: the window closes on use and on graceEnd; a retake or a lost link ends the notice", () => {

@@ -89,9 +89,12 @@ export interface ConnState {
   rebound: boolean;
   /** retaking because this app re-binds (automatic re-bind, "Reconnect" while connected), not after a displacement */
   rejoin: boolean;
+  /** a rejoin a client of the session asked for (the file channel after a fn 0x24 timeout, ConnectionManager.rejoin):
+   *  the same link and session — not a reconnect, so the header says Syncing and main.ts redraws nothing */
+  quiet: boolean;
 }
 
-export const INITIAL: ConnState = { phase: "idle", seq: 0, gen: 0, key: null, link: "", model: "", version: "", error: "", suspended: false, bootNotice: false, grace: false, bootTook: false, autoReconnect: false, reopening: false, reconnects: 0, rebound: false, rejoin: false };
+export const INITIAL: ConnState = { phase: "idle", seq: 0, gen: 0, key: null, link: "", model: "", version: "", error: "", suspended: false, bootNotice: false, grace: false, bootTook: false, autoReconnect: false, reopening: false, reconnects: 0, rebound: false, rejoin: false, quiet: false };
 
 export type ConnEvent =
   | { type: "connectButton" } // header button
@@ -99,6 +102,7 @@ export type ConnEvent =
   | { type: "disconnect" } // user "Disconnect"
   | { type: "retake" } // banner "Take control again"
   | { type: "retry" } // banner "Try again" / "Reconnect", connected menu "Reconnect"
+  | { type: "rejoin" } // a client of the session (the file channel) asks for CONNECT + re-sync: ConnectionManager.rejoin
   | { type: "suspend" } // app hidden for a while / page closed / shell stopped
   | { type: "resume" } // app back in front
   | { type: "identified"; gen: number } // CONNECT + model answered (session -> syncing)
@@ -138,7 +142,7 @@ const has = (list: readonly Phase[], p: Phase) => list.includes(p);
 
 function go(s: ConnState, phase: Phase, patch: Partial<ConnState> = {}): ConnState {
   // the boot notice belongs to the displaced phase only (a retake, a lost link … end it)
-  return { ...s, bootTook: false, rejoin: false, ...patch, phase, seq: s.seq + 1 };
+  return { ...s, bootTook: false, rejoin: false, quiet: false, ...patch, phase, seq: s.seq + 1 };
 }
 
 /** The transition table. Unknown / stale events leave the state as it is, with no effects. */
@@ -200,6 +204,9 @@ function step(s: ConnState, ev: ConnEvent): { state: ConnState; effects: Effect[
       if (s.phase === "ready" || s.phase === "waking") return { state: go(s, "retaking", { rejoin: true, rebound: false }), effects: [{ type: "retake" }] };
       if (s.phase === "displaced") return { state: go(s, "retaking"), effects: [{ type: "retake" }] };
       return same;
+    case "rejoin":
+      // the same CONNECT + re-sync as 「Reconnect」 while connected; displaced / busy: the banner / the CONNECT under way decide
+      return s.phase === "ready" || s.phase === "waking" ? { state: go(s, "retaking", { rejoin: true, quiet: true, rebound: false }), effects: [{ type: "retake" }] } : same;
     case "rebind":
       // connecting / syncing / retaking: the CONNECT under way answers it; displaced: another device holds control
       if (s.phase !== "ready" && s.phase !== "waking") return same;
@@ -207,7 +214,7 @@ function step(s: ConnState, ev: ConnEvent): { state: ConnState; effects: Effect[
       return { state: go(s, "retaking", { rejoin: true, rebound: true }), effects: [{ type: "retake" }] };
     case "identified":
       if (s.phase === "connecting") return { state: go(s, "syncing"), effects: [] };
-      if (s.phase === "retaking") return { state: go(s, "retaking", { rejoin: s.rejoin }), effects: [] }; // re-arm with the dump budget
+      if (s.phase === "retaking") return { state: go(s, "retaking", { rejoin: s.rejoin, quiet: s.quiet }), effects: [] }; // re-arm with the dump budget
       return same;
     case "synced":
       if (s.phase === "connecting" || s.phase === "syncing" || s.phase === "retaking") return { state: go(s, "ready", { model: ev.model, version: ev.version, error: "", reopening: false, reconnects: 0 }), effects: [] };
@@ -283,6 +290,8 @@ export function connView(s: ConnState): ConnView {
       if (s.bootTook) return { status: id, button: { label: "Connected", action: "menu" }, banner: { msg: [BOOT_TOOK], button: { label: "Use this app", action: "retake", disabled: false } } };
       return { status: id, button: { label: "Connected", action: "menu" }, banner: { msg: ["Another device (the panel or another app) took control"], button: { label: "Take control again", action: "retake", disabled: false } } };
     case "retaking":
+      // the file channel's re-sync on the link that never went anywhere: no "Reconnecting", the menu waits for it
+      if (s.quiet) return { status: ["Syncing with {name}…", { name: s.link }], button: { label: "Connected", action: "none" }, banner: null };
       if (s.rejoin) return { status: ["Reconnecting to {name}…", { name: s.link }], button: { label: "Connecting…", action: "none" }, banner: null };
       return { status: ["Taking control…"], button: { label: "Connecting…", action: "none" }, banner: { msg: ["Taking control…"], button: { label: "Take control again", action: "retake", disabled: true } } };
     case "lost":
@@ -438,11 +447,11 @@ export class ConnectionManager {
    * CONNECT + full re-sync of `s` asked by a client of the session (the file channel after a fn 0x24 timeout), the
    * way 「Reconnect」 does it: through the phases, so a failed one shows as failed and one under way is not doubled.
    * Nothing when `s` is not the current session or it is not connected (displaced: the banner decides). Resolves with
-   * the settled phase.
+   * the settled phase. Marked `quiet`: the same session coming back is not a new connection (`watchConnects`).
    */
   rejoin(s: PianoSession): Promise<Phase> {
     if (this.session !== s || (this.phase !== "ready" && this.phase !== "waking")) return this.settled();
-    this.dispatch({ type: "retry" });
+    this.dispatch({ type: "rejoin" });
     return this.settled();
   }
 
@@ -665,6 +674,29 @@ export class ConnectionManager {
       if (!s.displaced && s.state !== "closed") this.dispatch({ type: "failed", gen, error: err.message });
     });
   }
+}
+
+/** The file channel's rejoin is under way (`quiet` retaking): the session and link stay what they were. */
+export function quietRejoin(s: ConnState): boolean {
+  return s.phase === "retaking" && s.quiet;
+}
+
+/**
+ * main.ts's on-connect hook: `connected` when the manager reaches ready from anything but ready / waking — the
+ * screens are drawn for the synced piano, the USB players followed, the UI loader confirmed. A quiet rejoin of the same
+ * session (ConnectionManager.rejoin) coming back to ready is `rejoined` instead: redrawing the tab would wipe the
+ * screen that asked for it (the recorder's "control re-taken; try again", a half-done dialog). Derived from the
+ * transition itself, so a rejoin that ends failed / displaced / lost leaves nothing behind for the next connect.
+ */
+export function watchConnects(m: { state: ConnState; onChange(fn: (s: ConnState) => void): unknown }, on: { connected(): void; rejoined?(): void }): void {
+  let prev = m.state;
+  m.onChange((s) => {
+    const was = prev;
+    prev = s;
+    if (s.phase !== "ready" || was.phase === "waking" || was.phase === "ready") return;
+    if (quietRejoin(was) && was.gen === s.gen) on.rejoined?.();
+    else on.connected();
+  });
 }
 
 export function linkKey(link: MidiLink): string {

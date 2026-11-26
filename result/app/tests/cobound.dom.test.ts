@@ -130,6 +130,33 @@ test("badge: session-core payload → 1B 03 polled, line follows the table; othe
   i18n.setLang("en");
 });
 
+test("badge: the file channel's rejoin (quiet retaking) neither hides the line nor asks 1B 03 again; a Reconnect does", async () => {
+  Object.defineProperty(document, "hidden", { value: false, configurable: true });
+  const s = fakeSession(0x03, () => core03(0x0c, 4, 2));
+  const fns: ((st: { phase: string; gen: number; quiet: boolean }) => void)[] = [];
+  const conn = {
+    state: { phase: "idle", gen: 1, quiet: false },
+    onChange(fn: (st: { phase: string; gen: number; quiet: boolean }) => void) { fns.push(fn); },
+    go(phase: string, quiet = false) { conn.state = { phase, gen: 1, quiet }; fns.forEach((f) => f(conn.state)); },
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const b = coBoundBadge(() => s as any, conn as any, () => 2, 0);
+  conn.go("ready");
+  await tick(30);
+  assert.equal(b.el.hidden, false);
+  const asked = s.asked.length;
+  conn.go("retaking", true);
+  assert.equal(b.el.hidden, false, "kept through the re-sync");
+  conn.go("ready");
+  await tick(30);
+  assert.equal(s.asked.length, asked, "nothing asked again");
+  conn.go("retaking"); // 「Reconnect」 from the menu: read afresh after it
+  assert.equal(b.el.hidden, true);
+  conn.go("ready");
+  await tick(30);
+  assert.ok(s.asked.length > asked);
+});
+
 test("fan-out frame from the piano: ACKed with its key and applied to the store at once", async () => {
   const [app, piano] = LoopbackLink.pair();
   const got: Uint8Array[] = [];

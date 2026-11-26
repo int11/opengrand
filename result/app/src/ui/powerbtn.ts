@@ -7,7 +7,7 @@
 import { t } from "../i18n.ts";
 import { NgClient, ngHas, NgPower, PolicyResult, parseStandbyNotice, type StandbyReply, type StandbyStateName } from "../protocol/ngext.ts";
 import type { PianoSession } from "../protocol/session.ts";
-import type { ConnState } from "../state/connection.ts";
+import { type ConnState, quietRejoin } from "../state/connection.ts";
 import { h } from "./dom.ts";
 import { identifyShared } from "./identify.ts";
 
@@ -134,7 +134,7 @@ export function powerButton(session: () => PianoSession | null, conn: { state: C
     draw();
   });
   conn.onChange((c) => {
-    const now = live() ? `${c.gen}` : "";
+    const now = live() || quietRejoin(c) ? `${c.gen}` : ""; // the file channel's rejoin: same session, keep the button
     if (now === gen) return;
     gen = now;
     void attach();

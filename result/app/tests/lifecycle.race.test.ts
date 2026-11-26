@@ -265,3 +265,81 @@ test("rejoin of a session that is not the manager's current one does nothing", a
   assert.equal(m.phase, "ready");
   m.disconnect();
 });
+
+const { connView, watchConnects } = await import("../src/state/connection.ts");
+
+/** A manager on a fake piano that can be muted, with main.ts's on-connect hook counted and the header texts kept. */
+async function rejoinRig() {
+  const [a, pa] = LoopbackLink.pair();
+  let mute = false;
+  const seen = fakePiano(pa);
+  const real = pa.send.bind(pa);
+  pa.send = (m) => (mute ? undefined : real(m));
+  let wakes = 0;
+  const m = new ConnectionManager({ makeSession: (l) => new PianoSession(l), replyMs: 60, wake: () => (wakes++, null) });
+  const n = { connected: 0, rejoined: 0 };
+  watchConnects(m, { connected: () => n.connected++, rejoined: () => n.rejoined++ });
+  const texts: string[] = [];
+  m.onChange((x) => texts.push(String(connView(x).status[0])));
+  assert.equal(await m.attach(a), "ready");
+  const ctx = createContext(new ParamStore(), { session: () => m.session, retake: (x) => m.rejoin(x) });
+  const recover = () => (ctx.files() as unknown as { opt: { recover(): Promise<unknown> } }).opt.recover(); // as FileAccessClient does
+  const displace = () => real(encodeFrame({ dev: 0, fn: 0x7e, group: 0x04, machine: 0x1e, body: [0x01, 0x00] }));
+  return { m, n, texts, seen, recover, displace, mute: (on: boolean) => { mute = on; }, wakes: () => wakes };
+}
+
+test("file channel recover on the same session: main.ts's on-connect hook does not run again, the header does not say Reconnecting", async () => {
+  // before: rejoin went retaking → ready like a new connection, so main.ts redrew the current tab (the recorder's
+  // "control re-taken; try again" line and any half-done UI gone), re-ran usbPlayback / the loader confirm, and the
+  // header said "Reconnecting to CA79…" while the link never went anywhere
+  const r = await rejoinRig();
+  assert.equal(r.n.connected, 1);
+  const s = r.m.session;
+  r.texts.length = 0;
+  r.seen.length = 0;
+  assert.equal(await r.recover(), "ready");
+  assert.ok(r.seen.includes("F0 40 7F 7E 08 02 01 01 F7"), "a CONNECT went out");
+  assert.equal(r.m.session, s, "same session");
+  assert.deepEqual([r.n.connected, r.n.rejoined], [1, 1]);
+  assert.ok(!r.texts.includes("Reconnecting to {name}…"), r.texts.join(" | "));
+  assert.ok(r.texts.includes("Syncing with {name}…"), r.texts.join(" | "));
+  assert.equal(r.wakes(), 1, "open-to-wake once per session");
+  r.m.disconnect();
+});
+
+test("a file channel recover that fails, then Try again: the on-connect hook runs for the new session", async () => {
+  const r = await rejoinRig();
+  r.mute(true);
+  await r.recover().catch(() => undefined);
+  assert.equal(r.m.phase, "failed");
+  r.mute(false);
+  r.m.retry();
+  assert.equal(await r.m.settled(), "ready");
+  assert.deepEqual([r.n.connected, r.n.rejoined], [2, 0]);
+  r.m.disconnect();
+});
+
+test("a file channel recover cut by a displacement, then Take control again: the on-connect hook runs", async () => {
+  const r = await rejoinRig();
+  r.mute(true);
+  const p = r.recover();
+  await tick(5);
+  r.displace();
+  assert.equal(await p, "displaced");
+  await tick(5); // the CONNECT the displacement cut ends first (a retake in the same tick would join it)
+  r.mute(false);
+  r.m.retake();
+  assert.equal(await r.m.settled(), "ready");
+  assert.deepEqual([r.n.connected, r.n.rejoined], [2, 0]);
+  r.m.disconnect();
+});
+
+test("Reconnect from the connected menu still counts as a connect (the user asked for it)", async () => {
+  const r = await rejoinRig();
+  r.texts.length = 0;
+  r.m.retry();
+  assert.equal(await r.m.settled(), "ready");
+  assert.deepEqual([r.n.connected, r.n.rejoined], [2, 0]);
+  assert.ok(r.texts.includes("Reconnecting to {name}…"), r.texts.join(" | "));
+  r.m.disconnect();
+});

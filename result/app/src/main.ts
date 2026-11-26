@@ -6,7 +6,7 @@ import { registerServiceWorker } from "./pwa.ts";
 import { attachPanelCache } from "./state/panelcache.ts";
 import { TAB_IDS, type TabId } from "./state/settings.ts";
 import { ParamStore } from "./state/store.ts";
-import { AUTO_RECONNECT, BOOT_NOTICE, ConnectionManager, connView, type ConnState, type LinkChoice } from "./state/connection.ts";
+import { AUTO_RECONNECT, BOOT_NOTICE, ConnectionManager, connView, watchConnects, type ConnState, type LinkChoice } from "./state/connection.ts";
 import { androidAvailable, androidCandidate, listAndroid, onShellLifecycle, panelInfo, scanBle, setBacklight } from "./transport/android.ts";
 import { bleReopenAvailable, connectBleDevice, reopenBleMidi, requestBleDevice, requestBleMidi } from "./transport/ble.ts";
 import { desktopBleScan, desktopBleScanAvailable, desktopReopenBle, desktopShell } from "./transport/desktop.ts";
@@ -113,6 +113,8 @@ const reconnectNote = h("p", { class: "muted", id: "reconnect-note", hidden: tru
 // one line after the app confirmed (or found given up) a loader it uploaded (ota_loader_v4, ui/otaloader.ts)
 const loaderNote = h("p", { class: "muted", id: "loader-note", hidden: true });
 let current: TabId = ctx.settings.startTab;
+/** the current tab was drawn while the connection was not ready / waking (show) */
+let drawnUnsynced = false;
 
 // ---- connection: one state machine (src/state/connection.ts); header, button and banner draw only its state ----
 const LAST_LINK = "ca79ng.lastLink";
@@ -199,11 +201,12 @@ function renderConn(s: ConnState = conn.state): void {
   connectBtn.disabled = v.button.action === "none";
   connectBtn.dataset.phase = s.phase;
 }
-let lastPhase = conn.phase;
 conn.onChange((s) => {
   renderConn(s);
   if (s.phase !== "idle") reconnectNote.hidden = true;
-  if (s.phase === "ready" && lastPhase !== "waking" && lastPhase !== "ready") {
+});
+watchConnects(conn, {
+  connected: () => {
     connectedOnce = true;
     updWatch.pianoRunning();
     usbPlayback(ctx); // follow the USB players from the connect on, not only while the Recorder tab is open (ui/usbplay.ts)
@@ -214,8 +217,10 @@ conn.onChange((s) => {
     const s0 = session;
     if (s0) void confirmLoaderOnConnect(s0).then((m) => { loaderNote.textContent = m; loaderNote.hidden = !m; }).catch(() => {});
     show(current); // screens read the session state: draw them for the synced piano
-  }
-  lastPhase = s.phase;
+  },
+  // the file channel's rejoin of this same session: the tab that asked keeps its state (status line, open dialog);
+  // only a tab drawn while the re-sync ran (it saw a session not ready) is drawn again
+  rejoined: () => { if (drawnUnsynced) show(current); },
 });
 
 function renderChrome(): void {
@@ -229,6 +234,7 @@ function renderChrome(): void {
 
 function show(id: TabId): void {
   current = id;
+  drawnUnsynced = conn.phase !== "ready" && conn.phase !== "waking";
   main.replaceChildren(screens[id]());
   let on: HTMLElement | null = null;
   tabbar.querySelectorAll<HTMLElement>("button[data-tab]").forEach((b) => {

@@ -6,7 +6,7 @@
 import { t } from "../i18n.ts";
 import { NgClient, NgPower, type PowerDiag } from "../protocol/ngext.ts";
 import type { PianoSession } from "../protocol/session.ts";
-import type { ConnState } from "../state/connection.ts";
+import { type ConnState, quietRejoin } from "../state/connection.ts";
 import { h } from "./dom.ts";
 import { pollDelay } from "./pollpace.ts";
 import { tabIcon } from "./tabicons.ts";
@@ -74,7 +74,7 @@ export function btAudioBadge(session: () => PianoSession | null, conn: { state: 
   };
   let was = "";
   conn.onChange((st) => {
-    const now = live() ? `${st.gen}` : "";
+    const now = live() || quietRejoin(st) ? `${st.gen}` : ""; // the file channel's rejoin: same session, nothing to hide or re-read
     if (now === was) return;
     was = now;
     if (now) void poll();
