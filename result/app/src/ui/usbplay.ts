@@ -194,9 +194,11 @@ export type StopResult = "stopped" | "still" | "offline";
  * players known to run (field 2026-11-27: switching files was slow - the other player's select + Reset are three
  * more round trips on the panel's slow link); the retry stops both. Then the piano must stay quiet (no progress
  * advancing) for USB_STOP.watch - progress comes about once a second from the audio player, twice from the SMF one;
- * if it does not, the whole sequence once more; "still" if it plays on.
+ * if it does not, the whole sequence once more; "still" if it plays on. `quick`: no quiet check - for a caller whose
+ * next select is of the same player that ran (a stop that did not take answers that select Busy, and the caller then
+ * stops again with the check).
  */
-export async function usbStopAll(ctx: AppContext): Promise<StopResult> {
+export async function usbStopAll(ctx: AppContext, quick = false): Promise<StopResult> {
   const st = usbPlayback(ctx);
   if (!ctx.files()) return "offline";
   const tx = sender(ctx, st);
@@ -228,6 +230,7 @@ export async function usbStopAll(ctx: AppContext): Promise<StopResult> {
       }
       for (const p of ["smf", "audio"] as const) st[p].on = false;
       changed(st);
+      if (quick) return "stopped";
       await sleep(USB_STOP.grace);
       const before = st.advances;
       await sleep(USB_STOP.watch);
@@ -255,7 +258,12 @@ export async function usbPlay(ctx: AppContext, name: string, onStopping?: () => 
   let stopped = false;
   if (usbAnyRunning(st)) {
     onStopping?.();
-    const r = await usbStopAll(ctx);
+    // only the new file's player runs (MP3 → MP3, MID → MID): no quiet check - a Reset that did not take answers the
+    // select below Busy, which stops again with the check (field 2026-11-27: switching still felt slow at 1.8 s). The
+    // other player running keeps the check: its late Reset can follow the select (F13b).
+    const target = playerOf(name);
+    const quick = target !== null && !(["smf", "audio"] as const).some((p) => p !== target && usbRunning(st, p));
+    const r = await usbStopAll(ctx, quick);
     if (r !== "stopped") return { ok: false, why: r === "offline" ? "offline" : "not-stopped" };
     stopped = true;
   }

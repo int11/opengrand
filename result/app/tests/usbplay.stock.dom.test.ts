@@ -370,6 +370,21 @@ test("switching USB files: frames before the new file's Play (field 2026-11-27: 
   }
 });
 
+test("switching within one player skips the quiet check; across players it stays (F13b)", async () => {
+  for (const [from, to, quick] of [["1.mp3", "2.mp3", true], ["SONG_01.MID", "1.mp3", false]] as const) {
+    const { el, sent } = await setup({ syncMode: 0 });
+    row(el, from, "play")!.click();
+    await tick(from.endsWith("MID") ? BEAT_MS * 4 : 300);
+    const n0 = sent.length;
+    row(el, to, "play")!.click();
+    await tick(150);
+    assert.equal(sent.slice(n0).includes(PLAY), quick, `${from} -> ${to}: Play ${quick ? "at once" : "only after the quiet check"}`);
+    await tick(2 * STOP_MS + 400);
+    assert.ok(sent.slice(n0).includes(PLAY));
+    el.remove();
+  }
+});
+
 test("field 11-27: a USB file tapped while a piano song plays stops the song first — never both at once", async () => {
   const { st, el, sent, piano } = await setup();
   // the panel played piano song 1 (MusicMode 2, Music 1)
