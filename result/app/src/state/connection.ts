@@ -563,15 +563,14 @@ export class ConnectionManager {
     let link: MidiLink;
     const key = this.state.key;
     // the link held is the endpoint of this phase: after another piano was chosen and did not open, it is still the
-    // piano before (its link stays until the new one opens) — 「Try again」 must open the piano the banner names
+    // piano before (its link stays until the new one opens) — 「Try again」 must not connect to it under the new name
+    // (nothing of the new piano to reopen: NO_LINK + the list), picking the new piano again opens that one
     const held = this.link && !this.dead.has(this.link) && linkKey(this.link) === key ? this.link : null;
     try {
       if (source === "current" && pending?.link) link = pending.link; // a fresh link to the same endpoint
       else if (source === "current" && held) link = held;
       else if ((source === "choice" || source === "current") && pending) {
         this.freshNext = false; // another endpoint: its own link object
-        // until it opens, a retry / resume reopens this choice
-        if (!pending.link) [this.reopenFn, this.reopenKey] = [() => pending.choice.open(), key];
         link = pending.link ?? (await pending.choice.open());
       } else {
         // reopen of a lost link: the held link object, or — after it failed — the endpoint re-acquired afresh

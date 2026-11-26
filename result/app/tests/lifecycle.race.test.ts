@@ -66,23 +66,27 @@ test("a retired session sends no data request on the link the next session uses"
 const { ConnectionManager } = await import("../src/state/connection.ts");
 type MidiLink = import("../src/transport/link.ts").MidiLink;
 
-test("another piano whose open failed: Try again / picking it again opens that piano, never the one before", async () => {
+test("another piano whose open failed: Try again / picking it again never connects to the piano before under its name", async () => {
   // connected to A, 「Connect another device…」 → B, B does not open (failed, banner names B). Before, 「Try again」
   // and a re-pick of B from the list started a session on A's link — header B, every control went to A.
   const [a, pa] = LoopbackLink.pair();
   fakePiano(pa);
   const made: MidiLink[] = [];
-  const m = new ConnectionManager({ makeSession: (l) => (made.push(l), new PianoSession(l)), replyMs: 100 });
+  let pickers = 0;
+  const m = new ConnectionManager({ makeSession: (l) => (made.push(l), new PianoSession(l)), replyMs: 100, openPicker: () => pickers++ });
   assert.equal(await m.attach(a), "ready");
   let opens = 0;
   const B = { key: "ble:B", name: "B", open: async (): Promise<MidiLink> => { opens++; throw new Error("B is off"); } };
   assert.equal(await m.choose(B), "failed");
   assert.equal(m.state.key, "ble:B");
   m.retry();
-  assert.equal(await m.settled(), "failed");
-  assert.equal(opens, 2, "Try again opens B");
+  await tick(5);
+  assert.equal(m.phase, "failed");
+  assert.equal(m.state.error, "nolink", "B never opened: nothing to reopen, choose it again (as a websocket that never opened)");
+  assert.equal(pickers, 1);
+  assert.equal(opens, 1);
   assert.equal(await m.choose(B), "failed");
-  assert.equal(opens, 3, "picking B again opens B");
+  assert.equal(opens, 2, "picking B again opens B");
   assert.equal(made.length, 1, "no second session on A's link");
   m.disconnect();
 });
