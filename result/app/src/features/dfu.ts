@@ -86,8 +86,32 @@ export interface DfuOptions {
   queryTimeoutMs?: number;
 }
 
-/** Run the whole update. Resolves with the final state (done / uptodate / error). */
+/** One module update at a time, app-wide (the shell runs one DFU): the Information screen is rebuilt on every tab
+ *  switch / reconnect with a fresh, enabled button, so the button alone does not keep a second run out. */
+let dfuRunning = false;
+
+/** A module update is running (started by any screen). */
+export function dfuBusy(): boolean {
+  return dfuRunning;
+}
+
+/** Run the whole update. Resolves with the final state (done / uptodate / error); "busy" (nothing sent) while
+ *  another run is going. */
 export async function runDfu(session: Pick<PianoSession, "onMidi" | "sendRaw"> & Partial<Pick<PianoSession, "onFrame" | "deviceId">>, onState: (s: DfuState) => void, opt: DfuOptions = {}): Promise<DfuState> {
+  if (dfuRunning) {
+    const s: DfuState = { phase: "error", message: "busy" };
+    onState(s);
+    return s;
+  }
+  dfuRunning = true;
+  try {
+    return await runDfuNow(session, onState, opt);
+  } finally {
+    dfuRunning = false;
+  }
+}
+
+async function runDfuNow(session: Pick<PianoSession, "onMidi" | "sendRaw"> & Partial<Pick<PianoSession, "onFrame" | "deviceId">>, onState: (s: DfuState) => void, opt: DfuOptions): Promise<DfuState> {
   const report = (s: DfuState) => {
     onState(s);
     return s;

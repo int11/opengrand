@@ -106,6 +106,27 @@ test("DFU flow: version query -> package -> enter DFU -> scan -> progress -> don
   assert.deepEqual(states, ["query", "package", "enter", "scan", "upload:40", "done:100"]);
 });
 
+test("DFU: one at a time - a second run while one runs (a rebuilt screen's button) sends nothing and starts nothing", async () => {
+  const calls = fakeBridge();
+  const { session, moduleSent } = await modulePiano("2.1.0");
+  const first = D.runDfu(session, () => {});
+  const states: string[] = [];
+  const secondRun = D.runDfu(session, (s) => states.push(s.phase));
+  await tick(20);
+  const sentEnter = moduleSent.filter((m) => m.endsWith("7F 00 01 F7")).length;
+  const started = [...calls];
+  native().onDfu(JSON.stringify({ progress: 100, complete: 1 }));
+  const second = await secondRun;
+  assert.equal((await first).phase, "done");
+  assert.equal(sentEnter, 1, "one enter-DFU");
+  assert.deepEqual(started, ["dfu:/mnt/usb/CA79NG/blemidi.zip"], "one startDfu");
+  assert.deepEqual([second.phase, second.message], ["error", "busy"]);
+  assert.deepEqual(states, ["error"]);
+  // released: the next run goes through (up to date now)
+  fakeBridge({ findDfuPackage: () => JSON.stringify({ path: "/x/blemidi.zip", version: "2.1.0" }) });
+  assert.equal((await D.runDfu(session, () => {})).phase, "uptodate");
+});
+
 test("DFU: up-to-date module is not flashed; missing package and bootloader errors are reported", async () => {
   let calls = fakeBridge({ findDfuPackage: () => JSON.stringify({ path: "/x/blemidi.zip", version: "2.1.0" }) });
   let p = await modulePiano("2.1.0");
