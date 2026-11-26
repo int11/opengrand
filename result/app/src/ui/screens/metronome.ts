@@ -83,11 +83,25 @@ export function metronomeScreen(store: ParamStore, beatEvents: EventTarget): HTM
   };
   const setTempo = (v: number) => void store.set(tempoP, 0x7f, bpm.encode(Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, v))));
   const curTempo = () => bpm.decode(store.get(tempoP, 0x7f) ?? [0, 120]);
-  beatEvents.addEventListener("beat", (e) => {
+  // A tab left (screens are rebuilt on every tab change) stops listening: its store / beat listeners go at the first
+  // event after it was removed. Shown = in the document at any event or just after it was built (main.ts shows it at once).
+  let root: HTMLElement | null = null;
+  let seen = false;
+  const gone = () => {
+    if (root?.isConnected) seen = true;
+    return seen && !root?.isConnected;
+  };
+  setTimeout(gone, 0);
+  const onBeat = (e: Event) => {
+    if (gone()) {
+      beatEvents.removeEventListener("beat", onBeat);
+      return;
+    }
     const n = (e as CustomEvent<number>).detail;
     setRunning(true); // beats only come while it runs (started here, on the panel or on another app)
     dots.replaceChildren(...Array.from({ length: Math.max(n, 4) }, (_, i) => h("span", { class: i === n - 1 ? "dot on" : "dot" })));
-  });
+  };
+  beatEvents.addEventListener("beat", onBeat);
   const sigs: [number, number][] = [[1, 4], [2, 4], [3, 4], [4, 4], [5, 4], [3, 8], [6, 8], [7, 8], [9, 8], [12, 8]];
   const sigSel = h("select", {}, ...sigs.map(([n, d], i) => h("option", { value: String(i) }, `${n}/${d}`))) as HTMLSelectElement;
   sigSel.addEventListener("change", () => {
@@ -111,19 +125,23 @@ export function metronomeScreen(store: ParamStore, beatEvents: EventTarget): HTM
     if (r !== undefined && RHYTHMS.some((x) => x.index === r)) rhythmSel.value = String(r);
     else rhythmSel.selectedIndex = -1;
   };
-  store.subscribe((k) => {
+  const follow = (k: string) => {
     if (k === "MetronomeTempo@127" || k === "BeatSelect@127" || k === "RhythmSelect@127") syncMetronome();
     if (k === "MetronomeTempo@127" || k === "MetronomeMode@127") syncTerm();
     if (k === "Metronome@127") setRunning(store.get(runP, 0x7f)?.[0] === 1);
-  });
+  };
   syncMetronome();
   syncTerm();
   setRunning(store.get(runP, 0x7f)?.[0] === 1);
   runBtn.addEventListener("click", () => {
-    setRunning(!running);
-    void store.command(findParam("Metronome", 0x32)!, 0x7f, [running ? 1 : 0]);
+    const on = !running;
+    setRunning(on);
+    // not sent (displaced, not connected): back to what it showed, unless another press or the piano changed it since
+    void store.command(findParam("Metronome", 0x32)!, 0x7f, [on ? 1 : 0]).then((ok) => {
+      if (!ok && running === on) setRunning(!on);
+    });
   });
-  return h(
+  root = h(
     "div",
     { class: "screen" },
     section(
@@ -144,4 +162,9 @@ export function metronomeScreen(store: ParamStore, beatEvents: EventTarget): HTM
       control(store, "MetronomeVolume", { label: t("Volume"), part: 0x7f }),
     ),
   );
+  const offStore = store.subscribe((k) => {
+    if (gone()) offStore();
+    else follow(k);
+  });
+  return root;
 }
