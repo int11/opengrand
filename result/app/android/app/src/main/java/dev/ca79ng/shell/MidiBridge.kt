@@ -11,6 +11,7 @@ import android.media.midi.MidiDevice
 import android.media.midi.MidiDeviceInfo
 import android.media.midi.MidiInputPort
 import android.media.midi.MidiManager
+import android.media.midi.MidiOutputPort
 import android.media.midi.MidiReceiver
 import android.os.Handler
 import android.os.HandlerThread
@@ -36,18 +37,28 @@ class MidiBridge(private val context: Context, private val emit: (String, String
     private val midi = context.getSystemService(Context.MIDI_SERVICE) as MidiManager
     private val thread = HandlerThread("ca79ng-midi").apply { start() }
     private val handler = Handler(thread.looper)
-    private val open = ConcurrentHashMap<String, Pair<MidiDevice, MidiInputPort?>>() // JS bridge thread + MIDI thread
+    /** An open device with both its ports: all three are closed together (the output port feeds this id's Framer). */
+    private class Conn(val device: MidiDevice, val input: MidiInputPort, val output: MidiOutputPort?) {
+        fun close() {
+            try { output?.close() } catch (_: Exception) {}
+            try { input.close() } catch (_: Exception) {}
+            try { device.close() } catch (_: Exception) {}
+        }
+    }
+    private val open = ConcurrentHashMap<String, Conn>() // JS bridge thread + MIDI thread
     private val bleSeen: MutableMap<String, String> = Collections.synchronizedMap(LinkedHashMap()) // mac -> name
 
+    private val deviceCallback = object : MidiManager.DeviceCallback() {
+        override fun onDeviceAdded(device: MidiDeviceInfo) = devicesChanged()
+        override fun onDeviceRemoved(device: MidiDeviceInfo) {
+            val id = idOf(device)
+            open.remove(id)?.let { it.close(); emit("__detached", id) }
+            devicesChanged()
+        }
+    }
+
     init {
-        midi.registerDeviceCallback(object : MidiManager.DeviceCallback() {
-            override fun onDeviceAdded(device: MidiDeviceInfo) = devicesChanged()
-            override fun onDeviceRemoved(device: MidiDeviceInfo) {
-                val id = idOf(device)
-                if (open.remove(id) != null) emit("__detached", id)
-                devicesChanged()
-            }
-        }, handler)
+        midi.registerDeviceCallback(deviceCallback, handler)
     }
 
     private fun idOf(info: MidiDeviceInfo): String = when (info.type) {
@@ -113,10 +124,16 @@ class MidiBridge(private val context: Context, private val emit: (String, String
                     device.close() // opened after the 8 s timeout: the web side already reported failure
                 } else if (device != null) {
                     val input = device.openInputPort(0)
-                    val output = device.openOutputPort(0)
-                    output?.connect(Framer { msg -> emit(id, hex(msg)) })
-                    open[id] = device to input
-                    ok = input != null
+                    if (input == null) {
+                        // no input port (held by another app): open() reports failure, so let the device go too -
+                        // kept in `open`, it held the BLE link and the next open() returned true with nothing to send on
+                        device.close()
+                    } else {
+                        val output = device.openOutputPort(0)
+                        output?.connect(Framer { msg -> emit(id, hex(msg)) })
+                        open[id] = Conn(device, input, output)
+                        ok = true
+                    }
                 }
                 lock.notifyAll()
             }
@@ -143,16 +160,14 @@ class MidiBridge(private val context: Context, private val emit: (String, String
     fun send(id: String, hexStr: String) {
         try {
             val bytes = unhex(hexStr)
-            open[id]?.second?.send(bytes, 0, bytes.size)
+            open[id]?.input?.send(bytes, 0, bytes.size)
         } catch (e: Exception) {
             // port closed underneath us (BLE link lost): onDeviceRemoved reports the detach
         }
     }
 
     fun close(id: String) {
-        open.remove(id)?.let { (dev, input) ->
-            try { input?.close(); dev.close() } catch (_: Exception) {}
-        }
+        open.remove(id)?.close()
     }
 
     /** Close every open device (BLE: GATT disconnect) and tell the page, which sees the link close. */
@@ -164,6 +179,8 @@ class MidiBridge(private val context: Context, private val emit: (String, String
     }
 
     fun closeAll() {
+        // the MidiManager keeps the callback (and through it this bridge and the activity) until it is unregistered
+        midi.unregisterDeviceCallback(deviceCallback)
         for (id in open.keys.toList()) close(id)
         thread.quitSafely()
     }
