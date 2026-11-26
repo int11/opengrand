@@ -166,10 +166,12 @@ export function infoScreen(ctx: AppContext): HTMLElement {
     let misses = 0;
     let busy = false;
     const timer = setInterval(() => {
-      if (ngPoll !== timer || busy) return;
+      if (ngPoll !== timer) return;
       if (scope?.disposed || left() || ctx.session() !== cur) return stopPoll();
+      if (busy) return;
       busy = true;
-      void ng.status(NOR_POLL.timeoutMs).then((st) => {
+      // a link that throws on send counts as no reply
+      void ng.status(NOR_POLL.timeoutMs).catch(() => null).then((st) => {
         busy = false;
         if (ngPoll !== timer) return; // stopped (or restarted) meanwhile
         if (st) {
