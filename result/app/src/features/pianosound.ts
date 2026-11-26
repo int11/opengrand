@@ -107,13 +107,28 @@ export function soundSettings(s: SoundDef): Setting[] {
  * On Main1 a panel sound also brings its own reverb / effect / VT values like the stock app (the
  * piano firmware keeps them over a sound change — field 2026-11-09), only those that differ.
  */
-export async function selectSound(store: ParamStore, lib: SoundLibrary, part: number, s: SoundRef): Promise<boolean> {
+export function selectSound(store: ParamStore, lib: SoundLibrary, part: number, s: SoundRef): Promise<boolean> {
   lib.pushRecent(s);
+  return serial(store, () => selectSoundNow(store, part, s));
+}
+
+// One sound / preset / user sound sequence at a time per piano: each is a diff-then-set loop over the same values, so
+// two taps in a row interleaved their frames on the link (field class 2026-11-27) - the second sound went out before
+// the first one's reverb / effect / VT values, which then landed on the second sound. A tap queues behind the
+// sequence still running; each sequence's own wire order is unchanged.
+const chains = new WeakMap<ParamStore, Promise<unknown>>();
+function serial<T>(store: ParamStore, job: () => Promise<T>): Promise<T> {
+  const run = (chains.get(store) ?? Promise.resolve()).then(job, job);
+  chains.set(store, run.catch(() => undefined));
+  return run;
+}
+
+async function selectSoundNow(store: ParamStore, part: number, s: SoundRef): Promise<boolean> {
   applying++;
   try {
     const ok = await store.set(soundParam(), part, [s.msb, s.lsb, s.pc]);
     const def = part === MAIN ? soundOf([s.msb, s.lsb, s.pc]) : undefined;
-    if (ok && def) await applySettings(store, soundSettings(def));
+    if (ok && def) await applySettingsNow(store, soundSettings(def));
     if (ok && store.connected) await rereadSound(store, part);
     return ok;
   } finally {
@@ -191,8 +206,12 @@ export function currentVt(store: ParamStore): VtState {
 // they must not be taken for the user's own VT
 let applying = 0;
 
-/** Send only the values that differ from the piano's (stock `getDiffParams`). */
-export async function applySettings(store: ParamStore, settings: Setting[]): Promise<boolean> {
+/** Send only the values that differ from the piano's (stock `getDiffParams`); queued behind a running sound sequence. */
+export function applySettings(store: ParamStore, settings: Setting[]): Promise<boolean> {
+  return serial(store, () => applySettingsNow(store, settings));
+}
+
+async function applySettingsNow(store: ParamStore, settings: Setting[]): Promise<boolean> {
   let ok = true;
   applying++;
   try {
@@ -283,7 +302,11 @@ export function captureUserSound(store: ParamStore, name: string): UserSound {
  * through the same `sendSound`, with its own values in place of the sound.json defaults). The piano
  * keeps its effect values over a sound change (field 2026-11-09), so only values that differ are sent.
  */
-export async function applyUserSound(store: ParamStore, u: UserSound): Promise<boolean> {
+export function applyUserSound(store: ParamStore, u: UserSound): Promise<boolean> {
+  return serial(store, () => applyUserSoundNow(store, u));
+}
+
+async function applyUserSoundNow(store: ParamStore, u: UserSound): Promise<boolean> {
   applying++;
   try {
     let ok = await store.set(findParam("KeyboardMode")!, 0x0f, [u.keyboardMode]);
@@ -291,7 +314,7 @@ export async function applyUserSound(store: ParamStore, u: UserSound): Promise<b
       if (!(await store.set(soundParam(), p.part, [p.sound.msb, p.sound.lsb, p.sound.pc]))) ok = false;
     }
     if (store.connected) await rereadSound(store, MAIN);
-    if (!(await applySettings(store, settingsOf(u.params ?? [])))) ok = false;
+    if (!(await applySettingsNow(store, settingsOf(u.params ?? [])))) ok = false;
     return ok;
   } finally {
     applying--;
