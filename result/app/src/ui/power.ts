@@ -69,16 +69,24 @@ export function powerPolicySection(ctx: AppContext): HTMLElement {
 
   let tvWake = false; // the piano acts on btWake (Identify feat1 0x40)
   let shown: { pol: PowerPolicy; standby: StandbyStateName | null } | null = null;
+  // One write at a time, each built when it is sent from the policy the piano last confirmed (two writes in flight
+  // both took the first `58 01` reply, and the second one, built from the policy drawn before the first, undid it)
+  let writes: Promise<void> = Promise.resolve();
+  const write = (job: () => Promise<void>) => {
+    note.textContent = t("Saving…");
+    writes = writes.then(job, job);
+  };
   const render = (pol: PowerPolicy, standby: StandbyStateName | null) => {
     shown = { pol, standby };
-    const apply = async (patch: Partial<PowerPolicy>) => {
-      note.textContent = t("Saving…");
-      const r = await power.set({ ...pol, ...patch });
-      if (r) render(r.policy, standby);
+    const apply = (patch: Partial<PowerPolicy>) => write(async () => {
+      const cur = shown ?? { pol, standby };
+      const r = await power.set({ ...cur.pol, ...patch });
+      // no answer: draw the piano's last known policy again, not the value the select was moved to
+      render(r ? r.policy : cur.pol, shown?.standby ?? cur.standby);
       // payloads before ota_power3 do not know the "no limit" value (REMOTE_PROTOCOL 10.4)
       note.textContent = r?.rc === PolicyResult.BadValue && patch.standbyCapMin === CAP_NONE
         ? t("This firmware has no \"no limit\" standby (it needs ota_power3).") : errorText(r);
-    };
+    });
     const connected = h("input", { type: "checkbox", name: "holdConnected", checked: pol.holdConnected }) as HTMLInputElement;
     connected.addEventListener("change", () => void apply({ holdConnected: connected.checked }));
     // TV wake: keep Bluetooth audio on in standby, a stream start (TV / phone plays) wakes the piano
@@ -110,12 +118,11 @@ export function powerPolicySection(ctx: AppContext): HTMLElement {
       // app-local (localStorage): wake the piano from standby when this app connects (main.ts)
       ...(ctx.panel ? [] : [h("label", { class: "row" }, h("span", {}, t("Wake the piano when this app opens")), autoWake)]),
       h("div", { class: "transport" },
-        h("button", { "data-action": "power-defaults", onclick: async () => {
-          note.textContent = t("Saving…");
+        h("button", { "data-action": "power-defaults", onclick: () => write(async () => {
           const r = await power.reset();
-          if (r) render(r.policy, standby);
+          if (r) render(r.policy, shown?.standby ?? standby);
           note.textContent = errorText(r);
-        } }, t("Restore defaults"))),
+        }) }, t("Restore defaults"))),
       note,
     );
     el.hidden = false;
