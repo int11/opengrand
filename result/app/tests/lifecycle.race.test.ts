@@ -91,6 +91,27 @@ test("another piano whose open failed: Try again / picking it again never connec
   m.disconnect();
 });
 
+test("a link that opens after the app let the piano go (suspend / disconnect) is closed, not left holding it", async () => {
+  // the open was under way when the page went to the background: before, the late link stayed open with no session —
+  // a BLE piano's one connection held by a background tab, which is what the handoff is for
+  for (const leave of ["suspend", "disconnect"] as const) {
+    const [l] = LoopbackLink.pair();
+    let closed = 0;
+    l.onClose(() => closed++);
+    let open!: () => void;
+    const m = new ConnectionManager({ makeSession: (x) => new PianoSession(x), replyMs: 60 });
+    void m.choose({ key: "ble:late", name: "CA79", open: () => new Promise<MidiLink>((r) => (open = () => r(l))) });
+    await tick(1);
+    assert.equal(m.phase, "connecting");
+    m[leave]();
+    assert.equal(m.phase, "idle");
+    open();
+    await tick(5);
+    assert.equal(closed, 1, leave);
+    assert.equal(m.currentLink, null);
+  }
+});
+
 const { connectBleDevice } = await import("../src/transport/ble.ts");
 const { encodeBlePackets } = await import("../src/protocol/blemidi.ts");
 type GattChar = import("../src/transport/ble.ts").GattChar;

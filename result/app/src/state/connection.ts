@@ -609,8 +609,12 @@ export class ConnectionManager {
       return;
     }
     // superseded while the link was opening, or the watchdog gave up on it (failed / lost): a BLE link stays open
-    // and the next reopen of the same device takes it (ble.ts openLinks)
-    if (this.state.gen !== gen || this.state.phase !== "connecting") return;
+    // and the next reopen of the same device takes it (ble.ts openLinks) — but not after the app let the piano go
+    // (suspended / disconnected: idle): nobody would close it, and a background tab would hold the piano's one BLE link
+    if (this.state.gen !== gen || this.state.phase !== "connecting") {
+      if (this.state.phase === "idle" && link !== this.link) link.close();
+      return;
+    }
     const old = this.link;
     this.dropSession(); // the old session goes silently: no DISCONNECT on a port we keep using
     // a different endpoint: let the old one go (its session is already retired, so no "lost")
