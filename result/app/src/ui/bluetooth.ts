@@ -249,24 +249,31 @@ export function bluetoothPage(port: () => BtPort | null, opts: BtPageOptions = {
       : rc === null ? t("No reply.") : t(RC_TEXT[rc] ?? "Rejected ({c}).", { c: rc });
   };
   const devOf = (key: string) => last?.devices.find((d, i) => rowKey(d, i) === key) ?? null;
-  const send = async (a: number, key: string) => {
+  // 1D 05 actions queue like the policy writes: two in flight both took the first reply, so a refusal of the second
+  // tap was never shown
+  const send = (a: number, key: string) => {
     const d = devOf(key);
-    const p = port();
-    if (!d || !(d.state & SRC_DEV.addr) || !p) return;
+    if (!d || !(d.state & SRC_DEV.addr) || !port()) return;
+    const mac = macText(d.addr);
     if (a === SRC_ACT.use) {
-      switching = macText(d.addr);
+      switching = mac;
       swLine.hidden = false;
       swLine.textContent = t("Switching to {to}…", { to: macShort(d.addr) });
     }
-    const rc = await p.sourceAction(a, d.addr);
-    say(rc, a);
-    if (rc !== 0 && a === SRC_ACT.use) {
-      switching = null;
-      swLine.hidden = true;
-    }
-    void load();
+    void queue(async () => {
+      const p = port();
+      if (!p) return;
+      const rc = await p.sourceAction(a, d.addr);
+      say(rc, a);
+      // a later 「이 기기로 듣기」 on another device owns the switch line now
+      if (rc !== 0 && a === SRC_ACT.use && switching === mac) {
+        switching = null;
+        swLine.hidden = true;
+      }
+      void load();
+    });
   };
-  // One policy write at a time, each built from the policy the piano last reported when it is sent: two quick taps
+  // One policy write / source action at a time, a write built from the policy the piano last reported when it is sent: two quick taps
   // sent two 1D 06 writes at once, both took the first reply, and the second one, built from the policy drawn before
   // the first, undid the first on the piano.
   let acts: Promise<void> = Promise.resolve();
@@ -274,8 +281,10 @@ export function bluetoothPage(port: () => BtPort | null, opts: BtPageOptions = {
   const setPol = (edit: (cur: BtSourcePolicy) => BtSourcePolicy) => queue(async () => {
     const bp = port();
     if (!bp || !last) return;
-    const r = await bp.setPolicy(edit(last.policy));
-    if (r && r.rc === 0 && last) last = { ...last, policy: r.policy };
+    const sent = edit(last.policy);
+    const r = await bp.setPolicy(sent);
+    // taken: the next queued write starts from it (the 1D 06 reply may carry fewer fields than 1D 04 reports)
+    if (r && r.rc === 0 && last) last = { ...last, policy: sent };
     say(r ? r.rc : null);
     void load();
   });
