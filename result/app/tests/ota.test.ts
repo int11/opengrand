@@ -218,6 +218,39 @@ test("reject: authenticated, a wrong key is refused", async () => {
   assert.equal(s.rejected, 2);
 });
 
+test("one firmware job per link: a second upload while one runs is refused before it sends anything (no second Begin)", async () => {
+  // the Information screen is rebuilt on every tab switch / reconnect with a fresh, enabled upload button: a second
+  // Begin would reset the piano's reception under the first upload
+  const { session, s } = residentPiano();
+  const file = makeFile(3000);
+  const first = new ota.OtaClient(session).update(file, KEY, () => {}, 2);
+  await tick(5);
+  const second = await new ota.OtaClient(session).update(file, KEY, () => {}, 2);
+  assert.equal(second.phase, "error");
+  assert.equal(second.rc, 3, second.message);
+  const fin = await first;
+  assert.equal(fin.phase, "done", fin.message);
+  assert.equal(s.begins, 1, "one Begin on the wire");
+  assert.deepEqual(s.staging.slice(0, file.length), file);
+  // released at the end: the next upload runs
+  assert.equal((await new ota.OtaClient(session).update(makeFile(400), KEY, () => {}, 2)).phase, "done");
+});
+
+test("one firmware job per link: overlapping authenticated ops do not race for the challenge (second refused, rc 3)", async () => {
+  // every authenticated op changes the challenge: two status + op pairs in flight made one fail as "authentication
+  // failed (wrong key?)" and could fail a Commit after a whole upload
+  const { session, s } = residentPiano();
+  const [a, b] = await Promise.all([new ota.OtaClient(session).reject(KEY, 1), new ota.OtaClient(session).reject(KEY, 2)]);
+  assert.deepEqual([a, b], [0, 3]);
+  assert.equal(s.rejected, 1);
+  // during an upload: a roll back is refused, the upload's Commit still authenticates
+  const up = new ota.OtaClient(session).update(makeFile(2000), KEY, () => {}, 2);
+  await tick(5);
+  assert.equal(await new ota.OtaClient(session).reject(KEY, 2), 3);
+  assert.equal((await up).phase, "done");
+  assert.equal(s.rejected, 1);
+});
+
 test("Information screen: OTA section with the ota bit or when the resident loader answers; key import, upload, rollback", async () => {
   const off = residentPiano({ features1: 0x03 });
   let el = infoScreen(createContext(new ParamStore(), { session: () => off.session }));

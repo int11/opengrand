@@ -119,6 +119,8 @@ export type LoaderConfirmOutcome = { state: "confirmed" | "waiting" | "fellBack"
  *  the remembered upload is dropped then, as after a confirm. Without a remembered upload, `force` confirms the
  *  running loader anyway (the button). */
 export async function confirmLoader(session: PianoSession, key: Uint8Array, force = false): Promise<LoaderConfirmOutcome> {
+  // another firmware job runs on this link (an upload): the automatic confirm waits for the refresh after it
+  if (!force && OtaClient.busy(session)) return { state: "none", message: "" };
   const ota = new OtaClient(session);
   const st = await ota.status();
   const L = st?.loader;

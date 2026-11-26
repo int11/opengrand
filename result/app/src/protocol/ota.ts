@@ -19,6 +19,7 @@
 // says what it is (format 2: type byte 0x28 = 1 main / 2 loader; format 1 = main).
 import { crc32, NG_ID, NG_TAG, pack7, parseNgReply, unpack7 } from "./ngext.ts";
 import type { PianoSession } from "./session.ts";
+import { withXferLock, xferBusy } from "./xferlock.ts";
 
 export const OtaOp = { Info: 0x0e, Confirm: 0x0f, Status: 0x10, Begin: 0x11, Data: 0x12, Commit: 0x13, Reject: 0x14, Apply: 0x15 } as const;
 /** Apply-now targets (cave/include/ota.h OTA_TGT_*). 2 is "built-in" up to ota_loader_v3 and "no main" on v4;
@@ -499,7 +500,17 @@ export class OtaClient {
     this.session = session;
   }
 
-  private request(op: number, args: number[], timeoutMs: number): Promise<Uint8Array | null> {
+  /** What firmware job holds this link (upload, apply, reject, loader confirm), or null. */
+  static busy(session: PianoSession): string | null {
+    return xferBusy(session, "ota");
+  }
+
+  /** One firmware job per link (src/protocol/xferlock.ts): `refused` without sending anything while another runs. */
+  private job<T>(what: string, fn: () => Promise<T>, refused: () => T): Promise<T> {
+    return withXferLock(this.session, "ota", what, fn, refused);
+  }
+
+  private request(op: number, args: number[], timeoutMs: number, accept?: (d: Uint8Array) => boolean): Promise<Uint8Array | null> {
     return new Promise((resolve) => {
       let done = false;
       const finish = (v: Uint8Array | null) => {
@@ -511,7 +522,7 @@ export class OtaClient {
       };
       const off = this.session.onMidi((m) => {
         const r = parseNgReply(m);
-        if (r && r.op === op) finish(r.data);
+        if (r && r.op === op && (!accept || accept(r.data))) finish(r.data);
       });
       const timer = setTimeout(() => finish(null), timeoutMs);
       this.session.sendRaw(Uint8Array.from([0xf0, NG_ID, ...NG_TAG, op, ...args.map((b) => b & 0x7f), 0xf7]));
@@ -626,19 +637,24 @@ export class OtaClient {
   /** Marks slots (bit 0 = main A, bit 1 = main B; v4: bit 4 = loader A, bit 5 = loader B) never to boot again;
    *  takes effect at the next power-on. */
   reject(key: Uint8Array, mask: number): Promise<number | null> {
-    return this.authed(OtaOp.Reject, key, [mask & 0x33]);
+    return this.job("reject", () => this.authed(OtaOp.Reject, key, [mask & 0x33]), () => 3);
   }
 
   /** Slot info (op 0x0E, v4, no auth): what stage-1 read of one slot. Unknown targets get no answer (null). */
   async info(target: number, timeoutMs = 1000): Promise<OtaSlotInfo | null> {
-    const d = await this.request(OtaOp.Info, [target], timeoutMs);
+    // the reply names its target (raw byte 0): an overlapping read of another slot is not this one's answer
+    const d = await this.request(OtaOp.Info, [target], timeoutMs, (x) => unpack7(x.subarray(0, 2))[0] === target);
     return d ? decodeSlotInfo(d) : null;
   }
 
   /** Confirm the running loader (op 0x0F, v4): without it stage-0 gives the new loader up after LOADER_TRIES
    *  unconfirmed power-ons and runs the previous one. The reply only means "accepted": the slot's confirm mark is
    *  written by the engine loop, so the status is polled until the loader shows confirmed. */
-  async confirmLoader(key: Uint8Array, pollMs = 200, timeoutMs = 5000): Promise<{ ok: boolean; rc?: number; message: string; status?: OtaStatus }> {
+  confirmLoader(key: Uint8Array, pollMs = 200, timeoutMs = 5000): Promise<{ ok: boolean; rc?: number; message: string; status?: OtaStatus }> {
+    return this.job("loader confirm", () => this.confirmLoaderNow(key, pollMs, timeoutMs), () => ({ ok: false, rc: 3, message: OTA_ERRORS[3]! }));
+  }
+
+  private async confirmLoaderNow(key: Uint8Array, pollMs: number, timeoutMs: number): Promise<{ ok: boolean; rc?: number; message: string; status?: OtaStatus }> {
     const st = await this.status();
     if (!st) return { ok: false, message: "no reply" };
     const L = st.loader;
@@ -658,8 +674,14 @@ export class OtaClient {
   /** Apply now (ota_loader_v2): switch the running cave to `target` without a power cycle and wait
    *  until the piano reports done / error. A live-applied slot is not boot-tested: it is still on
    *  probation (3 boot attempts) at the next power-on. */
-  async apply(key: Uint8Array, target: number = ApplyTarget.Newest, onStatus: (s: OtaStatus) => void = () => {},
+  apply(key: Uint8Array, target: number = ApplyTarget.Newest, onStatus: (s: OtaStatus) => void = () => {},
     pollMs = 200, timeoutMs = 20_000): Promise<{ ok: boolean; message: string; status?: OtaStatus; rc?: number }> {
+    return this.job("apply", () => this.applyNow(key, target, onStatus, pollMs, timeoutMs),
+      () => ({ ok: false, message: `apply refused: ${OTA_ERRORS[3]}`, rc: 3 }));
+  }
+
+  private async applyNow(key: Uint8Array, target: number, onStatus: (s: OtaStatus) => void, pollMs: number, timeoutMs: number):
+    Promise<{ ok: boolean; message: string; status?: OtaStatus; rc?: number }> {
     const st = await this.status();
     if (!st) return { ok: false, message: "no reply" };
     if (!(st.caps & OTA_CAP.applyNow)) return { ok: false, message: "this loader cannot apply live - turn the piano off and on", status: st };
@@ -716,8 +738,17 @@ export class OtaClient {
    *  several frames in flight (sendWindowed). Progress, restarts (a CRC error at Commit still sends it all again) and
    *  the result stay as above; `resends` counts the go-backs. Every other loader (v3, v4 before image version 2) answers
    *  Begin with 5 bytes and gets the 200 B stop-and-wait frames. */
-  async update(file: Uint8Array, key: Uint8Array, onProgress: (p: OtaProgress) => void = () => {}, pollMs = 300,
+  update(file: Uint8Array, key: Uint8Array, onProgress: (p: OtaProgress) => void = () => {}, pollMs = 300,
     maxRestarts = 2, opts: OtaUploadOptions = {}): Promise<OtaProgress> {
+    return this.job("upload", () => this.updateNow(file, key, onProgress, pollMs, maxRestarts, opts), () => {
+      const p: OtaProgress = { phase: "error", sent: 0, total: file.length, message: OTA_ERRORS[3], rc: 3 };
+      onProgress(p);
+      return p;
+    });
+  }
+
+  private async updateNow(file: Uint8Array, key: Uint8Array, onProgress: (p: OtaProgress) => void, pollMs: number,
+    maxRestarts: number, opts: OtaUploadOptions): Promise<OtaProgress> {
     let restarts = 0;
     let resends = 0;
     let framing: OtaProgress["framing"];

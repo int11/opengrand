@@ -362,6 +362,30 @@ test("op encoders: slot info, loader confirm (tag over the target byte), reject 
   assert.deepEqual(s.applies, [2]);
 });
 
+test("slot info: overlapping reads of two targets each get their own slot's reply", async () => {
+  // two firmware-card refreshes in flight (Check tapped while one runs): a reply is taken only for the target asked
+  const { session, s } = v4Piano({ otherLoader: { seq: 3, flags: 0x43, tries: 0 } });
+  const c = new ota.OtaClient(session);
+  const [a, b] = await Promise.all([c.info(0x10, 200), c.info(0x11, 200)]);
+  assert.equal(a?.target, 0x10);
+  assert.equal(b?.target, 0x11);
+  assert.equal(b?.seq, 3);
+  assert.equal(s.sent.filter((m) => m[6] === 0x0e).length, 2);
+});
+
+test("loader confirm while an upload runs on the link: the automatic one waits (nothing sent), the upload still commits", async () => {
+  const { session, s } = v4Piano({ ldrRunningConfirmed: false });
+  L4.rememberLoaderUpload({ keyId: keyIdRef(KEY), seq: 1, slot: 0 });
+  const up = new ota.OtaClient(session).update(makeFile(2000), KEY, () => {}, 2);
+  await tick(5);
+  const r = await L4.confirmLoader(session, KEY);
+  assert.equal(r.state, "none", r.message);
+  assert.equal(s.sent.filter((m) => m[6] === 0x0f).length, 0, "no confirm op during the upload");
+  assert.equal((await up).phase, "done");
+  const after = await L4.confirmLoader(session, KEY);
+  assert.equal(after.state, "confirmed", after.message);
+});
+
 test("update: a loader file goes to the loader slot not running (Begin / Commit target 0x11), seq = newest loader + 1", async () => {
   const { session, s } = v4Piano();
   const file = loaderFile(8);
