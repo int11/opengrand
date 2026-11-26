@@ -10,7 +10,7 @@ import { AUTO_RECONNECT, BOOT_NOTICE, ConnectionManager, connView, type ConnStat
 import { androidAvailable, androidCandidate, listAndroid, onShellLifecycle, panelInfo, scanBle, setBacklight } from "./transport/android.ts";
 import { bleReopenAvailable, connectBleDevice, reopenBleMidi, requestBleDevice, requestBleMidi } from "./transport/ble.ts";
 import { desktopBleScan, desktopBleScanAvailable, desktopReopenBle, desktopShell } from "./transport/desktop.ts";
-import { autoLink, kwm, kwmcoreAvailable, launchAndroidSettings, listKwmcore, onDeviceChange, openUrl, readAnyFile, setBacklight255, usbPath, writeAnyFile } from "./transport/kwmcore.ts";
+import { autoLink, kwm, kwmcoreAvailable, launchAndroidSettings, listKwmcore, onDeviceChange, openUrl, readAnyFile, setBacklight255, shellCallbackCounts, usbPath, writeAnyFile } from "./transport/kwmcore.ts";
 import type { LinkCandidate, MidiLink } from "./transport/link.ts";
 import { listWebMidi } from "./transport/webmidi.ts";
 import { openWebSocket } from "./transport/websocket.ts";
@@ -551,6 +551,7 @@ if (kwmShell && screenReporter) {
   screenReporter.provide(() => ({
     pg: "app", ver: APP_VERSION, tab: current, con: conn.phase, lang: ctx.settings.lang,
     bl: ctx.display?.dimmed ? 0 : ctx.settings.brightness * 10, dim: !!ctx.display?.dimmed, off: ctx.settings.autoOffMin,
+    cb: shellCallbackCounts(),
     // the Settings tab's probe outputs (「이 주소 열기」 / 「Android 탐색」), so a remote driver reads them even off-screen
     ...(() => {
       const o = document.getElementById("usb-open-result")?.textContent, x = document.getElementById("peek-out")?.textContent;

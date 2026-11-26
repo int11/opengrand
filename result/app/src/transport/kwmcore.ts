@@ -101,6 +101,7 @@ export function callNative(cmd: string, obj?: object | null): boolean {
 type Waiter = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> | null };
 const pending = new Map<string, Waiter[]>();
 const callbacks = new Map<string, (v: unknown) => void>();
+const shellCounts: Record<string, number> = {};
 const midiListeners = new Set<(msg: Uint8Array, id: string) => void>();
 const deviceListeners = new Set<() => void>();
 const events = new EventTarget();
@@ -175,6 +176,7 @@ export function installKwm(): KwmGlobal {
     resolvePromise: (cmd: string, json: string) => settle(cmd, true, json),
     rejectPromise: (cmd: string, json: string) => settle(cmd, false, json),
     callbackNative: (cmd: string, json: string, keep: boolean) => {
+      shellCounts[cmd] = (shellCounts[cmd] ?? 0) + 1;
       const cb = callbacks.get(cmd);
       if (!cb) return;
       if (!keep) callbacks.delete(cmd);
@@ -442,12 +444,19 @@ export function updateApkDangerous(name: string): Promise<unknown> {
   return callPromise("updateApk", { name }, 0);
 }
 
+/** How many times the shell called `KWM.callbackNative` per command since the page loaded, for the panel screen
+ *  report: during a lesson piece `onMetronomeEvent` counts the shell's beat events (the same gate as its clicks). */
+export function shellCallbackCounts(): Record<string, number> {
+  return { ...shellCounts };
+}
+
 /** Test hook: forget queued calls and listeners. */
 export function _resetKwmcoreForTests(): void {
   for (const q of pending.values()) for (const w of q) if (w.timer) clearTimeout(w.timer);
   pending.clear();
   queued.clear();
   callbacks.clear();
+  for (const k of Object.keys(shellCounts)) delete shellCounts[k];
   midiListeners.clear();
   deviceListeners.clear();
   delete g.KWM;

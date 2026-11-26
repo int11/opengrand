@@ -19,6 +19,7 @@ import {
   lcdBacklight,
   listKwmcore,
   setBacklight255,
+  shellCallbackCounts,
   usbPath,
   versions,
 } from "../src/transport/kwmcore.ts";
@@ -163,6 +164,16 @@ test("KWM global: typeof object for the shell, keeps the boot stub's object and 
   for (const f of ["resolvePromise", "rejectPromise", "callbackNative", "onMidiMessage", "onDeviceStateChange", "dispatchEvent", "onSmfMidiMessage"]) {
     assert.equal(typeof (k as unknown as Record<string, unknown>)[f], "function", f);
   }
+});
+
+test("shellCallbackCounts counts every callbackNative, registered or not, and the test reset clears it", () => {
+  const k = installKwm();
+  k.callbackNative("onMetronomeEvent", '{"beatNo":0}', true);
+  k.callbackNative("onMetronomeEvent", '{"beatNo":1}', true);
+  k.callbackNative("getTimeProgress", "{}", true);
+  assert.deepEqual(shellCallbackCounts(), { onMetronomeEvent: 2, getTimeProgress: 1 });
+  _resetKwmcoreForTests();
+  assert.deepEqual(shellCallbackCounts(), {});
 });
 
 test("auto-connect waits for deviceready, picks the USB device, carries MIDI both ways", async () => {
