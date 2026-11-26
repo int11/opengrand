@@ -111,6 +111,28 @@ test("NgClient talks to a cave-equipped piano", async () => {
   assert.equal(await ng.cancel(200), "error");
 });
 
+test("NgClient: two requests with the same op and sub but other args each get their own reply", async () => {
+  // e.g. two quick startup-mode taps (1C 01 <mode>): the reply does not carry the args, so the second caller took the
+  // first reply and the screen showed the first mode while the piano had the second
+  const [app, piano] = LoopbackLink.pair();
+  const sent: number[][] = [];
+  piano.onMessage((m) => {
+    if (m[1] !== 0x7d) return;
+    sent.push([...m]);
+    const arg = m[8]!;
+    setTimeout(() => piano.send(Uint8Array.from([0xf0, 0x7d, 0x43, 0x41, 0x37, 0x39, m[6]! | 0x40, m[7]!, 0, arg, 0xf7])), 5);
+  });
+  const s = new PianoSession(app, { handshake: false });
+  const sub1 = (x: Uint8Array) => x[0] === 0x01;
+  const [a, b] = await Promise.all([new NgClient(s).call(NgOp.Startup, [0x01, 1], 300, sub1), new NgClient(s).call(NgOp.Startup, [0x01, 2], 300, sub1)]);
+  assert.equal(a?.[2], 1);
+  assert.equal(b?.[2], 2, "the second caller's own reply");
+  // byte-identical requests in flight share one frame and its reply (no stacked timeouts on stock firmware)
+  sent.length = 0;
+  const [c, d] = await Promise.all([new NgClient(s).call(NgOp.Startup, [0x01, 3], 300, sub1), new NgClient(s).call(NgOp.Startup, [0x01, 3], 300, sub1)]);
+  assert.deepEqual([c?.[2], d?.[2], sent.length], [3, 3, 1]);
+});
+
 test("identify against stock firmware times out instead of hanging", async () => {
   const [app, piano] = LoopbackLink.pair();
   piano.onMessage(() => {

@@ -16,7 +16,32 @@ export class NgClient {
     this.session = session;
   }
 
+  /**
+   * Replies are matched by op (+ sub via `accept`) and do not carry the other args, so two requests with the same op
+   * and sub in flight on one session (two quick taps, two screens) would both take the first reply. Per session and
+   * op + sub, a request waits for the one before it; a byte-identical one in flight is shared (one frame, one reply -
+   * no stacked timeouts against stock firmware). Other ops and subs still overlap freely.
+   */
   private request(op: NgOpCode, timeoutMs: number, args: number[] = [], accept?: (d: Uint8Array) => boolean): Promise<Uint8Array | null> {
+    let lanes = NgClient.lanes.get(this.session);
+    if (!lanes) NgClient.lanes.set(this.session, (lanes = new Map()));
+    const key = `${op}:${args[0] ?? ""}`;
+    const bytes = args.join(",");
+    const tail = lanes.get(key);
+    if (tail && tail.bytes === bytes) return tail.p;
+    const p = (tail ? tail.p.then(() => this.send(op, timeoutMs, args, accept)) : this.send(op, timeoutMs, args, accept));
+    const entry = { bytes, p };
+    lanes.set(key, entry);
+    const drop = () => {
+      if (lanes.get(key) === entry) lanes.delete(key);
+    };
+    void p.then(drop, drop);
+    return p;
+  }
+
+  private static readonly lanes = new WeakMap<object, Map<string, { bytes: string; p: Promise<Uint8Array | null> }>>();
+
+  private send(op: NgOpCode, timeoutMs: number, args: number[], accept?: (d: Uint8Array) => boolean): Promise<Uint8Array | null> {
     return new Promise((resolve) => {
       let done = false;
       const finish = (v: Uint8Array | null) => {
