@@ -295,6 +295,30 @@ test("updater: restart quits only after spawnHelper's promise settles", async ()
   fs.rmSync(s.root, { recursive: true, force: true });
 });
 
+test("updater: a quit while the restart's helper is still starting waits for it (no second helper)", async () => {
+  const s = setup();
+  let release;
+  let starts = 0;
+  const u = s.mk({ spawnHelper: () => { starts++; return new Promise((r) => (release = r)); } });
+  assert.equal((await u.check()).phase, "ready");
+  const p = u.apply({ relaunch: true });
+  await new Promise((r) => setTimeout(r, 20));
+  // the window is closed meanwhile: will-quit asks again and must get something to wait for
+  const q = u.apply({ relaunch: false });
+  assert.ok(q && typeof q.then === "function", "a quit during the start gets the running start to wait for");
+  let settled = false;
+  q.then(() => (settled = true));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(settled, false);
+  release();
+  assert.equal(await q, true);
+  assert.equal(await p, true);
+  assert.equal(starts, 1);
+  assert.equal(s.quits(), 1);
+  assert.equal(u.apply({ relaunch: false }), false); // started: nothing left to wait for
+  fs.rmSync(s.root, { recursive: true, force: true });
+});
+
 test("updater: a download whose sha256 does not match is refused and nothing is staged", async () => {
   const bad = makeZip([["OpenGrand.exe", "evil exe", false]]);
   const s = setup({ zipText: Buffer.concat([bad, Buffer.alloc(0)]).toString("latin1"), entry: { size: bad.length } });

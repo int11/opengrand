@@ -201,11 +201,15 @@ function createUpdater(o) {
   }
 
   let applied = false;
+  let starting = null; // the helper start in progress: a quit meanwhile must wait for it too
   /**
    * Start the swap helper; with `relaunch` the app quits once the helper runs on its own (spawnHelper may return a
-   * promise for that moment). Returns false when nothing is staged, else a promise of true.
+   * promise for that moment). Returns false when nothing is staged or the helper has already started; while a start
+   * is still running, that start's promise (a quit in between waits instead of killing the launcher); else a promise
+   * of true.
    */
   function apply({ relaunch }) {
+    if (starting) return starting;
     if (applied || st.phase !== "ready" || st.action !== "restart" || o.plan.kind !== "dir") return false;
     applied = true;
     const script = path.join(dir, "apply.ps1");
@@ -214,10 +218,12 @@ function createUpdater(o) {
     const started = Promise.resolve()
       .then(() => o.spawnHelper(script, env, dir))
       .then(() => log(`update helper started (${relaunch ? "restart" : "on quit"})`), (e) => log(`update helper: ${e && e.message}`));
-    return started.then(() => {
+    starting = started.then(() => {
+      starting = null;
       if (relaunch) o.quit();
       return true;
     });
+    return starting;
   }
 
   init();
