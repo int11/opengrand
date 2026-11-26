@@ -139,6 +139,25 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
 
   const usb = usbPane(ctx, lock, {
     intoPiano: (name, andPlay) => void intoPiano(name, andPlay),
+    // a USB file never plays over a piano song: the song is stopped first (field 2026-11-27 on the panel: a piano song
+    // played on under the USB file - MusicMode 3 does not stop the recorder's playback). The stock panel never has
+    // both: leaving its player sends Music Reset (stock UI app.js exitPlayer).
+    beforePlay: async () => {
+      if (isRecState(m.state)) {
+        note.textContent = t("Stop the recording first.");
+        return false;
+      }
+      if (m.state === 0 || m.state === 1) {
+        if (m.rec) await op(RecorderCmd.Stop);
+        else {
+          await ensureMode();
+          await store.command(findParam("Music", 0x32)!, 0x7f, [MUSIC_CMD.Stop]);
+        }
+        m.state = 2;
+        m.bar = 0;
+      }
+      return true;
+    },
     onPick: () => {
       setSrc("usb");
       note.textContent = "";
@@ -170,8 +189,12 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
   };
   const source = (): PlayerSource => (usbView() ? usbSrc : piano);
   const view = (): PlayerView => source().view();
-  // a recording that ran in a song (-1: none): when it stops, the sheet says where it is and offers the USB memory
+  // a recording that ran in a song (-1: none): when it stops, the sheet says where it is and offers the USB memory - on
+  // the device whose user pressed Rec only (field 2026-11-27: recorded from the desktop, the sheet also opened on the
+  // panel, which every controller's song notices reach)
   let recSong = -1;
+  let recByMe = false;
+  let standbyAt = 0; // when this device asked for the standby (a standby that never became a recording stops counting after 10 s)
   const renderNow = () => {
     hint.hidden = m.state !== 3 && m.state !== 5;
     const ht = hintText();
@@ -180,9 +203,11 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     if (m.state === 4) recSong = m.sel;
     else if (recSong >= 0 && !isRecState(m.state)) {
       const n = recSong;
+      const mine = recByMe;
       recSong = -1;
-      if (m.state === 2 && typeof document !== "undefined" && el.isConnected) openSave(n, true);
-    }
+      recByMe = false;
+      if (mine && m.state === 2 && typeof document !== "undefined" && el.isConnected) openSave(n, true);
+    } else if (recByMe && !isRecState(m.state) && recSong < 0 && standbyAt && Date.now() - standbyAt > 10_000) recByMe = false; // a standby that never became a recording
   };
   /** true = refused (the reason is under the bar) */
   const refuseTable = (): boolean => {
@@ -212,6 +237,8 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
       if (m.state === 4) return; // records already
       // standby / count-in: the core starts the recording (cmd 11). Never Music 4 (see the head of this file); Music 1
       // would play the song on the stock - there the first key starts the recording
+      recByMe = true;
+      standbyAt = Date.now();
       if (m.recCtl) await op(RecorderCmd.RecStart);
       else note.textContent = t("Play a key to start recording.");
       return;
@@ -292,6 +319,8 @@ export function recorderScreen(ctx: AppContext): HTMLElement {
     if (refuseTable()) return;
     // the stock (and a core without the record control): IntSongPart 0 sets the part Music 3 records into
     if (part === 0 && !m.recCtl) await send.partOne();
+    recByMe = true;
+    standbyAt = Date.now();
     standby(overwrite, part);
   };
   /** ● into song n: part 2 of a song with no part 1 is asked about first (see the head of this file), before anything

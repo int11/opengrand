@@ -26,7 +26,7 @@ export const MUSIC = { Pause: 0, Play: 1, Reset: 2 } as const;
 export const USB_TYPE = { KSO: 3, MID: 4, MP3: 5, WAV: 6 } as const;
 /** Timings (ms); tests make them short. grace: frames already on the way when the stop went out; watch: how long
  *  the piano must stay quiet after a stop; idle: a player with no sign of life for this long is taken as stopped. */
-export const USB_STOP = { grace: 300, watch: 2_500, idle: 6_000 };
+export const USB_STOP = { grace: 300, watch: 1_500, idle: 6_000 };
 const BUSY = 0x4000;
 
 export type UsbPlayer = "smf" | "audio";
@@ -188,10 +188,13 @@ function sender(ctx: AppContext, st: UsbPlayback) {
 export type StopResult = "stopped" | "still" | "offline";
 
 /**
- * Stop every USB playback: the selected type's player, then both players - the one that plays last - each by
+ * Stop every USB playback: the selected type's player, then the players - the one that plays last - each by
  * MusicMode 3 + 24 08 <a file of its type> + Music Reset (MusicMode 3 again before each Reset: a mode change the
- * stock deferred is applied by the next Music command, which it then answers Busy). Then the piano must stay quiet
- * (no progress advancing) for USB_STOP.watch; if it does not, the whole sequence once more; "still" if it plays on.
+ * stock deferred is applied by the next Music command, which it then answers Busy). The first try stops only the
+ * players known to run (field 2026-11-27: switching files was slow - the other player's select + Reset are three
+ * more round trips on the panel's slow link); the retry stops both. Then the piano must stay quiet (no progress
+ * advancing) for USB_STOP.watch - progress comes about once a second from the audio player, twice from the SMF one;
+ * if it does not, the whole sequence once more; "still" if it plays on.
  */
 export async function usbStopAll(ctx: AppContext): Promise<StopResult> {
   const st = usbPlayback(ctx);
@@ -211,7 +214,8 @@ export async function usbStopAll(ctx: AppContext): Promise<StopResult> {
       // order on the retry.
       const audioLast = usbRunning(st, "audio") || !usbRunning(st, "smf");
       const order: UsbPlayer[] = (attempt === 0) === audioLast ? ["smf", "audio"] : ["audio", "smf"];
-      for (const p of order) {
+      const known = order.filter((p) => usbRunning(st, p));
+      for (const p of attempt === 0 && known.length ? known : order) {
         const f = pick(p);
         if (!f) continue;
         await tx.mode3();
@@ -248,12 +252,15 @@ export async function usbPlay(ctx: AppContext, name: string, onStopping?: () => 
   if (!ctx.files()) return { ok: false, why: "offline" };
   if (st.stopping) return { ok: false, why: "stopping" };
   const tx = sender(ctx, st);
+  let stopped = false;
   if (usbAnyRunning(st)) {
     onStopping?.();
     const r = await usbStopAll(ctx);
     if (r !== "stopped") return { ok: false, why: r === "offline" ? "offline" : "not-stopped" };
+    stopped = true;
   }
-  await tx.mode3();
+  // right after the stop (MusicMode 3 + select + Reset, the piano quiet since) the mode is 3: no second MusicMode
+  if (!stopped || st.mode !== MUSIC_MODE.UsbMemory) await tx.mode3();
   try {
     await tx.select(name, false);
   } catch (e) {

@@ -242,8 +242,9 @@ test("USB playback: MP3 (no state report) still gets ■; the section ■ stops 
   assert.ok(row(el2, "1.mp3", "stop"));
   (el2.querySelector('[data-act="usb-stop"]') as HTMLElement).click();
   await tick(STOP_WAIT);
-  // the selected type's player, then each type with a file (MP3, MID): three Resets (ui/usbplay.ts)
-  assert.equal(sent.filter((s) => s === STOP).length, 3);
+  // the selected type's player, then the player known to run (the MP3's): two Resets (ui/usbplay.ts; both types only
+  // on the retry)
+  assert.equal(sent.filter((s) => s === STOP).length, 2);
   assert.equal(st.player, "");
   assert.ok(row(el2, "1.mp3", "play"));
   el2.remove();

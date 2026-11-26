@@ -30,7 +30,8 @@ const P = (fn: number, body: number[]) => Uint8Array.from([0xf0, 0x40, 0x7f, fn,
 /** Stock-shaped list (02_fn24_static): 24 7F, FileName packets stop-and-wait, 24 1F; or a Result instead. */
 function usbPiano(piano: { send(m: Uint8Array): void; onMessage(h: (m: Uint8Array) => void): void }) {
   // emptyFirst: answer that many lists with 24 1F alone (a stick not mounted yet, field 2026-11-03)
-  const st = { files: ["A.MID", "B.MP3"], answer: 0 as number, lists: 0, emptyFirst: 0 };
+  // noMediaFirst: answer that many lists with Result 0x21 (reported attached before it is mounted, field 2026-11-27)
+  const st = { files: ["A.MID", "B.MP3"], answer: 0 as number, lists: 0, emptyFirst: 0, noMediaFirst: 0 };
   let queue: Uint8Array[] = [];
   const later = (m: Uint8Array) => setTimeout(() => piano.send(m), 3);
   piano.onMessage((m) => {
@@ -39,8 +40,8 @@ function usbPiano(piano: { send(m: Uint8Array): void; onMessage(h: (m: Uint8Arra
     if (v1 === 0x11) {
       st.lists++;
       later(P(0x24, [0x7f]));
-      if (st.answer) {
-        const c = st.answer;
+      if (st.answer || st.lists <= st.noMediaFirst) {
+        const c = st.answer || NO_MEDIA;
         return void later(P(0x7e, [0x03, (c >> 14) & 0x7f, (c >> 7) & 0x7f, c & 0x7f]));
       }
       queue = (st.lists <= st.emptyFirst ? [] : st.files).map((n) => {
@@ -194,6 +195,39 @@ test("plugged while the tab is open: an empty first answer is asked again and th
   assert.equal(usb.lists, 2, "asked once more after the first wait");
   assert.deepEqual(names(el), SIX);
   assert.equal(el.querySelector("#usb-result")!.textContent, "6 files");
+  el.remove();
+});
+
+test("field 2026-11-27: re-plugged while the tab is open, the first answer 'No media' (not mounted yet) is asked again and the files show", async () => {
+  const { open, usb, notify } = await setup(1);
+  usb.files = SIX;
+  const el = open();
+  await tick(60);
+  notify([0x51, 0x2e, 0x7f, 0]);
+  await tick(10);
+  assert.deepEqual(names(el), []);
+  usb.lists = 0;
+  usb.noMediaFirst = 1;
+  notify([0x51, 0x2e, 0x7f, 1]);
+  await tick(150);
+  assert.equal(usb.lists, 2, "the 'No media' answer was asked again");
+  assert.deepEqual(names(el), SIX);
+  assert.equal(el.querySelector("#usb-status")!.textContent, "USB memory attached");
+  el.remove();
+});
+
+test("'No media' long after the plug is final (no retry)", async () => {
+  const { open, usb, ctx } = await setup(1);
+  open();
+  await tick(60);
+  usbListState(ctx).plugAt = usbListState(ctx).seenAt = Date.now() - USB_SETTLE_MS - 1;
+  usb.answer = NO_MEDIA;
+  usb.lists = 0;
+  const el = open();
+  (el.querySelector('[data-act="refresh"]') as HTMLElement).click();
+  await tick(150);
+  assert.equal(usb.lists, 1);
+  assert.equal(el.querySelector("#usb-files")!.textContent, "No USB memory");
   el.remove();
 });
 

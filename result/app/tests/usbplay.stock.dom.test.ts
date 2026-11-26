@@ -65,6 +65,7 @@ function stockPlayers(link: Piano, sent: string[], opt: { stuck?: boolean; lateA
     sel: 0,
     smf: 2, // 0x41942842: 0 pause, 1 play, 2 stop
     audio: false, // the audio player sounds
+    rec: 2, // the recorder's playback (MusicMode 2): 0 pause, 1 play, 2 stop - a later MusicMode does not stop it (field 11-27)
     bar: 1,
     beat: 0,
     smfName: "",
@@ -115,6 +116,10 @@ function stockPlayers(link: Piano, sent: string[], opt: { stuck?: boolean; lateA
     }
     if (fn === 0x32 && m[6] === 0x52 && m[7] === 0x08) {
       const v = m[9];
+      if (st.mode === 2) {
+        st.rec = v === 1 ? 1 : v === 0 ? 0 : 2;
+        return void piano.send(music(st.rec));
+      }
       if (st.mode !== 3) return void piano.send(music(2)); // FUN_4015DB98
       if (st.sel === 4) {
         // FUN_401737A4
@@ -304,7 +309,7 @@ test("a piano that keeps playing: the stop is tried twice, then the panel way is
   row(el, "SONG_01.MID", "stop")!.click();
   await tick(STOP_MS * 2 + 100);
   const resets = sent.slice(n0).filter((s) => s === RESET).length;
-  assert.equal(resets, 2 * 3, "two attempts of three Resets each (selected, audio, SMF)");
+  assert.equal(resets, 2 + 3, "first the selected player's and the running SMF player's Reset, then the retry's three (selected, audio, SMF)");
   assert.match(resultText(el), /panel's USB memory screen/);
   assert.match(resultText(el), /switch the piano off and on/);
   // ▶ on another file: the stop is tried first, fails, and nothing starts
@@ -343,4 +348,44 @@ test("progress decides: bars that advance mean the SMF player plays; a rewind to
   await tick(USB_STOP.idle + 50);
   const { usbRunning } = await import("../src/ui/usbplay.ts");
   assert.equal(usbRunning(st, "smf"), false, "no beat for the idle time: taken as stopped (paused / ended)");
+});
+
+test("switching USB files: frames before the new file's Play (field 2026-11-27: start and switching were slow)", async () => {
+  for (const [from, to] of [["1.mp3", "2.mp3"], ["SONG_01.MID", "1.mp3"]] as const) {
+    const { st, el, sent } = await setup({ syncMode: 0 });
+    row(el, from, "play")!.click();
+    await tick(from.endsWith("MID") ? BEAT_MS * 4 : 300);
+    const n0 = sent.length;
+    const t0 = Date.now();
+    row(el, to, "play")!.click();
+    await tick(2 * STOP_MS + 400);
+    const tx = sent.slice(n0).filter((s) => !s.startsWith("F0 40 7F 07") && !s.startsWith("F0 40 7F 32 04") && !s.startsWith("F0 40 7F 24 04"));
+    const toPlay = tx.indexOf(PLAY) + 1;
+    void t0;
+    // before: 14 (MusicMode + Reset, then select + Reset for BOTH players, MusicMode again before the new select)
+    assert.equal(toPlay, 9, `${from} -> ${to}: MusicMode, Reset, the running player's MusicMode + select + Reset, the new select, Play`);
+    assert.equal(st.audio, true, "the new file plays");
+    assert.equal(st.smf, 2, "nothing else plays");
+    el.remove();
+  }
+});
+
+test("field 11-27: a USB file tapped while a piano song plays stops the song first — never both at once", async () => {
+  const { st, el, sent, piano } = await setup();
+  // the panel played piano song 1 (MusicMode 2, Music 1)
+  st.mode = 2;
+  piano.send(Uint8Array.from([0xf0, 0x40, 0x7f, 0x32, 0x04, 0x1e, 0x52, 0x1d, 0x7f, 2, 0xf7]));
+  st.rec = 1;
+  piano.send(music(1));
+  await tick(20);
+  const n0 = sent.length;
+  row(el, "1.mp3", "play")!.click();
+  await tick(300);
+  assert.equal(st.rec, 2, "the piano song was stopped");
+  assert.equal(st.audio, true, "the MP3 plays");
+  const tx = sent.slice(n0);
+  const songStop = tx.indexOf(RESET);
+  const mode3 = tx.indexOf("F0 40 7F 31 08 02 52 1D 7F 03 F7");
+  assert.ok(songStop >= 0 && songStop < mode3, "Music Reset in MusicMode 2 before MusicMode 3");
+  // the other way round: a piano song row tapped while the MP3 plays stops the MP3 (play() stops USB first)
 });

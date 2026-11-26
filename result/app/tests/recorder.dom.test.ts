@@ -428,6 +428,26 @@ test("owner 2026-11-23, rule 2: Rec records into an empty piano song chosen by t
   el.remove();
 });
 
+test("field 2026-11-27: a recording another device started (its notices reach every controller) opens no sheet here", async () => {
+  const store = new ParamStore();
+  const s = fakeSession(0x1f);
+  store.command = async () => true;
+  const ctx = createContext(store, { session: () => s as never });
+  const el = recorderScreen(ctx);
+  document.body.append(el);
+  await wait();
+  const sheet = el.querySelector("#save-sheet") as HTMLElement;
+  // Rec was pressed elsewhere (the desktop): this screen only sees the piano record in song 3 and stop
+  s.push(frame([0x00, 0x00, ...ng.pack7(statusRaw(3, 2))]));
+  await wait(4);
+  s.push(frame([0x00, 0x00, ...ng.pack7(statusRaw(4, 2, 1))]));
+  await wait(4);
+  s.push(frame([0x00, 0x00, ...ng.pack7(statusRaw(2, 2))]));
+  await wait(4);
+  assert.equal(sheet.hasAttribute("open"), false, "not this device's recording: no 「Saved」 sheet");
+  el.remove();
+});
+
 test("field 2026-11-23: in MusicMode 3 the piano's state and position are a USB player's - the bar does not show the piano song as playing", async () => {
   const store = new ParamStore();
   const s = fakeSession(0x1f);

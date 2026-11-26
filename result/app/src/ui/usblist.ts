@@ -7,7 +7,9 @@
 // Right after a stick is plugged in (or right after connecting) the piano can answer with an empty list (only 24 1F):
 // the stock list task sends 24 1F after any walk that found nothing or failed with code 0x31, and the media flag
 // it checks first is set by the attach callback (record 02_usb_autoload, field 2026-11-03). So an empty list within
-// USB_SETTLE_MS of a plug / connect is asked again after 1.5 s and 3 s, and an empty cached list is stale.
+// USB_SETTLE_MS of a plug / connect is asked again after 1.5 s, 3 s and 5 s, and an empty cached list is stale. The same
+// for "No media" (0x21) that soon after a plug notice: the stick is reported before it is mounted (field 2026-11-27:
+// re-plugged, the status said attached and the list stayed 「없음」 until ↻).
 import { FileAccessError, resultText } from "../protocol/fileaccess.ts";
 import { findParam } from "../protocol/codecs.ts";
 import type { PianoSession } from "../protocol/session.ts";
@@ -27,7 +29,7 @@ const BUSY_RETRIES = 4;
 /** An empty list this soon after a plug notice / the first request of a session is not trusted. */
 export const USB_SETTLE_MS = 5_000;
 /** Waits before asking again after such an empty list (field 11-03: a replug listed the files within 1 s). */
-export const USB_EMPTY_RETRY_MS = [1_500, 3_000];
+export const USB_EMPTY_RETRY_MS = [1_500, 3_000, 5_000];
 
 export interface UsbListState {
   /** ms of the last answer (list or no media); 0 = never */
@@ -118,15 +120,27 @@ export function loadUsbList(ctx: AppContext, trustEmpty = false): Promise<boolea
   // an empty list soon after a plug / connect: ask again (same in-flight promise, so triggers meanwhile share it)
   const ask = async (): Promise<string[]> => {
     const since = Math.max(st.plugAt, st.seenAt);
-    let files = await once();
-    if (trustEmpty || Date.now() - since > USB_SETTLE_MS) return files;
-    for (const wait of USB_EMPTY_RETRY_MS) {
-      if (files.length) break;
-      await new Promise((r) => setTimeout(r, wait));
+    // "No media" right after a plug notice (the piano says attached): not mounted yet - asked again like an empty list
+    const early = () => !trustEmpty && Date.now() - since <= USB_SETTLE_MS;
+    const plugged = () => st.plugAt >= st.seenAt && attachedOf(ctx) === 1;
+    const tryOnce = async (last: boolean): Promise<string[] | null> => {
+      try {
+        return await once();
+      } catch (e) {
+        if (!last && e instanceof FileAccessError && e.code === NO_MEDIA && plugged()) return null;
+        throw e;
+      }
+    };
+    const firstEarly = early();
+    let files = await tryOnce(!firstEarly);
+    if (!firstEarly) return files!;
+    for (let i = 0; i < USB_EMPTY_RETRY_MS.length; i++) {
+      if (files && files.length) break;
+      await new Promise((r) => setTimeout(r, USB_EMPTY_RETRY_MS[i]));
       if (ctx.session() !== s) break;
-      files = await once();
+      files = await tryOnce(i === USB_EMPTY_RETRY_MS.length - 1);
     }
-    return files;
+    return files ?? [];
   };
   const p = ask().then(
     (files) => {

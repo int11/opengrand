@@ -81,6 +81,9 @@ export interface UsbPane {
 export interface UsbPaneOptions {
   /** a file was chosen in the list */
   onPick?: (name: string) => void;
+  /** before a USB file plays: stop what else plays (the recorder tab stops a playing piano song - field 2026-11-27:
+   *  a piano song kept playing under the USB file); false = do not play (the reason is the caller's to show) */
+  beforePlay?: () => Promise<boolean>;
   /** a file the piano takes into a recorder song (KSO): put it into a piano song - and play it there (a row tap) or
    *  only put it there (「피아노에 넣기」). The screen that owns the piano songs does it. */
   intoPiano?: (name: string, play: boolean) => void;
@@ -216,6 +219,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
   const stillText = () => t("The piano still plays from the USB memory. Stop it on the piano: on the panel's USB memory screen choose the playing file and press Stop; if it still plays, switch the piano off and on.");
   const play = async (name: string) => {
     if (lock.busy || playing.stopping) return;
+    if (opts.beforePlay && !(await opts.beforePlay())) return;
     let refused: string | null = null;
     const ok = await run(t("Play"), async () => {
       const r = await usbPlay(ctx, name, () => (result.textContent = t("Stopping the USB playback that runs first…")));
