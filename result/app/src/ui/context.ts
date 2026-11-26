@@ -23,6 +23,9 @@ export interface AppContext {
   rerender(): void;
   /** fn 0x24 FileAccess client for the current session (null when not connected) */
   files(): FileAccessClient | null;
+  /** CONNECT + full re-sync of `s` through the connection manager (main.ts: ConnectionManager.rejoin); absent in
+   *  screen tests, where the session does it alone */
+  retake?(s: PianoSession): Promise<unknown>;
   /** last USB file list (index = file-list id, §9.5) */
   usbFiles: string[];
   /** the app entry's pieces the Settings tab's 「앱 · 화면」 card works (main.ts); absent in screen tests */
@@ -67,7 +70,9 @@ export function createContext(store: ParamStore, over: Partial<AppContext> = {})
       if (!s) return null;
       let c = clients.get(s);
       // a fn 0x24 timeout = the stock has likely unbound us: CONNECT + re-sync once (not while displaced)
-      const recover = () => (s.displaced || s.state === "closed" ? undefined : s.takeControl());
+      // through the manager when there is one: a re-take it does not know of could fail and leave the session
+      // "connecting" under a header that says Connected, or run alongside its own
+      const recover = () => (s.displaced || s.state === "closed" ? undefined : ctx.retake ? ctx.retake(s) : s.takeControl());
       if (!c) clients.set(s, (c = new FileAccessClient(s, undefined, { recover })));
       return c;
     },

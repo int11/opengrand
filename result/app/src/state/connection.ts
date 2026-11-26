@@ -435,6 +435,18 @@ export class ConnectionManager {
   }
 
   /**
+   * CONNECT + full re-sync of `s` asked by a client of the session (the file channel after a fn 0x24 timeout), the
+   * way 「Reconnect」 does it: through the phases, so a failed one shows as failed and one under way is not doubled.
+   * Nothing when `s` is not the current session or it is not connected (displaced: the banner decides). Resolves with
+   * the settled phase.
+   */
+  rejoin(s: PianoSession): Promise<Phase> {
+    if (this.session !== s || (this.phase !== "ready" && this.phase !== "waking")) return this.settled();
+    this.dispatch({ type: "retry" });
+    return this.settled();
+  }
+
+  /**
    * Connect through `c`. Idempotent: the piano this app is already on (same key) opens nothing and
    * starts no session (displaced: it takes control again). Resolves with the settled phase.
    */

@@ -132,3 +132,40 @@ test("BLE: an open that finishes after a newer open of the same piano does not d
   assert.deepEqual(got, ["90 3C 40"]);
   live.close();
 });
+
+const { createContext } = await import("../src/ui/context.ts");
+const { ParamStore } = await import("../src/state/store.ts");
+
+test("file channel recover: the CONNECT + re-sync runs through the connection manager, a failed one is not left as Connected", async () => {
+  // fn 0x24 timeout → recover. Before, the context called session.takeControl() behind the manager's back: when the
+  // piano did not answer, the session stayed "connecting" (every screen that needs "ready" went blank) while the
+  // header kept saying Connected, and nothing offered 「Try again」.
+  const [a, pa] = LoopbackLink.pair();
+  let mute = false;
+  const seen = fakePiano(pa);
+  const real = pa.send.bind(pa);
+  pa.send = (m) => (mute ? undefined : real(m));
+  const m = new ConnectionManager({ makeSession: (l) => new PianoSession(l), replyMs: 60 });
+  assert.equal(await m.attach(a), "ready");
+  const s = m.session!;
+  const ctx = createContext(new ParamStore(), { session: () => m.session, retake: (x) => m.rejoin(x) });
+  const fa = ctx.files()!;
+  mute = true;
+  seen.length = 0;
+  await (fa as unknown as { opt: { recover(): Promise<unknown> } }).opt.recover().catch(() => undefined); // as FileAccessClient does
+  assert.ok(seen.includes("F0 40 7F 7E 08 02 01 01 F7"), "a CONNECT went out");
+  assert.equal(m.phase, "failed");
+  assert.equal(s.state, "closed", "the session the screens held is retired, not left connecting");
+  m.disconnect();
+});
+
+test("rejoin of a session that is not the manager's current one does nothing", async () => {
+  const [a, pa] = LoopbackLink.pair();
+  fakePiano(pa);
+  const m = new ConnectionManager({ makeSession: (l) => new PianoSession(l), replyMs: 60 });
+  assert.equal(await m.attach(a), "ready");
+  const other = new PianoSession(new LoopbackLink());
+  assert.equal(await m.rejoin(other), "ready");
+  assert.equal(m.phase, "ready");
+  m.disconnect();
+});

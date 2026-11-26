@@ -56,7 +56,8 @@ const kwmShell = kwmcoreAvailable();
 const embedded = kwmShell ? new URLSearchParams(location.search).get("embedded") !== "0" : panelInfo().embedded;
 // installable web app: offline start from the service-worker cache (browsers only)
 registerServiceWorker(androidAvailable() || kwmShell);
-const ctx = createContext(store, { session: () => session, panel: embedded });
+// the file channel's recover (fn 0x24 timeout) re-takes through the connection manager (declared below)
+const ctx = createContext(store, { session: () => session, panel: embedded, retake: (s) => conn.rejoin(s) });
 usbListState(ctx); // watch USBMemory plugs from the start: an empty list right after one is asked again (ui/usblist.ts)
 setLang(ctx.settings.lang);
 // a touch drag / scroll never presses a control; sliders take only a clear sideways drag (ui/tapguard.ts)
