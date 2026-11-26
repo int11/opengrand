@@ -73,8 +73,9 @@ class UpdateManager(
     /** Verify and install on a worker thread; status goes to ca79ngNative.onUpdate. */
     fun install(): Boolean {
         val p = find() ?: return false
-        // one verify + install at a time: a second tap during the sha256 started a second PackageInstaller session
-        if (!installing.compareAndSet(false, true)) return false
+        // one verify + install at a time: a second tap during the sha256 started a second PackageInstaller session.
+        // true: the running one reports through onUpdate (false would paint "failed" over it in the page)
+        if (!installing.compareAndSet(false, true)) return true
         Thread {
             try {
                 status("verifying")
