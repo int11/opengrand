@@ -23,6 +23,8 @@ export interface SongListDeps {
   readNg(): Promise<boolean>;
   /** what the stock scan puts back on the piano afterwards */
   restoreOf(): { song: number; part: number | undefined };
+  /** the song whose tap is being carried out (ui/transport.ts target): its row shows a spinner; -1 none */
+  loading?(): number;
 }
 
 export interface SongList {
@@ -80,6 +82,7 @@ export function songList(ctx: AppContext, lock: FileLock, m: PianoModel, pb: Usb
   const rowKeys: string[] = [];
   const rowEls: HTMLElement[] = [];
   const playsNow = (n: number) => n === m.sel && m.state === 1 && !usbAnyRunning(pb);
+  const loadingNow = () => (d.loading ? d.loading() : -1);
   const songRow = (n: number): HTMLElement => {
     const i = songs[n];
     const on = n === m.sel;
@@ -97,7 +100,7 @@ export function songList(ctx: AppContext, lock: FileLock, m: PianoModel, pb: Usb
     ];
     return h(
       "div",
-      { class: "song-row", "data-song": String(n + 1), "data-state": i === null ? "unknown" : i.hasData ? "data" : "empty", "data-on": on ? "1" : undefined, "data-open": isOpen ? "1" : undefined, "data-playing": playsNow(n) ? "1" : undefined },
+      { class: "song-row", "data-song": String(n + 1), "data-state": i === null ? "unknown" : i.hasData ? "data" : "empty", "data-on": on ? "1" : undefined, "data-open": isOpen ? "1" : undefined, "data-playing": playsNow(n) ? "1" : undefined, "data-loading": loadingNow() === n ? "1" : undefined },
       h("div", { class: "file-main" },
         // owner 2026-11-24: the list's own heading says these are the piano's songs (no 「피아노」 badge), and the number
         // is the song's name (no 「곡 N」 next to the same number) - the row reads number + what it holds
@@ -122,6 +125,14 @@ export function songList(ctx: AppContext, lock: FileLock, m: PianoModel, pb: Usb
       rowEls[n] = row;
       rowKeys[n] = key;
     }
+    // the loading mark changes in place (not in the key: the tapped row is not replaced under the finger)
+    const at = loadingNow();
+    rowEls.forEach((r, n) => {
+      if ((at === n) !== r.hasAttribute("data-loading")) {
+        if (at === n) r.setAttribute("data-loading", "1");
+        else r.removeAttribute("data-loading");
+      }
+    });
     songsHint.hidden = !!m.rec || songs.every((i) => i);
     const why = m.tableReason();
     tableWarn.hidden = !why;

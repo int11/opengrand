@@ -132,6 +132,9 @@ export interface PlayerBar {
   /** where a screen puts its own lines (a question, a hint, the piano's refusal) */
   foot: HTMLElement;
   options: HTMLDialogElement;
+  /** A tap being carried out (ui/transport.ts): 「Loading…」 and what loads (what: "" = nothing more) in place of
+   *  the info pill, until null. */
+  loading(what: string | null): void;
 }
 
 const MAIN_LABEL = { play: "Play", pause: "Pause", stop: "Stop" } as const;
@@ -225,9 +228,13 @@ export function playerBar(store: ParamStore, id: string, acts: PlayerActions): P
     ? h("button", { type: "button", class: "pl-rec", "data-act": "rec", title: t("Rec"), "aria-label": t("Rec"), onclick: () => acts.rec!() }, icon("rec"), h("span", { class: "pl-rec-txt" }, t("Rec")))
     : null;
   const foot = h("div", { class: "pl-foot" });
+  // 「Loading…」 while a tap is carried out: a pill in place of the info pill (the bar keeps its height)
+  const loadWhat = h("span", { class: "pl-load-what" });
+  const loadLine = h("span", { class: "pl-pill pl-info pl-loading", id: `${id}-loading`, role: "status", hidden: true },
+    h("i", { class: "spinner", "aria-hidden": "true" }), h("b", { class: "pl-load-txt" }, t("Loading…")), loadWhat);
   const el = h("div", { class: "card player", id, "data-play": "" },
     status,
-    h("div", { class: "pl-head" }, time, h("span", { class: "pl-pill pl-info", id: `${id}-info` }, title, sub)),
+    h("div", { class: "pl-head" }, time, h("span", { class: "pl-pill pl-info", id: `${id}-info` }, title, sub), loadLine),
     seek,
     h("div", { class: "pl-left" }, main, h("span", { class: "pl-skip" }, prev, next), stop),
     h("div", { class: "pl-right" }, rec, partBtn, iconButton("options", t("Playback options"), { "data-act": "options", onclick: open })),
@@ -286,6 +293,13 @@ export function playerBar(store: ParamStore, id: string, acts: PlayerActions): P
 
   return {
     el, foot, options, syncPart,
+    loading(what) {
+      const on = what !== null;
+      if (loadLine.hidden === on) loadLine.hidden = !on;
+      if (on) attr(el, "data-loading", "1");
+      else el.removeAttribute("data-loading");
+      text(loadWhat, what ?? "");
+    },
     set(v) {
       shown = v;
       attr(el, "data-play", v.state === null ? "" : String(v.state)); // styles.css: the recording colours

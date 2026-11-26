@@ -82,6 +82,8 @@ export interface UsbPane {
   play(name: string): Promise<void>;
   /** The play itself, for a transport job. */
   playNow(name: string): Promise<void>;
+  /** Mark again the row whose tap is loading (the transport's target) - also done on every transport change. */
+  markLoading(): void;
 }
 
 export interface UsbPaneOptions {
@@ -139,6 +141,32 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
     }
   };
 
+  // every play / stop goes through the context's one transport runner (ui/transport.ts): a burst of taps ends with the
+  // last one carried out, never two sequences interleaved on the link (field 2026-11-27)
+  const tp = transport(ctx);
+  // the file whose tap is being carried out (or waits for the one on the wire): its row shows a spinner (styles.css)
+  const loadingFile = (): string | null => {
+    const g = tp.target();
+    return g && g.kind === "usb" ? g.name : null;
+  };
+  /** The rows' loading marks, changed in place (a row is not replaced under the finger - F13a). */
+  const markLoading = () => {
+    const at = loadingFile();
+    list.querySelectorAll(".file-row").forEach((r) => {
+      const on = at !== null && r.getAttribute("data-file") === at;
+      if (on !== r.hasAttribute("data-loading")) {
+        if (on) r.setAttribute("data-loading", "1");
+        else r.removeAttribute("data-loading");
+      }
+    });
+  };
+  let seenTp = false;
+  const offTp = tp.onChange(() => {
+    if (list.isConnected) seenTp = true;
+    else if (seenTp) return offTp(); // the tab was replaced
+    markLoading();
+  });
+
   // the file whose other buttons are shown (one at a time), and the file chosen for the player bar
   let open: string | null = null;
   let chosen: string | null = chosenFile.get(ctx) ?? null;
@@ -163,7 +191,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
         const { ext } = fileParts(name);
         return h(
           "div",
-          { class: "file-row", "data-file": name, "data-on": on ? "1" : undefined, "data-open": isOpen ? "1" : undefined, "data-playing": plays ? "1" : undefined },
+          { class: "file-row", "data-file": name, "data-on": on ? "1" : undefined, "data-open": isOpen ? "1" : undefined, "data-playing": plays ? "1" : undefined, "data-loading": loadingFile() === name ? "1" : undefined },
           h("div", { class: "file-main" },
             h("button", { class: "file-pick", "data-act": "file-pick", "aria-pressed": String(on), title: name, onclick: () => pick(name) },
               h("span", { class: "file-ext" }, plays ? playingMark() : caps(name)?.badge ?? (ext || "–")),
@@ -223,9 +251,6 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
   const playKey = () => ctx.usbFiles.map((n) => (usbPlayingName(playing, n) ? "■" : "▶") + n).join("\n");
   let shownKey = "";
   const stillText = () => t("The piano still plays from the USB memory. Stop it on the piano: on the panel's USB memory screen choose the playing file and press Stop; if it still plays, switch the piano off and on.");
-  // every play / stop goes through the context's one transport runner (ui/transport.ts): a burst of taps ends with the
-  // last one carried out, never two sequences interleaved on the link (field 2026-11-27)
-  const tp = transport(ctx);
   const playNow = async (name: string) => {
     if (lock.busy) return; // a file operation (rename, delete, upload) holds the file channel
     if (opts.beforePlay && !(await opts.beforePlay())) return;
@@ -240,7 +265,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
     else if (ok) result.textContent = "";
     render();
   };
-  const play = (name: string) => tp.request(() => playNow(name)).then(() => {});
+  const play = (name: string) => tp.request(() => playNow(name), { kind: "usb", name }).then(() => {});
   // a tap on a row plays that file, as in any media player (owner 2026-11-23: a tap that only chose the file read as
   // 「재생이 안 된다」); the playing file's row does nothing. pick(name, false) only chooses (⏮ ⏭ while stopped).
   const pick = (name: string, start = true) => {
@@ -272,7 +297,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
     }
     render();
   };
-  const stop = () => tp.request(() => stopNow(false)).then(() => {});
+  const stop = () => tp.request(() => stopNow(false), { kind: "stop" }).then(() => {});
 
   const rename = (name: string) => {
     const to = typeof prompt === "function" ? prompt(t("New name for {name}", { name }), name) : null;
@@ -361,7 +386,7 @@ export function usbPane(ctx: AppContext, lock: FileLock, opts: UsbPaneOptions = 
           } }, t("Format the USB memory"))))),
   );
   return {
-    el, run, stop, stopNow, pick, play, playNow,
+    el, run, stop, stopNow, pick, play, playNow, markLoading,
     reload: () => load(false, true),
     selected: () => (chosen !== null && ctx.usbFiles.includes(chosen) ? chosen : null),
   };

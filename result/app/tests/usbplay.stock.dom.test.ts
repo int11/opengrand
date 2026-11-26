@@ -452,3 +452,80 @@ for (const [gap, lat] of [[40, 8], [30, 40], [50, 40], [20, 25]] as const) test(
   assert.deepEqual([...el.querySelectorAll("[data-file][data-playing]")].map((r) => r.getAttribute("data-file")), [], "no USB row marked playing");
   el.remove();
 });
+
+// A tap that takes a moment shows that it loads (owner, panel UI 0.2.35): the tapped row's spinner (data-loading) and
+// the player bar's 「Loading…」 from the tap until the job is over; a newer tap moves them at once.
+const loadingRows = (el: HTMLElement) => [...el.querySelectorAll("[data-loading]")]
+  .filter((r) => r.id !== "rec-panel")
+  .map((r) => r.getAttribute("data-file") ?? `song ${r.getAttribute("data-song")}`);
+const barLoading = (el: HTMLElement): string | null => {
+  const bar = el.querySelector("#rec-panel") as HTMLElement;
+  const line = el.querySelector("#rec-panel-loading") as HTMLElement;
+  assert.equal(bar.hasAttribute("data-loading"), !line.hidden, "the bar's mark and its line agree");
+  return line.hidden ? null : line.textContent;
+};
+
+test("loading: a USB file's tap marks its row and the bar until it plays, then both clear", async () => {
+  const { st, el } = await setup({ syncMode: 0, lat: 40 });
+  assert.deepEqual(loadingRows(el), []);
+  assert.equal(barLoading(el), null);
+  row(el, "1.mp3", "play")!.click();
+  assert.deepEqual(loadingRows(el), ["1.mp3"], "the tapped row at once");
+  assert.equal(barLoading(el), "Loading…1.mp3", "the bar says it loads, and what");
+  await tick(20);
+  assert.deepEqual(loadingRows(el), ["1.mp3"], "still while the job runs");
+  await tick(2 * STOP_MS + 400);
+  assert.equal(st.audio, true, "it plays");
+  assert.deepEqual(loadingRows(el), [], "cleared once the job is over");
+  assert.equal(barLoading(el), null);
+  assert.ok(el.querySelector('[data-file="1.mp3"][data-playing]'), "the row now says it plays");
+});
+
+test("loading: a newer tap moves the mark at once - USB A → USB B → piano song; all clear after", async () => {
+  const { el, notify } = await setup({ syncMode: 0, lat: 40 });
+  notify([0x52, 0x01, 0x7f, 0x7f]);
+  await tick(20);
+  const tapSong = () => (el.querySelector('#songs-list [data-song="1"] button.song-pick') as HTMLElement).click();
+  tapSong();
+  assert.deepEqual(loadingRows(el), ["song 1"], "a piano song's row");
+  assert.equal(barLoading(el), "Loading…Song 1");
+  await tick(400);
+  assert.deepEqual(loadingRows(el), []);
+  row(el, "1.mp3", "play")!.click();
+  await tick(30);
+  assert.deepEqual(loadingRows(el), ["1.mp3"]);
+  row(el, "2.mp3", "play")!.click();
+  assert.deepEqual(loadingRows(el), ["2.mp3"], "the newer tap's row at once (1.mp3 still on the wire)");
+  assert.equal(barLoading(el), "Loading…2.mp3");
+  tapSong();
+  assert.deepEqual(loadingRows(el), ["song 1"], "moved to the piano song");
+  assert.equal(barLoading(el), "Loading…Song 1");
+  await tick(3000);
+  assert.deepEqual(loadingRows(el), [], "cleared after the last job");
+  assert.equal(barLoading(el), null);
+});
+
+test("loading: a tap that fails clears the marks and keeps its error text", async () => {
+  const { st, el } = await setup({ stuck: true });
+  row(el, "SONG_01.MID", "play")!.click();
+  await tick(BEAT_MS * 4);
+  assert.equal(st.smf, 1);
+  row(el, "1.mp3", "play")!.click();
+  assert.deepEqual(loadingRows(el), ["1.mp3"]);
+  await tick(STOP_MS * 2 + 200);
+  assert.match(resultText(el), /1\.mp3 was not started/, "the failure is said");
+  assert.deepEqual(loadingRows(el), [], "no row left loading");
+  assert.equal(barLoading(el), null);
+});
+
+test("loading: ko / ja wording of the bar's line", async () => {
+  for (const [lang, word] of [["ko", "불러오는 중…"], ["ja", "読み込み中…"]] as const) {
+    i18n.setLang(lang);
+    const { el } = await setup({ syncMode: 0, lat: 40 });
+    row(el, "1.mp3", "play")!.click();
+    assert.equal(barLoading(el), `${word}1.mp3`);
+    await tick(2 * STOP_MS + 400);
+    assert.equal(barLoading(el), null);
+    el.remove();
+  }
+});
