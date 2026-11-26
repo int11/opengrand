@@ -86,3 +86,45 @@ test("another piano whose open failed: Try again / picking it again opens that p
   assert.equal(made.length, 1, "no second session on A's link");
   m.disconnect();
 });
+
+const { connectBleDevice } = await import("../src/transport/ble.ts");
+const { encodeBlePackets } = await import("../src/protocol/blemidi.ts");
+type GattChar = import("../src/transport/ble.ts").GattChar;
+
+test("BLE: an open that finishes after a newer open of the same piano does not deafen the newer link", async () => {
+  // desktop auto-reconnect: a gatt.connect() hangs, the watchdog gives up, the next attempt opens; then the hung one
+  // comes back. Before, it built a second link on the characteristic, which took the notifications from the link the
+  // session runs on — the session heard nothing more.
+  const listeners = new Set<(e: Event) => void>();
+  const ch: GattChar = {
+    value: undefined,
+    startNotifications: async () => undefined,
+    writeValueWithoutResponse: async () => undefined,
+    addEventListener: (_t, cb) => void listeners.add(cb),
+    removeEventListener: (_t, cb) => void listeners.delete(cb),
+  };
+  const server = { getPrimaryService: async () => ({ getCharacteristic: async () => ch }), disconnect: () => {} };
+  const pending: (() => void)[] = [];
+  const dev = {
+    id: "race1",
+    name: "CA79",
+    gatt: { connect: () => new Promise<typeof server>((r) => pending.push(() => r(server))) },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  const stale = connectBleDevice(dev);
+  const fresh = connectBleDevice(dev);
+  await tick(1);
+  pending[1]!(); // the newer attempt opens first
+  const live = await fresh;
+  const got: string[] = [];
+  live.onMessage((m) => got.push(toHex(m)));
+  pending[0]!(); // then the hung one comes back
+  await stale;
+  for (const p of encodeBlePackets([Uint8Array.from([0x90, 0x3c, 0x40])], 0, 23)) {
+    ch.value = new DataView(p.buffer, p.byteOffset, p.byteLength);
+    for (const l of [...listeners]) l(new Event("characteristicvaluechanged"));
+  }
+  assert.deepEqual(got, ["90 3C 40"]);
+  live.close();
+});

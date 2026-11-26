@@ -236,6 +236,10 @@ export async function connectBleDevice(device: BtDevice, mtu = 23, opt: { retryD
   if (cur?.isOpen) return cur;
   if (cur) await cur.released; // the old link is still letting the connection go: do not race its disconnect
   const { server, ch } = await openGatt(device, opt.retryDelayMs ?? 500);
+  // another open of this device finished first (a hung attempt the watchdog gave up on comes back late): that link
+  // is the one in use — a second link on the characteristic would take its notifications
+  const now = openLinks.get(id);
+  if (now?.isOpen) return now;
   const link = new BleLink(device.name ?? "BLE-MIDI", ch, () => server.disconnect(), mtu, `ble:${id}`);
   link.reopen = () => connectBleDevice(device, mtu, opt);
   openLinks.set(id, link);
