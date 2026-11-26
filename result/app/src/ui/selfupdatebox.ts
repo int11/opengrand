@@ -60,7 +60,8 @@ function applyButton(hub: SelfUpdateHub, s: SelfUpdateState | null, id: string):
     if (s.action === "manual") hub.updater.openPage();
     else {
       b.disabled = true;
-      void hub.apply().then((ok) => (b.disabled = ok && s.action === "restart"));
+      // a shell call that throws (Electron invoke rejects) gives the button back like a false
+      void hub.apply().then((ok) => (b.disabled = ok && s.action === "restart"), () => (b.disabled = false));
     }
   };
   return b;
